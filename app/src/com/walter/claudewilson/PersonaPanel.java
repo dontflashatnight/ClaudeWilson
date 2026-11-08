@@ -465,18 +465,29 @@ final class PersonaPanel extends UiSection {
             // property value alone would flip back to the real PLMN under an active injection.
             // Without a region the value is still worth showing: it is the network the device is
             // actually attached to.
-            String netActual = injectedNow && targetProcessLive() ? netTarget : liveNetTrio;
+            boolean targetLive = injectedNow && targetProcessLive();
+            String netActual = targetLive ? netTarget : liveNetTrio;
             card.addView(row(hasPersona,
                     Lang.t("拜访网络", "visited network", "訪問ネットワーク"),
                     hasPersona ? netTarget : dash,
                     hasPersona ? netActual : liveNetTrio,
-                    !hasPersona ? -1 : comparison(netTarget, netActual)));
+                    !hasPersona ? -1
+                            : targetLive ? 1
+                            : visitedStatus(op, iso, liveNet, liveNetIso)));
+        }
+        int langStatus;
+        if (!hasPersona) {
+            langStatus = -1;
+        } else if (!targetLocaleLive) {
+            langStatus = -3;
+        } else {
+            langStatus = comparison(loc.replace("-", "_"), liveLoc) == 1
+                    || Regions.localeMatch(loc, liveLoc) ? 1 : 0;
         }
         card.addView(row(hasPersona, Lang.t("目标语言", "target language", "対象言語"),
                 hasPersona ? loc.replace("-", "_") : dash,
                 liveLoc,
-                !hasPersona ? -1 : !targetLocaleLive ? -3
-                        : comparison(loc.replace("-", "_"), liveLoc)));
+                langStatus));
         LinearLayout tzRow = row(hasPersona, Lang.t("时区", "tz", "TZ"),
                 hasPersona ? tz : dash,
                 liveTz,
@@ -1599,6 +1610,16 @@ final class PersonaPanel extends UiSection {
         }
         return expectedOperator.substring(0, 3)
                 .equals(actualOperator.substring(0, 3)) ? 1 : 0;
+    }
+
+    /** Visited network is judged on its PLMN country, not on a localized carrier string. */
+    private static int visitedStatus(String expectedOp, String expectedIso,
+                                     String actualOp, String actualIso) {
+        if (empty(expectedOp) || empty(expectedIso) || empty(actualOp) || empty(actualIso)) {
+            return -1;
+        }
+        return Regions.mccMatch(expectedOp, actualOp)
+                && comparison(expectedIso, actualIso) == 1 ? 1 : 0;
     }
 
     private static String val(String s) {
