@@ -1,0 +1,26 @@
+# catalog 2026-11-02
+# name|iso|mcc|utc|zones(;)|locales(;)|carriers|note
+# One row per region the switcher offers. Expected hardware tags are derived from
+# the tag table in Regions, so this file stays vendor neutral.
+日本|jp|440/441|UTC+9|Asia/Tokyo|ja-JP|docomo/au/SoftBank/Rakuten|CSC=DCM/KDI/SBM/RKT；日版机 SC-*/SCG*
+韩国|kr|450|UTC+9|Asia/Seoul|ko-KR|SKT/KT/LG U+|韩版机 SM-*N；CSC=SKC/KTC/LUC/KOO
+新加坡|sg|525|UTC+8|Asia/Singapore|en-SG;zh-SG;ms-SG|Singtel/StarHub/M1/SIMBA|CSC=XSP/MM1
+马来西亚|my|502|UTC+8|Asia/Kuala_Lumpur;Asia/Kuching|ms-MY;en-MY;zh-MY|Maxis/CelcomDigi/U Mobile|CSC=XME
+印度尼西亚|id|510|UTC+7~+9|Asia/Jakarta;Asia/Makassar;Asia/Jayapura|id-ID|Telkomsel/XL/Indosat|三时区 WIB/WITA/WIT；CSC=XID
+越南|vn|452|UTC+7|Asia/Ho_Chi_Minh|vi-VN|Viettel/Vinaphone/Mobifone|CSC=XXV
+菲律宾|ph|515|UTC+8|Asia/Manila|en-PH;fil-PH|Globe/Smart/DITO|CSC=XTC/XTE
+泰国|th|520|UTC+7|Asia/Bangkok|th-TH|AIS/TrueMove H/dtac|CSC=THL
+印度|in|404/405|UTC+5:30|Asia/Kolkata|en-IN;hi-IN|Jio/Airtel/Vi|CSC=INS/INU
+台湾|tw|466|UTC+8|Asia/Taipei|zh-TW|中华电信/台哥大/远传|CSC=TWN/BRI
+澳大利亚|au|505|UTC+8~+11|Australia/Sydney;Australia/Melbourne;Australia/Brisbane;Australia/Adelaide;Australia/Darwin;Australia/Perth;Australia/Hobart|en-AU|Telstra/Optus/VodafoneAU|多时区；CSC=XSA/TEL/OPS/VAU
+新西兰|nz|530|UTC+12~+13|Pacific/Auckland;Pacific/Chatham|en-NZ|Spark/One NZ/2degrees|CSC=XNZ
+蒙古|mn|496|UTC+8|Asia/Ulaanbaatar;Asia/Hovd;Asia/Choibalsan|mn-MN|Mobicom/Unitel/Skytel|CSC=MGL
+美国|us|310-316|UTC-4~-10|America/New_York;America/Chicago;America/Denver;America/Los_Angeles;America/Phoenix;America/Anchorage;Pacific/Honolulu|en-US;es-US|Verizon/AT&T/T-Mobile|美版机 SM-*U；CSC=XAA/ATT/TMB/VZW
+加拿大|ca|302|UTC-3:30~-8|America/Toronto;America/Winnipeg;America/Edmonton;America/Vancouver;America/Halifax;America/St_Johns|en-CA;fr-CA|Rogers/Bell/Telus|CSC=XAC/RWC/BMC/TLA
+英国|gb|234/235|UTC+0~+1|Europe/London|en-GB|EE/O2/VodafoneUK/Three|CSC=BTU/EEA/O2U/H3G
+德国|de|262|UTC+1~+2|Europe/Berlin|de-DE|Telekom/Vodafone/O2|CSC=DBT/VD2/O2C
+法国|fr|208|UTC+1~+2|Europe/Paris|fr-FR|Orange/SFR/Bouygues/Free|CSC=XEF/ORO/SFR/BOG
+阿联酋|ae|424/430|UTC+4|Asia/Dubai|ar-AE;en-AE|e&(Etisalat)/du|CSC=XSG 中东多CSC
+土耳其|tr|286|UTC+3|Europe/Istanbul|tr-TR|Turkcell/Vodafone/TürkTelekom|CSC=TUR
+巴西|br|724|UTC-3~-5|America/Sao_Paulo;America/Manaus;America/Belem;America/Fortaleza;America/Rio_Branco|pt-BR|Claro/Vivo/TIM|CSC=ZTO/ZVV
+南非|za|655|UTC+2|Africa/Johannesburg|en-ZA|Vodacom/MTN/Cell C|CSC=XFA/XFE
