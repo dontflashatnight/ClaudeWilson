@@ -1,0 +1,12 @@
+# catalog 2026-11-02
+# sub-brand=parent
+# A model that names a sub-brand is not a spoof when the manufacturer is the parent brand
+# (or the sub-brand itself). This keeps the identity sanity check usable on any vendor instead
+# of special-casing one or two brands in code.
+pixel=google
+moto=motorola
+redmi=xiaomi
+poco=xiaomi
+iqoo=vivo
+honor=huawei
+cmf=nothing

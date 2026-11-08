@@ -1,0 +1,28 @@
+# catalog 2026-11-02
+# Vendor words that must not appear in Build.MODEL when the manufacturer is someone else.
+samsung
+xiaomi
+redmi
+huawei
+honor
+oppo
+vivo
+oneplus
+realme
+motorola
+moto
+google
+pixel
+sony
+nokia
+meizu
+zte
+asus
+lg
+lenovo
+tecno
+infinix
+itel
+nothing
+fairphone
+sharp

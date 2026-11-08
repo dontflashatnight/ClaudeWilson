@@ -1,0 +1,16 @@
+# catalog 2026-11-02
+# Substrings that identify an emulated or virtualised device, matched against the build
+# fingerprint / model / manufacturer / product / device.
+goldfish
+ranchu
+generic
+vbox
+genymotion
+emulator
+sdk_gphone
+bluestacks
+nox
+ttvm
+andy
+droid4x
+simulator

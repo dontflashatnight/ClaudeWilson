@@ -1,0 +1,31 @@
+# catalog 2026-11-02
+# MCCMNC -> carrier name fragments (| separated, lower-case substring match)
+46000=移动|cmcc|mobile
+46002=移动|cmcc
+46007=移动|cmcc
+46001=联通|unicom
+46006=联通|unicom
+46009=联通|unicom
+46003=电信|telecom|ct
+46005=电信|telecom|ct
+46011=电信|telecom|ct
+46015=广电|cbn|broadnet
+50501=telstra
+50502=optus
+50503=vodafone
+310260=t-mobile|tmobile|t mobile
+310410=at&t|att
+311480=verizon
+310120=sprint|t-mobile
+23410=o2|giffgaff|tesco
+23415=vodafone
+23420=three|3uk
+23430=ee|t-mobile|orange
+26201=telekom|t-mobile|deutsche
+20801=orange
+44010=docomo|ntt
+44020=softbank|sprint
+45005=skt|sk telecom|sktelecom
+45008=kt|olleh
+45006=lg u+|lgu|lg uplus
+404=airtel|jio|vi|vodafone|idea|bsnl

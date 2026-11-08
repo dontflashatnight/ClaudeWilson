@@ -1,0 +1,13 @@
+# catalog 2026-11-02
+# App-label substrings for the census heuristic (labels are localised, so this list is not
+# language neutral on purpose).
+root
+magisk
+xposed
+kernelsu
+shizuku
+supersu
+隐藏
+面具
+伪装
+模块注入

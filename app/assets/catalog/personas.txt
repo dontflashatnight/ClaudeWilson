@@ -1,0 +1,25 @@
+# catalog 2026-11-02
+# label|manufacturer|brand|model|device|product|hardware|board
+# fingerprint|buildId|incremental|release|sdkInt|securityPatch
+# One row per device preset. The picker always adds the running device itself,
+# so this list is extra choices, never the only source.
+Pixel 8 Pro|Google|google|Pixel 8 Pro|husky|husky|husky|husky|google/husky/husky:15/AP3A.241005.015/12266611:user/release-keys|AP3A.241005.015|12266611|15|35|2024-10-05
+Pixel 9 Pro XL|Google|google|Pixel 9 Pro XL|komodo|komodo|komodo|komodo|google/komodo/komodo:15/AP3A.241005.015/12270533:user/release-keys|AP3A.241005.015|12270533|15|35|2024-10-05
+Pixel 8a|Google|google|Pixel 8a|akita|akita|akita|akita|google/akita/akita:15/AP3A.241005.015/12266611:user/release-keys|AP3A.241005.015|12266611|15|35|2024-10-05
+Pixel 7a|Google|google|Pixel 7a|lynx|lynx|lynx|lynx|google/lynx/lynx:15/AP3A.241005.015/12266611:user/release-keys|AP3A.241005.015|12266611|15|35|2024-10-05
+Galaxy S24U|samsung|samsung|SM-S928B|e3q|e3qxeea|qcom|kalama|samsung/e3qxeea/e3q:15/AP3A.240905.015.A2/S928BXXS5AYD4:user/release-keys|AP3A.240905.015.A2|S928BXXS5AYD4|15|35|2024-11-01
+Galaxy A55|samsung|samsung|SM-A556E|a55x|a55xeea|s5e8845|erd8845|samsung/a55xeea/a55x:15/AP3A.240905.015.A2/A556EXXS7AYB4:user/release-keys|AP3A.240905.015.A2|A556EXXS7AYB4|15|35|2024-11-01
+Xiaomi 14|Xiaomi|Xiaomi|23127PN0CG|houji|houji_global|qcom|kalama|Xiaomi/houji_global/houji:15/AQ3A.240829.003/OS2.0.203.0.VNCMIXM:user/release-keys|AQ3A.240829.003|OS2.0.203.0.VNCMIXM|15|35|2024-10-01
+OnePlus 12|OnePlus|OnePlus|CPH2581|OP5959L1|CPH2581EE|qcom|kalama|OnePlus/CPH2581EE/OP5959L1:15/UKQ1.230924.001/R.1e31d5:user/release-keys|UKQ1.230924.001|R.1e31d5|15|35|2024-10-05
+Pixel 9|Google|google|Pixel 9|tokay|tokay|tokay|tokay|google/tokay/tokay:15/AP3A.241005.015/12270533:user/release-keys|AP3A.241005.015|12270533|15|35|2024-10-05
+Pixel 9 Pro|Google|google|Pixel 9 Pro|caiman|caiman|caiman|caiman|google/caiman/caiman:15/AP3A.241005.015/12270533:user/release-keys|AP3A.241005.015|12270533|15|35|2024-10-05
+Pixel 9 Pro Fold|Google|google|Pixel 9 Pro Fold|comet|comet|comet|comet|google/comet/comet:15/AP3A.241005.015.A2/12266611:user/release-keys|AP3A.241005.015.A2|12266611|15|35|2024-10-05
+Pixel 9a|Google|google|Pixel 9a|tegu|tegu|tegu|tegu|google/tegu/tegu:15/AP4A.250105.002/12796397:user/release-keys|AP4A.250105.002|12796397|15|35|2025-01-05
+Galaxy S23U|samsung|samsung|SM-S918B|dm3q|dm3qxeea|qcom|kalama|samsung/dm3qxeea/dm3q:15/AP3A.240905.015.A2/S918BXXS9DYA2:user/release-keys|AP3A.240905.015.A2|S918BXXS9DYA2|15|35|2024-11-01
+Galaxy Z Flip6|samsung|samsung|SM-F741B|b6q|b6qxeea|qcom|kalama|samsung/b6qxeea/b6q:15/AP3A.240905.015.A2/F741BXXS2AYE1:user/release-keys|AP3A.240905.015.A2|F741BXXS2AYE1|15|35|2025-01-01
+Galaxy Z Fold6|samsung|samsung|SM-F956B|q6q|q6qxeea|qcom|kalama|samsung/q6qxeea/q6q:15/AP3A.240905.015.A2/F956BXXS2AXK4:user/release-keys|AP3A.240905.015.A2|F956BXXS2AXK4|15|35|2024-11-01
+Galaxy A56|samsung|samsung|SM-A566B|a56x|a56xeea|s5e8845|erd8845|samsung/a56xeea/a56x:15/AP3A.240905.015.A2/A566BXXS5AYB4:user/release-keys|AP3A.240905.015.A2|A566BXXS5AYB4|15|35|2024-11-01
+Xiaomi 15|Xiaomi|Xiaomi|24129PN74G|dada|dada_global|qcom|sun|Xiaomi/dada_global/dada:15/AQ3A.240812.002/OS2.0.105.0.VOCMIXM:user/release-keys|AQ3A.240812.002|OS2.0.105.0.VOCMIXM|15|35|2024-12-01
+OnePlus 13|OnePlus|OnePlus|CPH2655|OP5D0DL1|CPH2655EE|qcom|sun|OnePlus/CPH2655EE/OP5D0DL1:15/UKQ1.231108.001/V.2f9c1a:user/release-keys|UKQ1.231108.001|V.2f9c1a|15|35|2024-12-05
+Xperia 1 VI|Sony|Sony|XQ-EC54|XQ-EC54|XQ-EC54|qcom|kalama|Sony/XQ-EC54/XQ-EC54:15/69.2.A.2.160/069002A002016001234567890:user/release-keys|69.2.A.2.160|069002A002016001234567890|15|35|2024-10-01
+Nothing 2a|Nothing|Nothing|A142|Aerodactyl|Aerodactyl|mt6886|mt6886|Nothing/Aerodactyl/Aerodactyl:15/AP3A.240905.015.A2/2507082038:user/release-keys|AP3A.240905.015.A2|2507082038|15|35|2025-01-01

@@ -1,0 +1,10 @@
+# catalog 2026-11-02
+# CA subject DNs that should not be in a system trust store (incident 10202).
+CN=EM DV TLS CA - G3B,O=eMudhra BV,C=NL
+CN=EM DV TLS CA - G3C,O=eMudhra Inc,C=US
+CN=EM EV TLS CA - G3B,O=eMudhra BV,C=NL
+CN=EM EV TLS CA - G3C,O=eMudhra Inc,C=US
+CN=EM OV TLS CA - G3B,O=eMudhra BV,C=NL
+CN=EM OV TLS CA - G3C,O=eMudhra Inc,C=US
+CN=EM OV CS CA - G3B,O=eMudhra BV,C=NL
+CN=EM OV CS CA - G3C,O=eMudhra Inc,C=US

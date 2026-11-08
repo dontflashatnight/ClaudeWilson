@@ -1,0 +1,9 @@
+# catalog 2026-11-02
+# Directories a locked build mounts read-only.
+/system
+/system/bin
+/system/sbin
+/system/xbin
+/vendor/bin
+/sbin
+/etc
