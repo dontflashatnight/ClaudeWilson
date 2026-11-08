@@ -4,11 +4,9 @@
 
 # ClaudeWilson
 
-**先把 Claude / ChatGPT 看到的 Android 环境看清楚，再决定改什么。**
+**Claude / ChatGPT Android 环境模拟器**
 
 ClaudeWilson 是一个可逆的环境观测与对齐工具。它把目标应用会读取的地区、SIM、语言、时区、机型和网络出口集中到一张表里；能对齐的给出写入路径，不能对齐的明确标出来。
-
-> 不是破解，也不是外挂。它不承诺“不会封号”，不能改变服务端判断、TEE 或 Play Integrity。请只在自己的设备上使用。
 
 <p align="center">
   <a href="README.md"><b>简体中文</b></a> ·
