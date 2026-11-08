@@ -277,7 +277,12 @@ final class PersonaPanel extends UiSection {
         liveNet = simValue(liveNet);
         liveNetIso = simValue(liveNetIso);
         liveNetName = simValue(liveNetName);
-        String liveTz = java.util.TimeZone.getDefault().getID();
+        // This process may have started before the system zone changed. TimeZone.getDefault()
+        // keeps the old value, so read the property the rest of the system actually uses.
+        String liveTz = DeviceSignals.getprop("persist.sys.timezone");
+        if (empty(liveTz)) {
+            liveTz = java.util.TimeZone.getDefault().getID();
+        }
         // The target language is whatever the target process reads from the hook payload. It is
         // not this control app's UI language and not the system locale.
         com.walter.claudewilson.model.CheckItem targetLocale =
@@ -300,7 +305,6 @@ final class PersonaPanel extends UiSection {
         } catch (Throwable t) {
             liveAidText = "?";
         }
-        boolean regionReady = hasPersona && RegionSelection.regionApplied;
         String dash = "—";
         // Model and AID are injection-layer targets: without hooks they can only ever show
         // the device own value, so they must not pretend to compare against a persona.
@@ -383,10 +387,9 @@ final class PersonaPanel extends UiSection {
         // Status text is deliberately not attached: the card shows values, not a log stream.
         // Group 1: values the region switch writes by itself, so they belong at the top.
         LinearLayout mccRow = row(hasPersona, "SIM MCC/MNC",
-                hasPersona && rootChannel ? opShown : dash,
+                hasPersona ? opShown : dash,
                 shown(liveOp),
-                !hasPersona || !rootChannel ? -1
-                        : regionReady ? mccComparison(op, liveOp) : -3);
+                !hasPersona ? -1 : mccComparison(op, liveOp));
         if (hasPersona) gateRoot(mccRow,
                 Lang.t("SIM MCC/MNC 覆写需要系统级权限（root）",
                         "SIM MCC/MNC override needs the system channel (root)",
@@ -394,10 +397,9 @@ final class PersonaPanel extends UiSection {
                 this::editMcc);
         card.addView(mccRow);
         LinearLayout isoRow = row(hasPersona, Lang.t("SIM 国家", "SIM country", "SIM 国"),
-                hasPersona && simCarrierWritable ? iso : dash,
+                hasPersona ? iso : dash,
                 shown(liveIso),
-                !hasPersona || !simCarrierWritable ? -1
-                        : regionReady ? comparison(iso, liveIso) : -3);
+                !hasPersona ? -1 : comparison(iso, liveIso));
         if (hasPersona) {
             if (simCarrierWritable) {
                 gateAnyChannel(isoRow,
@@ -415,10 +417,9 @@ final class PersonaPanel extends UiSection {
         }
         card.addView(isoRow);
         LinearLayout carrierRow = row(hasPersona, Lang.t("SIM 运营商", "SIM carrier", "SIM キャリア"),
-                hasPersona && simCarrierWritable ? carShown : dash,
+                hasPersona ? carShown : dash,
                 shown(liveCarrier),
-                !hasPersona || !simCarrierWritable ? -1
-                        : comparison(car, liveCarrier));
+                !hasPersona ? -1 : comparison(car, liveCarrier));
         if (hasPersona) {
             if (simCarrierWritable) {
                 gateAnyChannel(carrierRow,
@@ -467,29 +468,27 @@ final class PersonaPanel extends UiSection {
             String netActual = injectedNow && targetProcessLive() ? netTarget : liveNetTrio;
             card.addView(row(hasPersona,
                     Lang.t("拜访网络", "visited network", "訪問ネットワーク"),
-                    hasPersona && rootChannel ? netTarget : dash,
+                    hasPersona ? netTarget : dash,
                     hasPersona ? netActual : liveNetTrio,
-                    !hasPersona || !rootChannel ? -1
-                            : comparison(netTarget, netActual)));
+                    !hasPersona ? -1 : comparison(netTarget, netActual)));
         }
         card.addView(row(hasPersona, Lang.t("目标语言", "target language", "対象言語"),
                 hasPersona ? loc.replace("-", "_") : dash,
                 liveLoc,
-                !hasPersona ? -1 : !regionReady ? -3 : !targetLocaleLive ? -3
+                !hasPersona ? -1 : !targetLocaleLive ? -3
                         : comparison(loc.replace("-", "_"), liveLoc)));
         LinearLayout tzRow = row(hasPersona, Lang.t("时区", "tz", "TZ"),
                 hasPersona ? tz : dash,
                 liveTz,
-                !hasPersona ? -1 : regionReady ? comparison(tz, liveTz) : -3);
+                !hasPersona ? -1 : comparison(tz, liveTz));
         if (hasPersona) bindTimeZoneEditor(tzRow);
         card.addView(tzRow);
-        String[] live = Regions.live(this);
+        String liveUtc = Regions.utcAt(liveTz);
         LinearLayout utcRow = row(hasPersona,
                 Lang.t("UTC 偏移", "UTC offset", "UTC オフセット"),
                 hasPersona ? r.utc : dash,
-                live[5],
-                !hasPersona ? -1 : regionReady
-                        ? Regions.utcMatch(r.utc, live[5]) ? 1 : 0 : -3);
+                liveUtc,
+                !hasPersona ? -1 : Regions.utcMatch(r.utc, liveUtc) ? 1 : 0);
         if (hasPersona) bindTimeZoneEditor(utcRow);
         card.addView(utcRow);
         String hintExpected = hasPersona ? r.iso.toUpperCase(java.util.Locale.ROOT) : dash;

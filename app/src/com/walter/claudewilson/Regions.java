@@ -2,7 +2,6 @@ package com.walter.claudewilson;
 
 import android.content.Context;
 import android.os.Build;
-import android.telephony.TelephonyManager;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -225,6 +224,13 @@ public final class Regions {
                 + (a % 60 == 0 ? "" : ":" + (a % 60 < 10 ? "0" : "") + a % 60);
     }
 
+    /** Current UTC text for a zone id; callers pass the system property, not a cached TimeZone. */
+    static String utcAt(String zone) {
+        TimeZone t = zone == null || zone.isEmpty()
+                ? TimeZone.getDefault() : TimeZone.getTimeZone(zone);
+        return "UTC" + utcFmt(t.getOffset(System.currentTimeMillis()) / 60000);
+    }
+
     private static volatile Map<String, String> mccMap;
     static String mccFor(String iso) {
         Map<String, String> m = mccMap;
@@ -367,28 +373,6 @@ public final class Regions {
         for (char c : iso.toUpperCase(Locale.ROOT).toCharArray())
             b.appendCodePoint(0x1F1E6 + (c - 'A'));
         return b.toString();
-    }
-
-    /** live values T-1-visible: {simIso, mcc, carrier, locale, tzId, utcText} */
-    public static String[] live(Context ctx) {
-        String simIso = "", mcc = "", carrier = "";
-        try {
-            TelephonyManager tm = (TelephonyManager)
-                    ctx.getSystemService(Context.TELEPHONY_SERVICE);
-            String op = nn(tm.getSimOperator());
-            if (op.length() >= 3) mcc = op.substring(0, 3);
-            simIso = nn(tm.getSimCountryIso());
-            carrier = nn(tm.getNetworkOperatorName());
-            String sim = nn(tm.getSimOperatorName());
-            if (!sim.isEmpty() && !sim.equals(carrier))
-                carrier += "·sim:" + sim;
-        } catch (Throwable ignored) {}
-        TimeZone t = TimeZone.getDefault();
-        int min = t.getOffset(System.currentTimeMillis()) / 60000;
-        String utc = "UTC" + (min >= 0 ? "+" : "-") + Math.abs(min) / 60
-                + (Math.abs(min) % 60 == 0 ? "" : ":" + Math.abs(min) % 60);
-        return new String[]{ simIso.toLowerCase(Locale.ROOT), mcc, carrier,
-                Locale.getDefault().toString(), t.getID(), utc };
     }
 
     public static boolean mccMatch(String expected, String actual) {
