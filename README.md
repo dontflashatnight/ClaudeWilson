@@ -15,6 +15,10 @@ ClaudeWilson 是一个可逆的环境观测与对齐工具。它把目标应用�
   <a href="README.en.md">English</a>
 </p>
 
+<p align="center">
+  <img src="docs/App_Preview/preview.png" width="820" alt="ClaudeWilson 界面总览">
+</p>
+
 ---
 
 ## 目录

@@ -15,6 +15,10 @@ ClaudeWilson is a reversible environment observer and aligner. It puts the regio
   <a href="README.en.md"><b>English</b></a>
 </p>
 
+<p align="center">
+  <img src="docs/App_Preview/preview.png" width="820" alt="ClaudeWilson app overview">
+</p>
+
 ---
 
 ## Contents
