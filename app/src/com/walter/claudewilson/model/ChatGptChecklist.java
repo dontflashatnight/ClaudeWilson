@@ -25,6 +25,8 @@ public final class ChatGptChecklist {
     public static final String TRANSPORT = "transport";
     public static final String TARGET = "target";
     public static final String SYSTEM = "system";
+    public static final String PERMISSION = "permission";
+    public static final String LOCATION = "location";
 
     private static final CheckItem.Writable YES = CheckItem.Writable.YES;
     private static final CheckItem.Writable NO = CheckItem.Writable.NO;
@@ -209,6 +211,30 @@ public final class ChatGptChecklist {
                 "SubscriptionInfo.getCarrierId", NO, "cannot-change", false, false, null));
         out.add(spec("system.build", SYSTEM, "Build.MODEL + Build.FINGERPRINT",
                 NO, "cannot-change", false, false, null));
+        out.add(spec("permission.location.fine", PERMISSION,
+                "manifest + PackageManager + appops", NO, "cannot-change", true, false, null));
+        out.add(spec("permission.location.coarse", PERMISSION,
+                "manifest + PackageManager + appops", NO, "cannot-change", true, false, null));
+        out.add(spec("permission.location.background", PERMISSION,
+                "manifest ACCESS_BACKGROUND_LOCATION", NO, "cannot-change", true, false, null));
+        out.add(spec("permission.calendar", PERMISSION,
+                "manifest READ/WRITE_CALENDAR", NO, "cannot-change", true, false, null));
+        out.add(spec("permission.microphone", PERMISSION,
+                "manifest RECORD_AUDIO", NO, "cannot-change", true, false, null));
+        out.add(spec("permission.health", PERMISSION,
+                "manifest android.permission.health.*", NO, "cannot-change", true, false, null));
+        out.add(spec("permission.screen_capture", PERMISSION,
+                "manifest DETECT_SCREEN_CAPTURE", NO, "cannot-change", true, false, null));
+        out.add(spec("location.mode", LOCATION,
+                "Settings.Secure location_mode", NO, "cannot-change", false, false, null));
+        out.add(spec("location.provider", LOCATION,
+                "Settings.Secure location_providers_allowed", NO, "cannot-change", false, false,
+                null));
+        out.add(spec("location.appops", LOCATION,
+                "cmd appops get <pkg> FINE/COARSE_LOCATION", NO, "cannot-change", true, false,
+                null));
+        out.add(spec("location.mock", LOCATION,
+                "cmd appops get <pkg> MOCK_LOCATION", NO, "cannot-change", true, false, null));
         return Collections.unmodifiableList(out);
     }
 
@@ -391,6 +417,20 @@ public final class ChatGptChecklist {
         out.add(value(item("system.sim_carrier_id"), data.get("sim_carrier_id")));
         out.add(value(item("system.build"), build(snapshot.build().model(),
                 snapshot.build().fingerprint())));
+        out.add(value(item("permission.location.fine"),
+                permission(snapshot, "location.fine")));
+        out.add(value(item("permission.location.coarse"),
+                permission(snapshot, "location.coarse")));
+        out.add(value(item("permission.location.background"),
+                permission(snapshot, "location.background")));
+        out.add(value(item("permission.calendar"), permission(snapshot, "calendar")));
+        out.add(value(item("permission.microphone"), permission(snapshot, "microphone")));
+        out.add(value(item("permission.health"), permission(snapshot, "health")));
+        out.add(value(item("permission.screen_capture"), permission(snapshot, "screen_capture")));
+        out.add(value(item("location.mode"), locationMode(snapshot)));
+        out.add(value(item("location.provider"), locationProviders(snapshot)));
+        out.add(value(item("location.appops"), locationAppOps(snapshot)));
+        out.add(value(item("location.mock"), locationMock(snapshot)));
         return RiskModel.evaluate(out, constraints());
     }
 
@@ -453,6 +493,57 @@ public final class ChatGptChecklist {
 
     private static CheckItem value(CheckItem spec, String raw) {
         return raw == null ? spec.unreadable() : spec.withValue(raw);
+    }
+
+    private static String permission(Snapshot snapshot, String key) {
+        PermissionFacts facts = snapshot.permissions();
+        if (!facts.readable()) {
+            return null;
+        }
+        switch (facts.state(key)) {
+            case GRANTED:
+                return "granted";
+            case DENIED:
+                return "denied";
+            case NOT_REQUESTED:
+                return "not-requested";
+            case APPROXIMATE:
+                return "approximate";
+            default:
+                return null;
+        }
+    }
+
+    private static String locationMode(Snapshot snapshot) {
+        return snapshot.location().readable() ? snapshot.location().modeLabel() : null;
+    }
+
+    private static String locationProviders(Snapshot snapshot) {
+        if (!snapshot.location().readable()) {
+            return null;
+        }
+        String providers = snapshot.location().providers();
+        if (providers.isEmpty()) {
+            return null;
+        }
+        return snapshot.location().mode() == LocationFacts.Mode.OFF
+                ? providers + " (mode off)" : providers;
+    }
+
+    private static String locationAppOps(Snapshot snapshot) {
+        PermissionFacts facts = snapshot.permissions();
+        String fine = facts.appOp("location.fine");
+        String coarse = facts.appOp("location.coarse");
+        if (fine.isEmpty() && coarse.isEmpty()) {
+            return null;
+        }
+        return "fine=" + (fine.isEmpty() ? "?" : fine)
+                + " coarse=" + (coarse.isEmpty() ? "?" : coarse);
+    }
+
+    private static String locationMock(Snapshot snapshot) {
+        return snapshot.location().mockKnown()
+                ? (snapshot.location().mock() ? "mock" : "no-mock") : null;
     }
 
     private static CheckItem hook(CheckItem spec, String raw, boolean live) {

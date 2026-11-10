@@ -40,6 +40,8 @@ public final class Snapshot {
     private final TlsFacts tls;
     private final NetworkFacts network;
     private final TargetEvidence targetEvidence;
+    private final PermissionFacts permissions;
+    private final LocationFacts location;
     private final Tables tables;
     private final long capturedAt;
 
@@ -68,6 +70,8 @@ public final class Snapshot {
         this.tls = b.tls;
         this.network = b.network;
         this.targetEvidence = b.targetEvidence;
+        this.permissions = b.permissions;
+        this.location = b.location;
         this.tables = b.tables;
         this.capturedAt = b.capturedAt;
     }
@@ -193,6 +197,14 @@ public final class Snapshot {
         return capturedAt;
     }
 
+    public PermissionFacts permissions() {
+        return permissions;
+    }
+
+    public LocationFacts location() {
+        return location;
+    }
+
     public static final class Builder {
         private BuildValues build = BuildValues.EMPTY;
         private SimValues sim = SimValues.EMPTY;
@@ -217,6 +229,8 @@ public final class Snapshot {
         private TlsFacts tls = TlsFacts.EMPTY;
         private NetworkFacts network = NetworkFacts.EMPTY;
         private TargetEvidence targetEvidence = TargetEvidence.EMPTY;
+        private PermissionFacts permissions = PermissionFacts.EMPTY;
+        private LocationFacts location = LocationFacts.EMPTY;
         private Tables tables = Tables.EMPTY;
         private long capturedAt;
 
@@ -323,6 +337,16 @@ public final class Snapshot {
 
         public Builder targetEvidence(TargetEvidence value) {
             this.targetEvidence = value == null ? TargetEvidence.EMPTY : value;
+            return this;
+        }
+
+        public Builder permissions(PermissionFacts value) {
+            this.permissions = value == null ? PermissionFacts.EMPTY : value;
+            return this;
+        }
+
+        public Builder location(LocationFacts value) {
+            this.location = value == null ? LocationFacts.EMPTY : value;
             return this;
         }
 

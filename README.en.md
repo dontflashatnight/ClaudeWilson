@@ -121,10 +121,25 @@ The order is fixed:
 3. **Region switch**: pick a region; `✕` closes and restores.
 4. **Network**: VPN, IP exit, line, DNS, IPv6, UDP, node.
 5. **Data cleanup**: clear the target's local data.
-6. **Check items**: the target's own observations, grouped by identity / account / integrity / transport / target / system.
+6. **Check items**: the target's own observations, grouped by identity / account / integrity / transport / target / system / permissions / location.
 7. **Account layer**: account boundaries and local account records.
 
 The eye at the right of the title masks sensitive values (AID, SIM, model, fingerprint, account ids). It only changes what is drawn; writes and verdicts are unaffected.
+
+### Permission and location observations
+
+**Target view** now has two read-only groups:
+
+- **Permissions**: `permission.location.fine` / `coarse` / `background`, calendar, microphone,
+  health and screen capture. Values are `granted`, `denied`, `not-requested` or `approximate`;
+  `not-requested` is not a denial.
+- **Location**: system location mode, provider list, target AppOps and mock status. A
+  `(mode off)` suffix means the system switch is off, so the provider list may be historical;
+  `location.appops` needs root or Shizuku.
+
+Ordinary permissions only expose manifest declarations. Whether the target was actually granted
+them, and whether AppOps allows them, needs the shell channel; without it the row stays `—`,
+never a fabricated "denied".
 
 ## Region switch and restore
 
@@ -302,7 +317,7 @@ app/src/com/walter/claudewilson/
 ├── TargetDataEdit.java          reversible single-field ChatGPT DataStore edit
 ├── Geo.java                     region coordinate asset loader
 ├── Targets.java                 target selection and package state
-├── model/                       pure data and rules (38 files)
+├── model/                       pure data and rules (42 files)
 ├── rule/                        pure probe rules (36 files)
 ├── platform/                    the only device collection layer (5 files)
 └── hook/                        Vector module (11 files)
@@ -339,8 +354,8 @@ Both checklists are 1:1 data definitions:
 
 | Target | Items | Cross-item constraints |
 |---|---:|---:|
-| Claude | 67 | 17 |
-| ChatGPT | 65 | 22 |
+| Claude | 78 | 17 |
+| ChatGPT | 76 | 22 |
 
 The numbers move with releases. Tests assert breadth and key relations, not the exact count.
 

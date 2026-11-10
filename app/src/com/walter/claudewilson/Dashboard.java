@@ -324,6 +324,7 @@ final class Dashboard extends UiSection {
                 }
             }
             TargetEvidence evidence = targetEvidence(target, root, fast);
+            TargetPermissionCollector targetFacts = new TargetPermissionCollector();
             Snapshot snapshot = new AndroidSnapshotCollector().collect(
                     this, target.packageName(), accounts, readable, fast,
                     // In the root channel the target runs the persona payload, which hides the
@@ -331,7 +332,9 @@ final class Dashboard extends UiSection {
                     // of injecting frida into this process (the old VpnHide approach, which made
                     // every root interaction slower).
                     root,
-                    evidence);
+                    evidence,
+                    targetFacts.permissions(this, target),
+                    targetFacts.location(this, target));
             if (target.id().equals(Targets.current().id())) {
                 if ("chatgpt".equals(target.id())) {
                     riskOut[0] = new ChatGptRiskCollector()
