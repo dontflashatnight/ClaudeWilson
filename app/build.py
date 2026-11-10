@@ -64,11 +64,16 @@ def forbidden_api_refs(dexdump):
     app_prefix = "Lcom/walter/claudewilson/"
     shell_probe = app_prefix + "ShellNetworkProbe;"
     bridge = app_prefix + "Bridge;"
+    # The synthetic-location writer is the only class allowed to touch android.location: it
+    # constructs a fake fix and never calls a reader (getLastKnownLocation/requestLocationUpdates
+    # on the real manager are hooked, not invoked).
+    location_hook = app_prefix + "hook/LocationHooks;"
+    location_hook_inner = app_prefix + "hook/LocationHooks$"
     network = ("Ljava/net/Socket", "Ljava/net/URL", "Ljava/net/HttpURLConnection",
                "Ljava/net/DatagramSocket", "Ljavax/net/SocketFactory",
                "Ljavax/net/ssl/SSLSocket", "Ljava/net/InetAddress;.getByName",
                "Ljava/net/InetAddress;.getAllByName", "Lokhttp3/")
-    forbidden = ("Landroid/webkit/", "Landroid/location/")
+    forbidden = ("Landroid/webkit/",)
     for line in dexdump.splitlines():
         match = re.search(r"Class descriptor\s*:\s*'([^']+)'", line)
         if match:
@@ -80,6 +85,9 @@ def forbidden_api_refs(dexdump):
             continue
         ref = match.group(1)
         if ref.startswith(forbidden) or (
+                ref.startswith("Landroid/location/")
+                and owner != location_hook
+                and not owner.startswith(location_hook_inner)) or (
                 owner != shell_probe and ref.startswith(network)) or (
                 ref.startswith(shell_probe + ".") and owner not in (bridge, shell_probe)):
             blocked.add(owner + " -> " + ref)
