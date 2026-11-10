@@ -17,9 +17,11 @@ import com.walter.claudewilson.model.Finding;
 import com.walter.claudewilson.model.GeoTable;
 import com.walter.claudewilson.model.Layer;
 import com.walter.claudewilson.model.LocationFix;
+import com.walter.claudewilson.model.LocationFacts;
 import com.walter.claudewilson.model.LocationPayload;
 import com.walter.claudewilson.model.LocationPlan;
 import com.walter.claudewilson.model.MapProjection;
+import com.walter.claudewilson.model.PermissionFacts;
 import com.walter.claudewilson.model.Mount;
 import com.walter.claudewilson.model.Outcome;
 import com.walter.claudewilson.model.Output;
@@ -237,6 +239,9 @@ public final class SelfTest {
         geoTableResolvesZoneAndCentre();
         geoTableSearchesAndFindsNearest();
         mapProjectionRoundTrips();
+        permissionFactsDistinguishStates();
+        locationFactsExposeModeAndNoCoordinates();
+        checklistsIncludePermissionRows();
         locationPayloadIsSelfContained();
         locationPlanStaysInsideItsRadius();
         coarseLocationSnapsAndDropsMotion();
@@ -1954,6 +1959,65 @@ public final class SelfTest {
                 == MapProjection.MAX_LATITUDE);
         check("map projection wraps longitude",
                 Math.abs(MapProjection.longitudeAt(1.0d) + 180.0d) < 1.0E-9d);
+    }
+
+    private static void permissionFactsDistinguishStates() {
+        PermissionFacts facts = new PermissionFacts.Builder()
+                .put("location.fine", true, false)
+                .put("location.coarse", true, true)
+                .approximate("location.fine")
+                .put("calendar", false, false)
+                .appOp("location.fine", "ignore")
+                .readable(true)
+                .build();
+        check("permission: readable", facts.readable());
+        check("permission: approximate", facts.state("location.fine")
+                == PermissionFacts.State.APPROXIMATE);
+        check("permission: granted", facts.state("location.coarse")
+                == PermissionFacts.State.GRANTED);
+        check("permission: not requested", facts.state("calendar")
+                == PermissionFacts.State.NOT_REQUESTED);
+        check("permission: appops", "ignore".equals(facts.appOp("location.fine")));
+        check("permission: empty unreadable", !PermissionFacts.EMPTY.readable());
+    }
+
+    private static void locationFactsExposeModeAndNoCoordinates() {
+        LocationFacts facts = new LocationFacts.Builder()
+                .mode(LocationFacts.Mode.HIGH)
+                .providers("gps,network")
+                .gps(true)
+                .network(true)
+                .mock(false)
+                .readable(true)
+                .build();
+        check("location facts: mode label", "high-accuracy".equals(facts.modeLabel()));
+        check("location facts: providers", facts.gps() && facts.network());
+        check("location facts: no coordinate API",
+                !hasMethod(LocationFacts.class, "latitude")
+                        && !hasMethod(LocationFacts.class, "longitude"));
+    }
+
+    private static boolean hasMethod(Class<?> type, String name) {
+        try {
+            type.getMethod(name);
+            return true;
+        } catch (NoSuchMethodException e) {
+            return false;
+        }
+    }
+
+    private static void checklistsIncludePermissionRows() {
+        boolean claude = false;
+        for (CheckItem item : ClaudeChecklist.specs()) {
+            claude |= "permission.location.fine".equals(item.id())
+                    && "permission".equals(item.channel());
+        }
+        boolean chatgpt = false;
+        for (CheckItem item : ChatGptChecklist.specs()) {
+            chatgpt |= "location.appops".equals(item.id());
+        }
+        check("checklists: claude permission row", claude);
+        check("checklists: chatgpt location row", chatgpt);
     }
 
     private static void locationPayloadIsSelfContained() {

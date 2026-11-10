@@ -54,6 +54,13 @@ final class RiskModelPanel extends UiSection {
         if (id.startsWith(prefix)) {
             return "datadog." + id.substring(prefix.length());
         }
+        prefix = "permission.location.";
+        if (id.startsWith(prefix)) {
+            return "permission." + id.substring(prefix.length());
+        }
+        if ("permission.screen_capture".equals(id)) {
+            return "permission.screen";
+        }
         return id;
     }
     /** Pass rows are noise until the user asks for them; this survives a full render. */
@@ -125,6 +132,10 @@ final class RiskModelPanel extends UiSection {
                 return Lang.t("目标进程", "target process");
             case "system":
                 return Lang.t("系统", "system");
+            case "permission":
+                return Lang.t("权限", "permissions");
+            case "location":
+                return Lang.t("定位", "location");
             default:
                 return channel;
         }

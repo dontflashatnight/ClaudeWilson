@@ -121,10 +121,23 @@ Shizuku 第一次使用：在 Shizuku 应用里允许 ClaudeWilson；如果顶�
 3. **地区切换**：选地区；`✕` 关闭并恢复。
 4. **网络**：VPN、IP 出口、线路、DNS、IPv6、UDP、节点。
 5. **数据清理**：清除目标本地数据。
-6. **检查项**：目标自己的观测行，按身份 / 账号 / 完整性 / 传输 / 目标 / 系统分组。
+6. **检查项**：目标自己的观测行，按身份 / 账号 / 完整性 / 传输 / 目标 / 系统 / 权限 / 定位分组。
 7. **账号层**：账号边界和本地账号记录。
 
 标题右边的小眼睛会遮住敏感值（AID、SIM、机型、指纹、账号标识）。它只影响显示，不影响写入和判定。
+
+### 权限与定位观测
+
+“目标视角”现在多出两组只读行：
+
+- **权限**：`permission.location.fine` / `coarse` / `background`、日历、麦克风、健康、屏幕捕获。
+  值分 `granted`、`denied`、`not-requested`、`approximate`；`not-requested` 不是拒绝。
+- **定位**：系统定位模式、provider 列表、目标 AppOps、mock 状态。`location.provider` 后面的
+  `(mode off)` 表示系统定位开关关闭，provider 表可能只是历史值；`location.appops` 需要
+  root 或 Shizuku 才能读到目标的值。
+
+普通权限只能看到 manifest 声明；目标是否真的被授予、AppOps 是否放行，需要 shell 通道。
+没有通道时行显示 `—`，不会画成“拒绝”。
 
 ## 地区切换与恢复
 
@@ -301,7 +314,7 @@ app/src/com/walter/claudewilson/
 ├── TargetDataEdit.java         ChatGPT DataStore 单字段可逆写入
 ├── Geo.java                    地区坐标资产加载
 ├── Targets.java                目标选择与包状态
-├── model/                      纯数据与纯规则（38 个文件）
+├── model/                      纯数据与纯规则（42 个文件）
 ├── rule/                       纯规则 probe（36 个文件）
 ├── platform/                   唯一设备采集层（5 个文件）
 └── hook/                       Vector 模块（11 个文件）
@@ -338,8 +351,8 @@ Dashboard.startScan()
 
 | 目标 | 检查项 | 跨项约束 |
 |---|---:|---:|
-| Claude | 67 | 17 |
-| ChatGPT | 65 | 22 |
+| Claude | 78 | 17 |
+| ChatGPT | 76 | 22 |
 
 数字随版本变化，测试只断言“足够宽”和关键关系，不把数字写死。
 

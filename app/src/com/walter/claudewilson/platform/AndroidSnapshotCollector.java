@@ -129,6 +129,16 @@ public final class AndroidSnapshotCollector {
     public Snapshot collect(Context context, String targetPackage,
                             List<Account> accounts, boolean accountsReadable, boolean fast,
                             boolean mirrorVpn, TargetEvidence targetEvidence) {
+        return collect(context, targetPackage, accounts, accountsReadable, fast, mirrorVpn,
+                targetEvidence, com.walter.claudewilson.model.PermissionFacts.EMPTY,
+                com.walter.claudewilson.model.LocationFacts.EMPTY);
+    }
+
+    public Snapshot collect(Context context, String targetPackage,
+                            List<Account> accounts, boolean accountsReadable, boolean fast,
+                            boolean mirrorVpn, TargetEvidence targetEvidence,
+                            com.walter.claudewilson.model.PermissionFacts permissions,
+                            com.walter.claudewilson.model.LocationFacts location) {
         Context app = context.getApplicationContext();
         Tables tables = TablesLoader.load(app);
         Snapshot base = fast ? cached : null;
@@ -145,7 +155,9 @@ public final class AndroidSnapshotCollector {
                 .platform(reuse ? base.platform() : collectPlatform(app))
                 .tls(reuse ? base.tls() : collectTls())
                 .network(collectNetwork(app, mirrorVpn))
-                .targetEvidence(targetEvidence);
+                .targetEvidence(targetEvidence)
+                .permissions(permissions)
+                .location(location);
         for (Map.Entry<String, Text> entry : props.entrySet()) {
             builder.prop(entry.getKey(), entry.getValue());
         }
