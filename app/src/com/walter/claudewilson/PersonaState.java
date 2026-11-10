@@ -168,13 +168,22 @@ final class PersonaState {
      * the same region would generate the same SSIDs, BLE addresses and sensor values.
      */
     long profileSalt(String user) {
-        long value = prefs.getLong(PROFILE_SALT + user, 0L);
+        return profileSalt(user, 0);
+    }
+
+    /**
+     * Salt for one (space, model) pair. The model index is part of the key so switching the
+     * persona model gives a new BSSID/BLE identity even if the device seed were reused.
+     */
+    long profileSalt(String user, int device) {
+        String key = PROFILE_SALT + user + "." + Math.max(0, device);
+        long value = prefs.getLong(key, 0L);
         if (value == 0L) {
             value = new java.security.SecureRandom().nextLong();
             if (value == 0L) {
                 value = 0x9E3779B97F4A7C15L;
             }
-            prefs.edit().putLong(PROFILE_SALT + user, value).apply();
+            prefs.edit().putLong(key, value).apply();
         }
         return value;
     }

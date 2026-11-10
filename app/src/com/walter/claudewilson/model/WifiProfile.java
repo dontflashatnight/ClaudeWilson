@@ -1,10 +1,12 @@
 package com.walter.claudewilson.model;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 /**
  * Virtual Wi-Fi neighbourhood for one region.
@@ -72,12 +74,17 @@ public final class WifiProfile {
         List<Template> pool = templates == null || templates.isEmpty()
                 ? fallback(city) : templates;
         int target = Math.max(3, Math.min(14, count + random.nextInt(5) - 2));
+        Set<String> used = new HashSet<>();
         for (int i = 0; i < target; i++) {
             Template template = pick(pool, random, i == 0);
             String ssid = expand(template.ssid, random);
             int frequency = frequency(template.band, random);
             int level = Math.max(-92, Math.min(-35, -42 - random.nextInt(45)));
             String bssid = bssid(ssid, random, oui);
+            int retry = 0;
+            while (!used.add(bssid) && retry++ < 8) {
+                bssid = bssid(ssid, random, oui);
+            }
             double lat = latitude + (random.nextDouble() - 0.5d) * 0.006d;
             double lng = longitude + (random.nextDouble() - 0.5d) * 0.006d;
             out.add(new Ap(ssid, bssid, frequency, level,
