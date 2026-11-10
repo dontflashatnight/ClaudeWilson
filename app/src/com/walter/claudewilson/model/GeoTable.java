@@ -1,6 +1,9 @@
 package com.walter.claudewilson.model;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -18,14 +21,23 @@ import java.util.Map;
 public final class GeoTable {
 
     public static final class Point {
+        public final String iso;
         public final String city;
         public final double latitude;
         public final double longitude;
+        public final String zone;
 
-        Point(String city, double latitude, double longitude) {
+        Point(String iso, String city, double latitude, double longitude, String zone) {
+            this.iso = iso == null ? "" : iso;
             this.city = city == null ? "" : city;
             this.latitude = latitude;
             this.longitude = longitude;
+            this.zone = zone == null ? "" : zone;
+        }
+
+        /** A caller-supplied point (map picker); no ISO or zone. */
+        public static Point of(String city, double latitude, double longitude) {
+            return new Point("", city, latitude, longitude, "");
         }
 
         public boolean valid() {
@@ -36,6 +48,7 @@ public final class GeoTable {
 
     private final Map<String, Point> centers = new HashMap<>();
     private final Map<String, Point> zones = new HashMap<>();
+    private final List<Point> points = new ArrayList<>();
 
     public static GeoTable parse(String text) {
         GeoTable table = new GeoTable();
@@ -63,11 +76,12 @@ public final class GeoTable {
             } catch (NumberFormatException e) {
                 continue;
             }
-            Point point = new Point(f[1].trim(), lat, lng);
+            String zone = f[4].trim();
+            Point point = new Point(iso, f[1].trim(), lat, lng, zone);
             if (!point.valid()) {
                 continue;
             }
-            String zone = f[4].trim();
+            table.points.add(point);
             if (zone.isEmpty()) {
                 if (!table.centers.containsKey(iso)) {
                     table.centers.put(iso, point);
@@ -88,11 +102,77 @@ public final class GeoTable {
         return iso == null ? null : centers.get(iso.toLowerCase(Locale.ROOT));
     }
 
+    /** Every parsed row, country centres and zone cities. */
+    public List<Point> all() {
+        return Collections.unmodifiableList(points);
+    }
+
     public int centers() {
         return centers.size();
     }
 
     public int zones() {
         return zones.size();
+    }
+
+    /** Nearest known point, or null when the table is empty. */
+    public Point nearest(double latitude, double longitude) {
+        Point best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (Point point : points) {
+            double distance = distanceKm(latitude, longitude, point.latitude, point.longitude);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = point;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Offline search over city, ISO and zone. Country-centre rows have no city name and only
+     * match their ISO; zone rows are preferred when both describe the same place.
+     */
+    public List<Point> search(String query, int limit) {
+        List<Point> out = new ArrayList<>();
+        if (query == null) {
+            return out;
+        }
+        String q = query.trim().toLowerCase(Locale.ROOT);
+        if (q.isEmpty()) {
+            return out;
+        }
+        for (Point point : points) {
+            if (!point.city.isEmpty() && point.city.toLowerCase(Locale.ROOT).contains(q)) {
+                out.add(point);
+            }
+        }
+        for (Point point : points) {
+            if (out.size() >= limit) {
+                break;
+            }
+            if (point.city.isEmpty() && point.iso.equals(q) && !out.contains(point)) {
+                out.add(point);
+            }
+        }
+        for (Point point : points) {
+            if (out.size() >= limit) {
+                break;
+            }
+            if (!point.zone.isEmpty() && point.zone.toLowerCase(Locale.ROOT).contains(q)
+                    && !out.contains(point)) {
+                out.add(point);
+            }
+        }
+        return out.size() > limit ? new ArrayList<>(out.subList(0, limit)) : out;
+    }
+
+    public static double distanceKm(double lat1, double lng1, double lat2, double lng2) {
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLng = Math.toRadians(lng2 - lng1);
+        double a = Math.sin(dLat / 2.0d) * Math.sin(dLat / 2.0d)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(dLng / 2.0d) * Math.sin(dLng / 2.0d);
+        return 12742.0d * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0.0d, 1.0d - a)));
     }
 }

@@ -163,8 +163,16 @@ final class PersonaPanel extends UiSection {
         String[] dv = hasPersona ? PersonaSynth.cross(deviceAt(devIdx), seed) : null;
         final String loc = hasPersona && applyLocale != null ? applyLocale : "—";
         final String tz  = hasPersona && applyZone   != null ? applyZone   : "—";
-        com.walter.claudewilson.model.GeoTable.Point place =
+        com.walter.claudewilson.model.GeoTable.Point regionPoint =
                 hasPersona ? Geo.point(this, r.iso, applyZone) : null;
+        com.walter.claudewilson.model.GeoTable.Point place = regionPoint;
+        boolean customLocation = false;
+        if (hasPersona && persona.hasLocationPoint(user)) {
+            place = com.walter.claudewilson.model.GeoTable.Point.of(
+                    persona.locationCity(user),
+                    persona.locationLatitude(user), persona.locationLongitude(user));
+            customLocation = true;
+        }
         final boolean locationOn = hasPersona && persona.location(user);
         String liveOp = "", liveIso = "", liveCarrier = "";
         // The property area holds one entry per slot ("mccmnc1,mccmnc2"), in slot order. Taking the
@@ -516,7 +524,7 @@ final class PersonaPanel extends UiSection {
         int targetLocation = targetLocationPermission(this, target);
         String locWhere = dash;
         if (place != null) {
-            locWhere = place.city.isEmpty() ? r.name : place.city;
+            locWhere = (place.city.isEmpty() ? r.name : place.city) + (customLocation ? "*" : "");
         }
         String locActual;
         int locStatus;
@@ -1058,54 +1066,31 @@ final class PersonaPanel extends UiSection {
 
     private void bindLocationEditor(LinearLayout row) {
         row.setClickable(true);
-        row.setOnClickListener(v -> editLocation());
+        row.setOnClickListener(v -> openLocationPicker());
         for (int i = 1; i < row.getChildCount(); i++) {
             View cell = row.getChildAt(i);
             cell.setClickable(true);
-            cell.setOnClickListener(v -> editLocation());
+            cell.setOnClickListener(v -> openLocationPicker());
         }
     }
 
-    private void editLocation() {
+    private void openLocationPicker() {
         final String user = currentUser.get();
         if (!com.walter.claudewilson.model.ShellQuote.numeric(user)) {
             return;
         }
         final Regions.R region = regionIdx >= 0 ? Regions.ALL.get(regionIdx) : null;
-        final com.walter.claudewilson.model.GeoTable.Point place =
+        final com.walter.claudewilson.model.GeoTable.Point regionPoint =
                 region == null ? null : Geo.point(this, region.iso, applyZone);
-        if (place == null) {
+        if (regionPoint == null) {
             showRootHint(Lang.t("当前地区没有坐标", "no coordinate for this region",
                     "この地域の座標がありません"));
             return;
         }
-        final TargetSpec target = Targets.current();
-        final boolean on = persona.location(user);
-        int permission = targetLocationPermission(this, target);
-        String permissionText = permission == 2
-                ? Lang.t("精确", "precise", "正確")
-                : permission == 1 ? Lang.t("粗略", "approximate", "おおよそ")
-                : Lang.t("未授予", "not granted", "未許可");
-        String where = (place.city.isEmpty() ? region.name : place.city)
-                + " " + coordinate(place.latitude) + "," + coordinate(place.longitude);
-        String message = where + "\n"
-                + Lang.t("目标权限：", "target permission: ", "対象の権限: ") + permissionText + "\n"
-                + Lang.t("关闭后目标读取真实定位。",
-                        "off means the target reads the real location.",
-                        "オフにすると対象は実際の位置を読みます。");
-        new android.app.AlertDialog.Builder(this)
-                .setTitle(Lang.t("定位", "location", "位置情報"))
-                .setMessage(message)
-                .setPositiveButton(on
-                                ? Lang.t("关闭", "turn off", "オフにする")
-                                : Lang.t("开启", "turn on", "オンにする"),
-                        (dialog, which) -> {
-                            persona.putLocation(user, !on);
-                            renderScreen.run();
-                            publishPersona();
-                        })
-                .setNegativeButton(Lang.t("取消", "cancel", "取消"), null)
-                .show();
+        LocationPickerDialog.show(this, region, regionPoint, persona, user, () -> {
+            renderScreen.run();
+            publishPersona();
+        });
     }
 
     private static int targetLocationPermission(android.content.Context context,
@@ -1126,10 +1111,6 @@ final class PersonaPanel extends UiSection {
         } catch (Throwable ignored) {
         }
         return 0;
-    }
-
-    private static String coordinate(double value) {
-        return String.format(java.util.Locale.ROOT, "%.4f", value);
     }
 
     /** Manual IANA timezone write; root and Shizuku share the same shell command. */

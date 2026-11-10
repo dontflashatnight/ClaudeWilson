@@ -26,6 +26,9 @@ final class PersonaState {
     private static final String CSC = "root_csc.";
     private static final String CC_HINT = "root_cc_hint.";
     private static final String LOCATION = "root_loc.";
+    private static final String LOC_LAT = "root_loc_lat.";
+    private static final String LOC_LNG = "root_loc_lng.";
+    private static final String LOC_CITY = "root_loc_city.";
     private static final String INJECT_SIG = "inject_sig.";
     private static final String USERS = "root_users";
     private static final String LEGACY_AID = "root_aid";
@@ -128,6 +131,35 @@ final class PersonaState {
 
     void putLocation(String user, boolean enabled) {
         prefs.edit().putBoolean(LOCATION + user, enabled).apply();
+    }
+
+    /** A map-picked point for this space; absent means "follow the region centre". */
+    boolean hasLocationPoint(String user) {
+        return prefs.contains(LOC_LAT + user) && prefs.contains(LOC_LNG + user);
+    }
+
+    double locationLatitude(String user) {
+        return Double.longBitsToDouble(prefs.getLong(LOC_LAT + user, 0L));
+    }
+
+    double locationLongitude(String user) {
+        return Double.longBitsToDouble(prefs.getLong(LOC_LNG + user, 0L));
+    }
+
+    String locationCity(String user) {
+        return prefs.getString(LOC_CITY + user, "");
+    }
+
+    void putLocationPoint(String user, double latitude, double longitude, String city) {
+        prefs.edit()
+                .putLong(LOC_LAT + user, Double.doubleToRawLongBits(latitude))
+                .putLong(LOC_LNG + user, Double.doubleToRawLongBits(longitude))
+                .putString(LOC_CITY + user, city == null ? "" : city)
+                .apply();
+    }
+
+    void clearLocationPoint(String user) {
+        prefs.edit().remove(LOC_LAT + user).remove(LOC_LNG + user).remove(LOC_CITY + user).apply();
     }
 
     /** Drop the AID override: the row falls back to the device's own SSAID. */
