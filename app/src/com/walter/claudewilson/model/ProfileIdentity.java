@@ -25,9 +25,13 @@ public final class ProfileIdentity {
                 + part(device[4]) + "|" + part(device[5]);
     }
 
+    public static boolean usable(String identity) {
+        return identity != null && !"unknown".equals(identity)
+                && !identity.replace("|", "").trim().isEmpty();
+    }
+
     /** Short, filename-safe key for preference storage. */
-    public static String key(String identity) {
-        try {
+    public static String key(String identity) {        try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] bytes = digest.digest(identity.getBytes(StandardCharsets.UTF_8));
             StringBuilder out = new StringBuilder(16);

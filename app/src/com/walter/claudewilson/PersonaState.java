@@ -30,6 +30,7 @@ final class PersonaState {
     private static final String LOC_LNG = "root_loc_lng.";
     private static final String LOC_CITY = "root_loc_city.";
     private static final String PROFILE_SALT = "root_psalt.";
+    private static final String UNLISTED_ID = "root_unlisted.";
     private static final String INJECT_SIG = "inject_sig.";
     private static final String USERS = "root_users";
     private static final String LEGACY_AID = "root_aid";
@@ -181,6 +182,21 @@ final class PersonaState {
                 value = 0x9E3779B97F4A7C15L;
             }
             prefs.edit().putLong(key, value).apply();
+        }
+        return value;
+    }
+
+    /**
+     * A stable random identity for a model that has no catalog row and no usable identity
+     * fields. It is not a spoofed model name; it only gives the radio layer something to key on,
+     * so an unlisted model still gets its own BSSID/BLE values instead of sharing index 0.
+     */
+    String unlistedIdentity(String user) {
+        String key = UNLISTED_ID + user;
+        String value = prefs.getString(key, null);
+        if (value == null || value.trim().isEmpty()) {
+            value = "unlisted:" + java.util.UUID.randomUUID();
+            prefs.edit().putString(key, value).apply();
         }
         return value;
     }
