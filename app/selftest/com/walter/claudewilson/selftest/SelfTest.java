@@ -2070,6 +2070,10 @@ public final class SelfTest {
                 ProfileIdentity.key(a).matches("[0-9a-f]{16}"));
         check("identity: unknown fallback",
                 "unknown".equals(ProfileIdentity.of(null)));
+        check("identity: usable only with fields",
+                ProfileIdentity.usable(a)
+                        && !ProfileIdentity.usable(ProfileIdentity.of(null))
+                        && !ProfileIdentity.usable(ProfileIdentity.of(new String[0])));
     }
 
     private static void checklistsIncludePermissionRows() {
