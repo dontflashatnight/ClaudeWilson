@@ -1,4 +1,5 @@
 # iso|city|lat|lng|zone
+# Country centres derived from mledoze/countries (ODbL-1.0); zone rows are curated city points.
 # One country-centre row per supported ISO (empty city); zone rows override.
 al||41.0000|20.0000|
 dz||28.0000|3.0000|
