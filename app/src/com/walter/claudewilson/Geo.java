@@ -18,6 +18,13 @@ final class Geo {
         if (context == null || iso == null) {
             return null;
         }
+        return table(context).point(iso, zone);
+    }
+
+    static GeoTable table(Context context) {
+        if (context == null) {
+            return GeoTable.parse("");
+        }
         GeoTable current = table;
         if (current == null) {
             synchronized (Geo.class) {
@@ -28,7 +35,7 @@ final class Geo {
                 }
             }
         }
-        return current.point(iso, zone);
+        return current;
     }
 
     private static GeoTable load(Context context) {

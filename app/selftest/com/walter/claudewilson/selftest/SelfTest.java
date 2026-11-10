@@ -19,6 +19,7 @@ import com.walter.claudewilson.model.Layer;
 import com.walter.claudewilson.model.LocationFix;
 import com.walter.claudewilson.model.LocationPayload;
 import com.walter.claudewilson.model.LocationPlan;
+import com.walter.claudewilson.model.MapProjection;
 import com.walter.claudewilson.model.Mount;
 import com.walter.claudewilson.model.Outcome;
 import com.walter.claudewilson.model.Output;
@@ -234,6 +235,8 @@ public final class SelfTest {
         claudeMissingSegmentUserIsNoRecord();
 
         geoTableResolvesZoneAndCentre();
+        geoTableSearchesAndFindsNearest();
+        mapProjectionRoundTrips();
         locationPayloadIsSelfContained();
         locationPlanStaysInsideItsRadius();
         coarseLocationSnapsAndDropsMotion();
@@ -1924,6 +1927,33 @@ public final class SelfTest {
                 && Math.abs(centre.longitude + 98.5795d) < 1.0E-9d, String.valueOf(centre));
         check("geo: unknown iso is null", table.point("xx", null) == null);
         check("geo: invalid rows skipped", table.point("zz", "Bad/Zone") == null);
+    }
+
+    private static void geoTableSearchesAndFindsNearest() {
+        String text = "us||39.8283|-98.5795|\n"
+                + "us|New York|40.7128|-74.0060|America/New_York\n"
+                + "jp|Tokyo|35.6762|139.6503|Asia/Tokyo\n";
+        GeoTable table = GeoTable.parse(text);
+        check("geo search: city", table.search("new", 5).size() == 1
+                && "New York".equals(table.search("new", 5).get(0).city));
+        check("geo search: iso", !table.search("us", 5).isEmpty());
+        GeoTable.Point near = table.nearest(35.7d, 139.7d);
+        check("geo nearest: Tokyo", near != null && "Tokyo".equals(near.city));
+    }
+
+    private static void mapProjectionRoundTrips() {
+        double[][] points = {{0, 0}, {35.6762, 139.6503}, {-33.8688, 151.2093},
+                {51.5074, -0.1278}, {-45, 179.9}};
+        for (double[] point : points) {
+            double lat = MapProjection.latitudeAt(MapProjection.y(point[0]));
+            double lng = MapProjection.longitudeAt(MapProjection.x(point[1]));
+            check("map projection roundtrip", Math.abs(lat - point[0]) < 1.0E-9d
+                    && Math.abs(lng - point[1]) < 1.0E-9d, lat + "," + lng);
+        }
+        check("map projection clamps latitude", MapProjection.latitudeAt(0.0d)
+                == MapProjection.MAX_LATITUDE);
+        check("map projection wraps longitude",
+                Math.abs(MapProjection.longitudeAt(1.0d) + 180.0d) < 1.0E-9d);
     }
 
     private static void locationPayloadIsSelfContained() {
