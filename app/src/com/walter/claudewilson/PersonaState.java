@@ -167,16 +167,13 @@ final class PersonaState {
      * Stable per-space salt for the radio/sensor profile library. Without it every space using
      * the same region would generate the same SSIDs, BLE addresses and sensor values.
      */
-    long profileSalt(String user) {
-        return profileSalt(user, 0);
-    }
-
     /**
-     * Salt for one (space, model) pair. The model index is part of the key so switching the
-     * persona model gives a new BSSID/BLE identity even if the device seed were reused.
+     * Salt for one (space, model identity) pair. Keyed by the model fields, not by the picker
+     * index, so an unlisted/custom model cannot fall back to the running device's radio profile.
      */
-    long profileSalt(String user, int device) {
-        String key = PROFILE_SALT + user + "." + Math.max(0, device);
+    long profileSalt(String user, String identity) {
+        String key = PROFILE_SALT + user + "."
+                + com.walter.claudewilson.model.ProfileIdentity.key(identity);
         long value = prefs.getLong(key, 0L);
         if (value == 0L) {
             value = new java.security.SecureRandom().nextLong();

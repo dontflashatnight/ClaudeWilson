@@ -23,6 +23,7 @@ import com.walter.claudewilson.model.LocationPayload;
 import com.walter.claudewilson.model.LocationPlan;
 import com.walter.claudewilson.model.MapProjection;
 import com.walter.claudewilson.model.PermissionFacts;
+import com.walter.claudewilson.model.ProfileIdentity;
 import com.walter.claudewilson.model.WifiProfile;
 import com.walter.claudewilson.model.Mount;
 import com.walter.claudewilson.model.Outcome;
@@ -2054,6 +2055,21 @@ public final class SelfTest {
             }
         }
         check("ble: different seed has different addresses", !sharedBle);
+        profileIdentityIsFieldBased();
+    }
+
+    private static void profileIdentityIsFieldBased() {
+        String[] pixel = {"Pixel 9", "Google", "google", "Pixel 9", "tokay", "tokay"};
+        String[] samsung = {"Galaxy S24U", "samsung", "samsung", "SM-S928B", "e3q", "e3q"};
+        String a = ProfileIdentity.of(pixel);
+        String b = ProfileIdentity.of(pixel);
+        check("identity: stable by fields", a.equals(b));
+        check("identity: model changes identity",
+                !a.equals(ProfileIdentity.of(samsung)));
+        check("identity: key is short hex",
+                ProfileIdentity.key(a).matches("[0-9a-f]{16}"));
+        check("identity: unknown fallback",
+                "unknown".equals(ProfileIdentity.of(null)));
     }
 
     private static void checklistsIncludePermissionRows() {
