@@ -30,6 +30,11 @@ final class TargetPermissionCollector {
     private static final String CALENDAR_WRITE = "android.permission.WRITE_CALENDAR";
     private static final String MICROPHONE = "android.permission.RECORD_AUDIO";
     private static final String SCREEN_CAPTURE = "android.permission.DETECT_SCREEN_CAPTURE";
+    private static final String NEARBY_WIFI = "android.permission.NEARBY_WIFI_DEVICES";
+    private static final String BT_SCAN = "android.permission.BLUETOOTH_SCAN";
+    private static final String BT_CONNECT = "android.permission.BLUETOOTH_CONNECT";
+    private static final String ACTIVITY = "android.permission.ACTIVITY_RECOGNITION";
+    private static final String BODY_SENSORS = "android.permission.BODY_SENSORS";
     private static final Pattern OP = Pattern.compile("([A-Z_]+_LOCATION):\\s*(\\w+)");
 
     PermissionFacts permissions(Context context, TargetSpec target) {
@@ -70,6 +75,16 @@ final class TargetPermissionCollector {
                     Boolean.TRUE.equals(granted.get(MICROPHONE)));
             builder.put("screen_capture", declared.containsKey(SCREEN_CAPTURE),
                     Boolean.TRUE.equals(granted.get(SCREEN_CAPTURE)));
+            builder.put("wifi", declared.containsKey(NEARBY_WIFI),
+                    Boolean.TRUE.equals(granted.get(NEARBY_WIFI)));
+            builder.put("bluetooth_scan", declared.containsKey(BT_SCAN),
+                    Boolean.TRUE.equals(granted.get(BT_SCAN)));
+            builder.put("bluetooth_connect", declared.containsKey(BT_CONNECT),
+                    Boolean.TRUE.equals(granted.get(BT_CONNECT)));
+            builder.put("activity_recognition", declared.containsKey(ACTIVITY),
+                    Boolean.TRUE.equals(granted.get(ACTIVITY)));
+            builder.put("body_sensors", declared.containsKey(BODY_SENSORS),
+                    Boolean.TRUE.equals(granted.get(BODY_SENSORS)));
             boolean healthDeclared = false;
             boolean healthGranted = false;
             for (String name : declared.keySet()) {

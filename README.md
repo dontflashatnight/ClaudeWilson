@@ -130,9 +130,11 @@ Shizuku 第一次使用：在 Shizuku 应用里允许 ClaudeWilson；如果顶�
 
 “目标视角”现在多出两组只读行：
 
-- **权限**：`permission.location.fine` / `coarse` / `background`、日历、麦克风、健康、屏幕捕获。
+- **权限**：`permission.location.fine` / `coarse` / `background`、日历、麦克风、健康、屏幕捕获、
+  Wi-Fi（`NEARBY_WIFI_DEVICES`）、蓝牙扫描/连接、活动识别、身体传感器。
   值分 `granted`、`denied`、`not-requested`、`approximate`；`not-requested` 不是拒绝。
-- **定位**：系统定位模式、provider 列表、目标 AppOps、mock 状态。`location.provider` 后面的
+- **定位**：系统定位模式、provider 列表、目标 AppOps、mock 状态、最近一次目标定位请求
+  （来自目标进程自检的 `location_served` / `location_last`）。`location.provider` 后面的
   `(mode off)` 表示系统定位开关关闭，provider 表可能只是历史值；`location.appops` 需要
   root 或 Shizuku 才能读到目标的值。
 
@@ -314,10 +316,10 @@ app/src/com/walter/claudewilson/
 ├── TargetDataEdit.java         ChatGPT DataStore 单字段可逆写入
 ├── Geo.java                    地区坐标资产加载
 ├── Targets.java                目标选择与包状态
-├── model/                      纯数据与纯规则（42 个文件）
+├── model/                      纯数据与纯规则（44 个文件）
 ├── rule/                       纯规则 probe（36 个文件）
 ├── platform/                   唯一设备采集层（5 个文件）
-└── hook/                       Vector 模块（11 个文件）
+└── hook/                       Vector 模块（16 个文件）
 ```
 
 `model/` 下最重要的是：
@@ -351,8 +353,8 @@ Dashboard.startScan()
 
 | 目标 | 检查项 | 跨项约束 |
 |---|---:|---:|
-| Claude | 78 | 17 |
-| ChatGPT | 76 | 22 |
+| Claude | 84 | 17 |
+| ChatGPT | 82 | 22 |
 
 数字随版本变化，测试只断言“足够宽”和关键关系，不把数字写死。
 

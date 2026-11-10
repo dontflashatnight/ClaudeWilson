@@ -233,6 +233,16 @@ public final class ClaudeChecklist {
                 "manifest android.permission.health.*", NO, "cannot-change", true, false, null));
         out.add(spec("permission.screen_capture", PERMISSION,
                 "manifest DETECT_SCREEN_CAPTURE", NO, "cannot-change", true, false, null));
+        out.add(spec("permission.wifi", PERMISSION,
+                "manifest NEARBY_WIFI_DEVICES", NO, "cannot-change", true, false, null));
+        out.add(spec("permission.bluetooth_scan", PERMISSION,
+                "manifest BLUETOOTH_SCAN", NO, "cannot-change", true, false, null));
+        out.add(spec("permission.bluetooth_connect", PERMISSION,
+                "manifest BLUETOOTH_CONNECT", NO, "cannot-change", true, false, null));
+        out.add(spec("permission.activity_recognition", PERMISSION,
+                "manifest ACTIVITY_RECOGNITION", NO, "cannot-change", true, false, null));
+        out.add(spec("permission.body_sensors", PERMISSION,
+                "manifest BODY_SENSORS", NO, "cannot-change", true, false, null));
         out.add(spec("location.mode", LOCATION,
                 "Settings.Secure location_mode", NO, "cannot-change", false, false, null));
         out.add(spec("location.provider", LOCATION,
@@ -243,6 +253,9 @@ public final class ClaudeChecklist {
                 null));
         out.add(spec("location.mock", LOCATION,
                 "cmd appops get <pkg> MOCK_LOCATION", NO, "cannot-change", true, false, null));
+        out.add(spec("location.last_request", LOCATION,
+                "target hookcheck location_served/location_last", NO, "cannot-change", true,
+                false, null));
         return Collections.unmodifiableList(out);
     }
 
@@ -450,10 +463,19 @@ public final class ClaudeChecklist {
         out.add(value(item("permission.microphone"), permission(snapshot, "microphone")));
         out.add(value(item("permission.health"), permission(snapshot, "health")));
         out.add(value(item("permission.screen_capture"), permission(snapshot, "screen_capture")));
+        out.add(value(item("permission.wifi"), permission(snapshot, "wifi")));
+        out.add(value(item("permission.bluetooth_scan"),
+                permission(snapshot, "bluetooth_scan")));
+        out.add(value(item("permission.bluetooth_connect"),
+                permission(snapshot, "bluetooth_connect")));
+        out.add(value(item("permission.activity_recognition"),
+                permission(snapshot, "activity_recognition")));
+        out.add(value(item("permission.body_sensors"), permission(snapshot, "body_sensors")));
         out.add(value(item("location.mode"), locationMode(snapshot)));
         out.add(value(item("location.provider"), locationProviders(snapshot)));
         out.add(value(item("location.appops"), locationAppOps(snapshot)));
         out.add(value(item("location.mock"), locationMock(snapshot)));
+        out.add(lastRequest(item("location.last_request"), hook, live));
         return RiskModel.evaluate(out, constraints());
     }
 
@@ -567,6 +589,24 @@ public final class ClaudeChecklist {
     private static String locationMock(Snapshot snapshot) {
         return snapshot.location().mockKnown()
                 ? (snapshot.location().mock() ? "mock" : "no-mock") : null;
+    }
+
+    private static CheckItem lastRequest(CheckItem spec, java.util.Map<String, String> hook,
+            boolean live) {
+        String served = hook.get("location_served");
+        if (served == null) {
+            return spec.unreadable();
+        }
+        String age = hook.get("location_last");
+        String value = "served=" + served;
+        if (age != null && !age.startsWith("-")) {
+            value += " last=" + age + "ms";
+        }
+        CheckItem item = spec.withValue(value);
+        if ("0".equals(served)) {
+            item = item.withCoverage(CheckItem.Coverage.NO_RECORD);
+        }
+        return live ? item : item.stale();
     }
 
     /**

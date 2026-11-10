@@ -69,6 +69,9 @@ def forbidden_api_refs(dexdump):
     # on the real manager are hooked, not invoked).
     location_hook = app_prefix + "hook/LocationHooks;"
     location_hook_inner = app_prefix + "hook/LocationHooks$"
+    # WebView geolocation is granted here; coordinates still come from the location hooks.
+    webview_hook = app_prefix + "hook/WebViewHooks;"
+    webview_hook_inner = app_prefix + "hook/WebViewHooks$"
     network = ("Ljava/net/Socket", "Ljava/net/URL", "Ljava/net/HttpURLConnection",
                "Ljava/net/DatagramSocket", "Ljavax/net/SocketFactory",
                "Ljavax/net/ssl/SSLSocket", "Ljava/net/InetAddress;.getByName",
@@ -84,10 +87,12 @@ def forbidden_api_refs(dexdump):
         if not match:
             continue
         ref = match.group(1)
-        if ref.startswith(forbidden) or (
-                ref.startswith("Landroid/location/")
+        if (ref.startswith("Landroid/location/")
                 and owner != location_hook
                 and not owner.startswith(location_hook_inner)) or (
+                ref.startswith("Landroid/webkit/")
+                and owner != webview_hook
+                and not owner.startswith(webview_hook_inner)) or (
                 owner != shell_probe and ref.startswith(network)) or (
                 ref.startswith(shell_probe + ".") and owner not in (bridge, shell_probe)):
             blocked.add(owner + " -> " + ref)

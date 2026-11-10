@@ -1,13 +1,18 @@
 package com.walter.claudewilson.hook;
 
+import com.walter.claudewilson.model.BleProfile;
 import com.walter.claudewilson.model.TargetSpec;
+import com.walter.claudewilson.model.WifiProfile;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /** Persona payload read from the per-target file the control app writes through the root shell. */
@@ -34,6 +39,9 @@ final class HookConfig {
     final double longitude;
     final String locationCity;
     final long locationSeed;
+    final List<WifiProfile.Ap> wifi;
+    final List<BleProfile.Device> ble;
+    final boolean sensorsEnabled;
     final Map<String, String> build;
     final Map<String, String> props;
 
@@ -69,6 +77,9 @@ final class HookConfig {
         locationSeed = location != null
                 ? location.optLong("seed", 0L)
                 : o.optLong("locationSeed", 0L);
+        wifi = parseWifi(o.optJSONArray("wifi"));
+        ble = parseBle(o.optJSONArray("ble"));
+        sensorsEnabled = o.optBoolean("sensorsEnabled", false);
         build = map(o.optJSONObject("build"));
         props = map(o.optJSONObject("props"));
     }
@@ -131,8 +142,43 @@ final class HookConfig {
                 + simOperatorName + "|" + netOperator + "|" + netCountryIso + "|"
                 + netOperatorName + "|" + androidId + "|" + locale + "|" + tz + "|"
                 + locationEnabled + "|" + latitude + "|" + longitude + "|"
-                + locationCity + "|" + locationSeed)
+                + locationCity + "|" + locationSeed + "|" + wifi.size() + "|" + ble.size()
+                + "|" + sensorsEnabled)
                 .hashCode());
+    }
+
+    private static java.util.List<WifiProfile.Ap> parseWifi(JSONArray array) {
+        java.util.List<WifiProfile.Ap> out = new ArrayList<>();
+        if (array == null) {
+            return out;
+        }
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject o = array.optJSONObject(i);
+            if (o == null) {
+                continue;
+            }
+            out.add(new WifiProfile.Ap(o.optString("ssid", ""), o.optString("bssid", ""),
+                    o.optInt("frequency", 2412), o.optInt("level", -70),
+                    o.optString("capabilities", "[ESS]"), o.optBoolean("connected", false),
+                    o.optDouble("latitude", Double.NaN), o.optDouble("longitude", Double.NaN)));
+        }
+        return out;
+    }
+
+    private static java.util.List<BleProfile.Device> parseBle(JSONArray array) {
+        java.util.List<BleProfile.Device> out = new ArrayList<>();
+        if (array == null) {
+            return out;
+        }
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject o = array.optJSONObject(i);
+            if (o == null) {
+                continue;
+            }
+            out.add(new BleProfile.Device(o.optString("name", ""), o.optString("address", ""),
+                    o.optInt("rssi", -70), o.optBoolean("bonded", false)));
+        }
+        return out;
     }
 
     private static Map<String, String> map(JSONObject object) {

@@ -174,6 +174,15 @@ final class PersonaPanel extends UiSection {
             customLocation = true;
         }
         final boolean locationOn = hasPersona && persona.location(user);
+        final String wifiJson = place == null ? "[]"
+                : com.walter.claudewilson.model.WifiProfile.json(
+                        com.walter.claudewilson.model.WifiProfile.forRegion(
+                                place.latitude, place.longitude,
+                                place.city.isEmpty() ? r.iso.toUpperCase(java.util.Locale.ROOT)
+                                        : place.city, seed, 8));
+        final String bleJson = place == null ? "[]"
+                : com.walter.claudewilson.model.BleProfile.json(
+                        com.walter.claudewilson.model.BleProfile.forRegion(seed, 4));
         String liveOp = "", liveIso = "", liveCarrier = "";
         // The property area holds one entry per slot ("mccmnc1,mccmnc2"), in slot order. Taking the
         // first non-empty entry named the wrong card as soon as the active subscription was not
@@ -346,6 +355,9 @@ final class PersonaPanel extends UiSection {
                 + (place != null
                         ? "\",\"location\":" + com.walter.claudewilson.model.LocationPayload.json(
                                 locationOn, place.latitude, place.longitude, seed, place.city)
+                                + ",\"wifi\":" + wifiJson
+                                + ",\"ble\":" + bleJson
+                                + ",\"sensorsEnabled\":true"
                                 + ",\"build\":{"
                         : "\",\"build\":{")
                 + "\"MANUFACTURER\":\"" + dv[1]

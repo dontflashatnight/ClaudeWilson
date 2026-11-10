@@ -131,10 +131,12 @@ The eye at the right of the title masks sensitive values (AID, SIM, model, finge
 **Target view** now has two read-only groups:
 
 - **Permissions**: `permission.location.fine` / `coarse` / `background`, calendar, microphone,
-  health and screen capture. Values are `granted`, `denied`, `not-requested` or `approximate`;
+  health, screen capture, Wi-Fi (`NEARBY_WIFI_DEVICES`), Bluetooth scan/connect, activity
+  recognition and body sensors. Values are `granted`, `denied`, `not-requested` or `approximate`;
   `not-requested` is not a denial.
-- **Location**: system location mode, provider list, target AppOps and mock status. A
-  `(mode off)` suffix means the system switch is off, so the provider list may be historical;
+- **Location**: system location mode, provider list, target AppOps, mock status and the last
+  target location request (from the target self-check's `location_served` / `location_last`).
+  A `(mode off)` suffix means the system switch is off, so the provider list may be historical;
   `location.appops` needs root or Shizuku.
 
 Ordinary permissions only expose manifest declarations. Whether the target was actually granted
@@ -317,10 +319,10 @@ app/src/com/walter/claudewilson/
 ├── TargetDataEdit.java          reversible single-field ChatGPT DataStore edit
 ├── Geo.java                     region coordinate asset loader
 ├── Targets.java                 target selection and package state
-├── model/                       pure data and rules (42 files)
+├── model/                       pure data and rules (44 files)
 ├── rule/                        pure probe rules (36 files)
 ├── platform/                    the only device collection layer (5 files)
-└── hook/                        Vector module (11 files)
+└── hook/                        Vector module (16 files)
 ```
 
 The important `model/` types:
@@ -354,8 +356,8 @@ Both checklists are 1:1 data definitions:
 
 | Target | Items | Cross-item constraints |
 |---|---:|---:|
-| Claude | 78 | 17 |
-| ChatGPT | 76 | 22 |
+| Claude | 84 | 17 |
+| ChatGPT | 82 | 22 |
 
 The numbers move with releases. Tests assert breadth and key relations, not the exact count.
 

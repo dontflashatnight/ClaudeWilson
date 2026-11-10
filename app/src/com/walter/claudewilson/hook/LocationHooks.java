@@ -60,6 +60,7 @@ final class LocationHooks {
     private static volatile boolean fusedHooked;
     private static final java.util.concurrent.atomic.AtomicInteger served =
             new java.util.concurrent.atomic.AtomicInteger();
+    private static volatile long lastServedMillis;
 
     private LocationHooks() {
     }
@@ -74,6 +75,11 @@ final class LocationHooks {
 
     static int served() {
         return served.get();
+    }
+
+    static long lastServedAgeMs() {
+        long last = lastServedMillis;
+        return last <= 0L ? -1L : Math.max(0L, System.currentTimeMillis() - last);
     }
 
     private static String diagnostic() {
@@ -504,6 +510,7 @@ final class LocationHooks {
 
     private static Location fake(int mode, String provider) {
         served.incrementAndGet();
+        lastServedMillis = System.currentTimeMillis();
         LocationPlan plan = mode == 1 ? coarsePlan : finePlan;
         LocationFix fix = plan.fix(System.currentTimeMillis(), SystemClock.elapsedRealtimeNanos());
         Location location = new Location(provider == null || provider.isEmpty() ? "gps" : provider);
