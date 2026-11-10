@@ -16,17 +16,20 @@ package com.walter.claudewilson.model;
  */
 public final class LocationPlan {
     private static final double METERS_PER_DEGREE = 111320.0d;
-    private static final double JITTER_RADIUS_METERS = 4.0d;
-    private static final double BASE_ACCURACY_METERS = 5.0d;
     private static final double COARSE_ACCURACY_METERS = 3000.0d;
     private static final double COARSE_LATITUDE_STEP = 3000.0d / METERS_PER_DEGREE;
-    private static final double ALTITUDE_METERS = 35.0d;
     private static final long TICK_NANOS = 1000000000L;
 
     public final double latitude;
     public final double longitude;
     public final long seed;
     public final boolean coarse;
+    private final double altitudeMeters;
+    private final double baseAccuracyMeters;
+    private final double jitterRadiusMeters;
+    private final int satelliteCount;
+    private final float speedMps;
+    private final float bearingDegrees;
 
     public LocationPlan(double latitude, double longitude, long seed, boolean coarse) {
         if (!valid(latitude, longitude)) {
@@ -36,6 +39,13 @@ public final class LocationPlan {
         this.longitude = longitude;
         this.seed = seed;
         this.coarse = coarse;
+        this.altitudeMeters = 5.0d + Math.floorMod(seed, 120L);
+        this.baseAccuracyMeters = 4.0d + Math.floorMod(seed / 7L, 50L) / 10.0d;
+        this.jitterRadiusMeters = 3.0d + Math.floorMod(seed / 17L, 5L);
+        this.satelliteCount = 8 + (int) Math.floorMod(seed / 13L, 17L);
+        this.speedMps = Math.floorMod(seed, 5L) == 0L
+                ? 0.2f + Math.floorMod(seed / 23L, 7L) / 10.0f : 0.0f;
+        this.bearingDegrees = Math.floorMod(seed / 29L, 360L);
     }
 
     public static boolean valid(double latitude, double longitude) {
@@ -56,16 +66,16 @@ public final class LocationPlan {
         double y0 = noise(seed, block, 1);
         double x1 = noise(seed, block + 1L, 0);
         double y1 = noise(seed, block + 1L, 1);
-        double dx = (x0 + (x1 - x0) * smooth) * 0.875d * JITTER_RADIUS_METERS;
-        double dy = (y0 + (y1 - y0) * smooth) * 0.875d * JITTER_RADIUS_METERS;
+        double dx = (x0 + (x1 - x0) * smooth) * 0.875d * jitterRadiusMeters;
+        double dy = (y0 + (y1 - y0) * smooth) * 0.875d * jitterRadiusMeters;
         double distance = Math.hypot(dx, dy);
-        if (distance > JITTER_RADIUS_METERS) {
-            double scale = JITTER_RADIUS_METERS / distance;
+        if (distance > jitterRadiusMeters) {
+            double scale = jitterRadiusMeters / distance;
             dx *= scale;
             dy *= scale;
         }
 
-        double accuracy = BASE_ACCURACY_METERS;
+        double accuracy = baseAccuracyMeters;
         long accuracyBlock = Math.floorDiv(tick, 8L);
         double accuracyNoise = noise(seed, accuracyBlock, 2);
         accuracy = Math.max(0.5d, accuracy * (1.0d + 0.12d * accuracyNoise));
@@ -76,7 +86,7 @@ public final class LocationPlan {
 
         boolean hasAltitude = true;
         boolean hasSpeed = true;
-        boolean hasBearing = true;
+        boolean hasBearing = speedMps > 0.3f;
         if (coarse) {
             double lngStep = COARSE_ACCURACY_METERS / (cos * METERS_PER_DEGREE);
             lat = clamp(Math.rint(lat / COARSE_LATITUDE_STEP) * COARSE_LATITUDE_STEP,
@@ -89,13 +99,13 @@ public final class LocationPlan {
         }
 
         float accuracyMeters = (float) accuracy;
-        return new LocationFix(lat, lng, ALTITUDE_METERS, accuracyMeters,
-                0.0f, 0.0f,
+        return new LocationFix(lat, lng, altitudeMeters, accuracyMeters,
+                speedMps, bearingDegrees,
                 (float) Math.max(1.5d, accuracy * 1.5d),
                 (float) Math.max(0.15d, Math.min(1.5d, accuracy * 0.12d)),
                 12.0f,
                 hasAltitude, hasSpeed, hasBearing,
-                nowMillis, Math.max(0L, elapsedRealtimeNanos), 20);
+                nowMillis, Math.max(0L, elapsedRealtimeNanos), satelliteCount);
     }
 
     /** VirtualRegion {@code C3.v#b}: a stable value in [-1, 1) for a seed/tick/channel. */

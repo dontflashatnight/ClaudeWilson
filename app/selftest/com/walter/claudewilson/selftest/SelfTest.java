@@ -2014,7 +2014,9 @@ public final class SelfTest {
                 35.6762d, 139.6503d, "Tokyo", 42L, 8);
         java.util.List<WifiProfile.Ap> second = WifiProfile.forRegion(
                 35.6762d, 139.6503d, "Tokyo", 42L, 8);
-        check("wifi: deterministic size", first.size() == 8 && second.size() == 8);
+        check("wifi: deterministic size",
+                first.size() == second.size() && first.size() >= 3,
+                first.size() + "/" + second.size());
         check("wifi: deterministic bssid",
                 first.get(1).bssid.equals(second.get(1).bssid));
         check("wifi: one connected", first.get(0).connected);
@@ -2023,7 +2025,7 @@ public final class SelfTest {
         check("wifi: json shape", WifiProfile.json(first).startsWith("[{")
                 && WifiProfile.json(first).endsWith("}]"));
         java.util.List<BleProfile.Device> ble = BleProfile.forRegion(42L, 4);
-        check("ble: deterministic size", ble.size() == 4);
+        check("ble: deterministic size", ble.size() >= 2, "size=" + ble.size());
         check("ble: valid address",
                 ble.get(0).address.matches("([0-9A-F]{2}:){5}[0-9A-F]{2}"));
         check("ble: json shape", BleProfile.json(ble).contains("\"rssi\":"));
@@ -2064,13 +2066,16 @@ public final class SelfTest {
         double east = (first.longitude - 139.6503d) * 111320.0d
                 * Math.cos(Math.toRadians(35.6762d));
         double distance = Math.hypot(north, east);
-        check("location: jitter inside 4 m", distance <= 4.01d, "distance=" + distance);
-        check("location: accuracy in 5 m band",
-                first.accuracy >= 4.39f && first.accuracy <= 5.61f,
+        check("location: jitter inside profile radius", distance <= 5.01d,
+                "distance=" + distance);
+        check("location: profile accuracy band",
+                first.accuracy >= 3.99f && first.accuracy <= 5.2f,
                 "accuracy=" + first.accuracy);
-        check("location: altitude/speed/bearing present",
-                first.hasAltitude && first.hasSpeed && first.hasBearing);
-        check("location: satellite count", first.satellites == 20, "sat=" + first.satellites);
+        check("location: altitude/speed present",
+                first.hasAltitude && first.hasSpeed);
+        check("location: satellite count in range",
+                first.satellites >= 8 && first.satellites <= 24,
+                "sat=" + first.satellites);
         check("location: clocks copied", first.timeMillis == 1700000000000L
                 && first.elapsedRealtimeNanos == 1234567890123L);
     }

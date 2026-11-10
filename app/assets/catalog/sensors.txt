@@ -1,0 +1,5 @@
+# class|accel_noise|gyro_bias|light_day|light_night|pressure_base|proximity
+phone-flat|0.03|0.002|420|12|1013.0|0
+phone-pocket|0.09|0.005|70|4|1013.0|0
+phone-hand|0.15|0.012|300|8|1013.0|0
+tablet|0.02|0.001|350|10|1013.0|0

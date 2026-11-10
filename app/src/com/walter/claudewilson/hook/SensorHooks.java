@@ -54,7 +54,7 @@ final class SensorHooks {
                     if (listener == null) {
                         return;
                     }
-                    Object proxy = proxy(listener, listenerClass);
+                    Object proxy = proxy(listener, listenerClass, config);
                     PROXIES.put(listener, proxy);
                     for (int i = 0; i < param.args.length; i++) {
                         if (param.args[i] == listener) {
@@ -81,30 +81,35 @@ final class SensorHooks {
         }
     }
 
-    private static Object proxy(SensorEventListener listener, Class<?> listenerClass) {
+    private static Object proxy(SensorEventListener listener, Class<?> listenerClass,
+            HookConfig config) {
         return Proxy.newProxyInstance(
                 listenerClass.getClassLoader() == null
                         ? SensorHooks.class.getClassLoader() : listenerClass.getClassLoader(),
                 new Class<?>[]{listenerClass},
-                new Handler(listener));
+                new Handler(listener, config));
     }
 
-    private static float[] values(int type) {
+    private static float[] values(int type, HookConfig config) {
         switch (type) {
             case Sensor.TYPE_ACCELEROMETER:
-                return new float[]{0.02f, -0.01f, 9.81f};
+                return config.sensorAccel != null ? config.sensorAccel
+                        : new float[]{0.02f, -0.01f, 9.81f};
             case Sensor.TYPE_MAGNETIC_FIELD:
-                return new float[]{22.0f, -38.0f, 30.0f};
+                return config.sensorMag != null ? config.sensorMag
+                        : new float[]{22.0f, -38.0f, 30.0f};
             case Sensor.TYPE_GYROSCOPE:
-                return new float[]{0.001f, -0.002f, 0.001f};
+                return config.sensorGyro != null ? config.sensorGyro
+                        : new float[]{0.001f, -0.002f, 0.001f};
             case Sensor.TYPE_LIGHT:
-                return new float[]{120.0f};
+                return new float[]{config.sensorLight};
             case Sensor.TYPE_PRESSURE:
-                return new float[]{1013.25f};
+                return new float[]{config.sensorPressure};
             case Sensor.TYPE_PROXIMITY:
-                return new float[]{0.0f};
+                return new float[]{config.sensorProximity};
             case Sensor.TYPE_GRAVITY:
-                return new float[]{0.0f, 0.0f, 9.81f};
+                return config.sensorAccel != null ? config.sensorAccel
+                        : new float[]{0.0f, 0.0f, 9.81f};
             case Sensor.TYPE_LINEAR_ACCELERATION:
                 return new float[]{0.0f, 0.0f, 0.0f};
             case Sensor.TYPE_ROTATION_VECTOR:
@@ -120,16 +125,18 @@ final class SensorHooks {
 
     private static final class Handler implements InvocationHandler {
         private final SensorEventListener delegate;
+        private final HookConfig config;
 
-        Handler(SensorEventListener delegate) {
+        Handler(SensorEventListener delegate, HookConfig config) {
             this.delegate = delegate;
+            this.config = config;
         }
 
         @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
             if ("onSensorChanged".equals(method.getName()) && args != null && args.length > 0
                     && args[0] instanceof SensorEvent) {
                 SensorEvent event = (SensorEvent) args[0];
-                float[] replacement = values(event.sensor.getType());
+                float[] replacement = values(event.sensor.getType(), config);
                 if (replacement != null) {
                     int count = Math.min(replacement.length, event.values.length);
                     System.arraycopy(replacement, 0, event.values, 0, count);

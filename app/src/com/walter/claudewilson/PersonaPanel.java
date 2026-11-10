@@ -174,15 +174,30 @@ final class PersonaPanel extends UiSection {
             customLocation = true;
         }
         final boolean locationOn = hasPersona && persona.location(user);
+        final long profileSeed = seed ^ (hasPersona ? persona.profileSalt(user) : 0L);
         final String wifiJson = place == null ? "[]"
                 : com.walter.claudewilson.model.WifiProfile.json(
                         com.walter.claudewilson.model.WifiProfile.forRegion(
                                 place.latitude, place.longitude,
                                 place.city.isEmpty() ? r.iso.toUpperCase(java.util.Locale.ROOT)
-                                        : place.city, seed, 8));
+                                        : place.city, profileSeed, 8,
+                                ProfileLibrary.wifi(this, r.iso)));
         final String bleJson = place == null ? "[]"
                 : com.walter.claudewilson.model.BleProfile.json(
-                        com.walter.claudewilson.model.BleProfile.forRegion(seed, 4));
+                        com.walter.claudewilson.model.BleProfile.forRegion(
+                                profileSeed, 4, ProfileLibrary.ble(this, r.iso)));
+        final String sensorJson;
+        if (place == null) {
+            sensorJson = "{}";
+        } else {
+            java.util.TimeZone zone = java.util.TimeZone.getTimeZone(
+                    applyZone == null || applyZone.isEmpty() ? "UTC" : applyZone);
+            int hour = java.util.Calendar.getInstance(zone)
+                    .get(java.util.Calendar.HOUR_OF_DAY);
+            sensorJson = com.walter.claudewilson.model.SensorProfile.forRegion(
+                    profileSeed, place.latitude, place.longitude, hour,
+                    ProfileLibrary.sensor(this, profileSeed)).json();
+        }
         String liveOp = "", liveIso = "", liveCarrier = "";
         // The property area holds one entry per slot ("mccmnc1,mccmnc2"), in slot order. Taking the
         // first non-empty entry named the wrong card as soon as the active subscription was not
@@ -354,9 +369,10 @@ final class PersonaPanel extends UiSection {
                         ? "\",\"tz\":\"" + applyZone : "")
                 + (place != null
                         ? "\",\"location\":" + com.walter.claudewilson.model.LocationPayload.json(
-                                locationOn, place.latitude, place.longitude, seed, place.city)
+                                locationOn, place.latitude, place.longitude, profileSeed, place.city)
                                 + ",\"wifi\":" + wifiJson
                                 + ",\"ble\":" + bleJson
+                                + ",\"sensors\":" + sensorJson
                                 + ",\"sensorsEnabled\":true"
                                 + ",\"build\":{"
                         : "\",\"build\":{")

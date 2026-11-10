@@ -319,7 +319,7 @@ app/src/com/walter/claudewilson/
 ├── TargetDataEdit.java          reversible single-field ChatGPT DataStore edit
 ├── Geo.java                     region coordinate asset loader
 ├── Targets.java                 target selection and package state
-├── model/                       pure data and rules (44 files)
+├── model/                       pure data and rules (45 files)
 ├── rule/                        pure probe rules (36 files)
 ├── platform/                    the only device collection layer (5 files)
 └── hook/                        Vector module (16 files)
