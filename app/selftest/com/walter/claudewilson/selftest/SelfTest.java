@@ -17,6 +17,7 @@ import com.walter.claudewilson.model.Finding;
 import com.walter.claudewilson.model.GeoTable;
 import com.walter.claudewilson.model.Layer;
 import com.walter.claudewilson.model.LocationFix;
+import com.walter.claudewilson.model.LocationPayload;
 import com.walter.claudewilson.model.LocationPlan;
 import com.walter.claudewilson.model.Mount;
 import com.walter.claudewilson.model.Outcome;
@@ -233,6 +234,7 @@ public final class SelfTest {
         claudeMissingSegmentUserIsNoRecord();
 
         geoTableResolvesZoneAndCentre();
+        locationPayloadIsSelfContained();
         locationPlanStaysInsideItsRadius();
         coarseLocationSnapsAndDropsMotion();
         locationPlanRejectsImpossibleCoordinates();
@@ -1922,6 +1924,16 @@ public final class SelfTest {
                 && Math.abs(centre.longitude + 98.5795d) < 1.0E-9d, String.valueOf(centre));
         check("geo: unknown iso is null", table.point("xx", null) == null);
         check("geo: invalid rows skipped", table.point("zz", "Bad/Zone") == null);
+    }
+
+    private static void locationPayloadIsSelfContained() {
+        String json = LocationPayload.json(true, 35.6762d, 139.6503d, 42L, "Tokyo");
+        String expected = "{\"enabled\":true,\"latitude\":35.6762,\"longitude\":139.6503,"
+                + "\"seed\":42,\"city\":\"Tokyo\"}";
+        check("location payload: exact shape", expected.equals(json), json);
+        String escaped = LocationPayload.json(false, 0.0d, 0.0d, -1L, "A\"B\\C");
+        check("location payload: escapes city",
+                escaped.contains("\"city\":\"A\\\"B\\\\C\"}"), escaped);
     }
 
     private static void locationPlanStaysInsideItsRadius() {

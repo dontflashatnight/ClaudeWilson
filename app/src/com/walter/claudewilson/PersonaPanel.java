@@ -336,12 +336,11 @@ final class PersonaPanel extends UiSection {
                 + (applyZone != null
                         ? "\",\"tz\":\"" + applyZone : "")
                 + (place != null
-                        ? "\",\"locationEnabled\":" + locationOn
-                        + ",\"latitude\":" + place.latitude
-                        + ",\"longitude\":" + place.longitude
-                        + ",\"locationSeed\":" + seed
-                        + ",\"locationCity\":\"" + place.city + "\"" : "")
-                + "\",\"build\":{\"MANUFACTURER\":\"" + dv[1]
+                        ? "\",\"location\":" + com.walter.claudewilson.model.LocationPayload.json(
+                                locationOn, place.latitude, place.longitude, seed, place.city)
+                                + ",\"build\":{"
+                        : "\",\"build\":{")
+                + "\"MANUFACTURER\":\"" + dv[1]
                 + "\",\"BRAND\":\"" + dv[2]
                 + "\",\"MODEL\":\"" + dv[3]
                 + "\",\"DEVICE\":\"" + dv[4]

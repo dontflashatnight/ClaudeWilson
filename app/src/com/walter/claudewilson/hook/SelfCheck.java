@@ -91,6 +91,21 @@ final class SelfCheck {
             } catch (Throwable t) {
                 XposedBridge.log("ClaudeWilsonHook selfcheck external write: " + t);
             }
+            // AppOps reports a runtime permission as "foreground" only after the process reaches
+            // the foreground state, which can be several seconds after handleLoadPackage. A second
+            // pass keeps the location line from freezing at the startup value.
+            try { Thread.sleep(8000L); } catch (InterruptedException ignored) {}
+            body = collect(context, target, config);
+            try {
+                write(new File(context.getFilesDir(), "hookcheck.txt"), body);
+                File dir = context.getExternalFilesDir(null);
+                if (dir != null) {
+                    dir.mkdirs();
+                    write(new File(dir, "cw-hookcheck.txt"), body);
+                }
+            } catch (Throwable t) {
+                XposedBridge.log("ClaudeWilsonHook selfcheck refresh: " + t);
+            }
         }, "cw-selfcheck");
         worker.setDaemon(true);
         worker.start();
@@ -109,6 +124,7 @@ final class SelfCheck {
         out.append("telemetry=").append(TelephonyHooks.status).append('\n');
         LocationHooks.refreshStatus();
         out.append("location=").append(LocationHooks.status).append('\n');
+        out.append("location_served=").append(LocationHooks.served()).append('\n');
         out.append("simop=").append(value(() -> {
             TelephonyManager tm = (TelephonyManager) context.getSystemService(
                     Context.TELEPHONY_SERVICE);
