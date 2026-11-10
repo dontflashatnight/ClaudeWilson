@@ -3,6 +3,7 @@ package com.walter.claudewilson.model;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Random;
 
 /**
@@ -47,6 +48,11 @@ public final class BleProfile {
     }
 
     public static List<Device> forRegion(long seed, int count, List<Template> templates) {
+        return forRegion(seed, count, templates, null);
+    }
+
+    public static List<Device> forRegion(long seed, int count, List<Template> templates,
+            Map<String, List<String>> oui) {
         List<Device> out = new ArrayList<>();
         Random random = new Random(seed ^ 0x424C45L);
         List<Template> pool = templates == null || templates.isEmpty() ? fallback() : templates;
@@ -54,7 +60,7 @@ public final class BleProfile {
         for (int i = 0; i < total; i++) {
             Template template = pick(pool, random);
             int rssi = -46 - random.nextInt(38);
-            String address = address(random);
+            String address = address(template.name, random, oui);
             out.add(new Device(template.name, address, rssi, template.txPower, i == 0));
         }
         return out;
@@ -101,15 +107,40 @@ public final class BleProfile {
         return pool.get(pool.size() - 1);
     }
 
-    private static String address(Random random) {
-        StringBuilder out = new StringBuilder();
-        for (int i = 0; i < 6; i++) {
-            if (i > 0) {
-                out.append(':');
+    private static String address(String name, Random random,
+            Map<String, List<String>> oui) {
+        String vendor = vendor(name);
+        String prefix = null;
+        if (oui != null) {
+            List<String> exact = vendor == null ? null : oui.get(vendor);
+            if (exact != null && !exact.isEmpty()) {
+                prefix = exact.get(random.nextInt(exact.size()));
+            } else {
+                List<String> generic = oui.get("GENERIC");
+                if (generic != null && !generic.isEmpty()) {
+                    prefix = generic.get(random.nextInt(generic.size()));
+                }
             }
-            out.append(String.format(Locale.ROOT, "%02X", random.nextInt(256)));
+        }
+        if (prefix == null) {
+            prefix = "C0:00:00";
+        }
+        StringBuilder out = new StringBuilder(prefix);
+        for (int i = 0; i < 3; i++) {
+            out.append(':').append(String.format(Locale.ROOT, "%02X", random.nextInt(256)));
         }
         return out.toString();
+    }
+
+    private static String vendor(String name) {
+        String value = name == null ? "" : name.toLowerCase(Locale.ROOT);
+        if (value.contains("airpods")) return "APPLE";
+        if (value.contains("galaxy")) return "SAMSUNG";
+        if (value.contains("mi band")) return "XIAOMI";
+        if (value.contains("sony")) return "SONY";
+        if (value.contains("jbl")) return "JBL";
+        if (value.contains("tile")) return "GENERIC";
+        return null;
     }
 
     private static String escape(String value) {

@@ -127,8 +127,13 @@ final class SelfCheck {
         out.append("location_served=").append(LocationHooks.served()).append('\n');
         out.append("location_last=").append(LocationHooks.lastServedAgeMs()).append('\n');
         out.append("wifi=").append(WifiHooks.status).append('\n');
+        out.append("wifi_scan=").append(WifiHooks.scanServed.get()).append('\n');
+        out.append("wifi_connection=").append(WifiHooks.connectionServed.get()).append('\n');
         out.append("ble=").append(BleHooks.status).append('\n');
+        out.append("ble_scan=").append(BleHooks.scanServed.get()).append('\n');
+        out.append("ble_bonded=").append(BleHooks.bondedServed.get()).append('\n');
         out.append("sensors=").append(SensorHooks.status).append('\n');
+        out.append("sensor_events=").append(SensorHooks.events.get()).append('\n');
         out.append("webview=").append(WebViewHooks.status).append('\n');
         out.append("simop=").append(value(() -> {
             TelephonyManager tm = (TelephonyManager) context.getSystemService(

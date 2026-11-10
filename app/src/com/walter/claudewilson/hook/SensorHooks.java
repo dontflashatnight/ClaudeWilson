@@ -24,6 +24,8 @@ import de.robv.android.xposed.XposedHelpers;
  */
 final class SensorHooks {
     static volatile String status = "not-run";
+    static final java.util.concurrent.atomic.AtomicInteger events =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     private static final Map<Object, Object> PROXIES =
             Collections.synchronizedMap(new IdentityHashMap<Object, Object>());
@@ -140,6 +142,7 @@ final class SensorHooks {
                 if (replacement != null) {
                     int count = Math.min(replacement.length, event.values.length);
                     System.arraycopy(replacement, 0, event.values, 0, count);
+                    events.incrementAndGet();
                 }
             }
             try {
