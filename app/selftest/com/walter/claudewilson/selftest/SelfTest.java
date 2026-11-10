@@ -14,6 +14,7 @@ import com.walter.claudewilson.model.TlsFacts;
 import com.walter.claudewilson.model.UserSpaces;
 import com.walter.claudewilson.model.Command;
 import com.walter.claudewilson.model.Finding;
+import com.walter.claudewilson.model.BleProfile;
 import com.walter.claudewilson.model.GeoTable;
 import com.walter.claudewilson.model.Layer;
 import com.walter.claudewilson.model.LocationFix;
@@ -22,6 +23,7 @@ import com.walter.claudewilson.model.LocationPayload;
 import com.walter.claudewilson.model.LocationPlan;
 import com.walter.claudewilson.model.MapProjection;
 import com.walter.claudewilson.model.PermissionFacts;
+import com.walter.claudewilson.model.WifiProfile;
 import com.walter.claudewilson.model.Mount;
 import com.walter.claudewilson.model.Outcome;
 import com.walter.claudewilson.model.Output;
@@ -241,6 +243,7 @@ public final class SelfTest {
         mapProjectionRoundTrips();
         permissionFactsDistinguishStates();
         locationFactsExposeModeAndNoCoordinates();
+        wifiAndBleProfilesAreDeterministic();
         checklistsIncludePermissionRows();
         locationPayloadIsSelfContained();
         locationPlanStaysInsideItsRadius();
@@ -2004,6 +2007,26 @@ public final class SelfTest {
         } catch (NoSuchMethodException e) {
             return false;
         }
+    }
+
+    private static void wifiAndBleProfilesAreDeterministic() {
+        java.util.List<WifiProfile.Ap> first = WifiProfile.forRegion(
+                35.6762d, 139.6503d, "Tokyo", 42L, 8);
+        java.util.List<WifiProfile.Ap> second = WifiProfile.forRegion(
+                35.6762d, 139.6503d, "Tokyo", 42L, 8);
+        check("wifi: deterministic size", first.size() == 8 && second.size() == 8);
+        check("wifi: deterministic bssid",
+                first.get(1).bssid.equals(second.get(1).bssid));
+        check("wifi: one connected", first.get(0).connected);
+        check("wifi: valid bssid",
+                first.get(0).bssid.matches("02(:[0-9A-F]{2}){5}"));
+        check("wifi: json shape", WifiProfile.json(first).startsWith("[{")
+                && WifiProfile.json(first).endsWith("}]"));
+        java.util.List<BleProfile.Device> ble = BleProfile.forRegion(42L, 4);
+        check("ble: deterministic size", ble.size() == 4);
+        check("ble: valid address",
+                ble.get(0).address.matches("([0-9A-F]{2}:){5}[0-9A-F]{2}"));
+        check("ble: json shape", BleProfile.json(ble).contains("\"rssi\":"));
     }
 
     private static void checklistsIncludePermissionRows() {
