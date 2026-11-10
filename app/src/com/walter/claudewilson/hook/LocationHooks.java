@@ -58,6 +58,8 @@ final class LocationHooks {
     private static volatile LocationPlan coarsePlan;
     private static volatile ClassLoader classLoader;
     private static volatile boolean fusedHooked;
+    private static final java.util.concurrent.atomic.AtomicInteger served =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     private LocationHooks() {
     }
@@ -65,9 +67,25 @@ final class LocationHooks {
     /** Self-check runs after Application.attach, so the permission gate can be resolved then. */
     static void refreshStatus() {
         int mode = permissionMode();
-        if (mode != 0 && status.startsWith("pending")) {
-            status = mode == 2 ? "fine" : "coarse";
+        if (status.startsWith("pending")) {
+            status = mode == 2 ? "fine" : mode == 1 ? "coarse" : "pending " + diagnostic();
         }
+    }
+
+    static int served() {
+        return served.get();
+    }
+
+    private static String diagnostic() {
+        Context context = context();
+        if (context == null) {
+            return "ctx=null";
+        }
+        return "fine=" + context.checkSelfPermission(FINE)
+                + " coarse=" + context.checkSelfPermission(COARSE)
+                + " opFine=" + opValue(context, "android:fine_location")
+                + " opCoarse=" + opValue(context, "android:coarse_location")
+                + " uid=" + Process.myUid() + " pkg=" + context.getPackageName();
     }
 
     static void install(ClassLoader loader, HookConfig config) {
@@ -485,6 +503,7 @@ final class LocationHooks {
     }
 
     private static Location fake(int mode, String provider) {
+        served.incrementAndGet();
         LocationPlan plan = mode == 1 ? coarsePlan : finePlan;
         LocationFix fix = plan.fix(System.currentTimeMillis(), SystemClock.elapsedRealtimeNanos());
         Location location = new Location(provider == null || provider.isEmpty() ? "gps" : provider);
@@ -555,31 +574,45 @@ final class LocationHooks {
         if (context == null) {
             return 0;
         }
-        boolean fine = context.checkSelfPermission(FINE) == 0
-                && allowed(context, "android:fine_location");
-        if (fine) {
+        // Runtime permission is the gate. AppOps is deliberately not a veto here: inside a
+        // Vector-specialized process on Android 15 it can report "ignore" even when the shell
+        // shows COARSE_LOCATION allow (measured on SM-S938B), which would make the hook a no-op
+        // while the target still holds the permission. The simulation is already an explicit
+        // per-target choice; the diagnostic line records the AppOps value for evidence.
+        if (context.checkSelfPermission(FINE) == 0) {
             return 2;
         }
-        boolean coarse = context.checkSelfPermission(COARSE) == 0
-                && allowed(context, "android:coarse_location");
-        return coarse ? 1 : 0;
+        return context.checkSelfPermission(COARSE) == 0 ? 1 : 0;
     }
 
-    private static boolean allowed(Context context, String op) {
+    private static int opValue(Context context, String op) {
         if (Build.VERSION.SDK_INT < 29) {
-            return true;
+            return -1;
         }
         try {
             AppOpsManager manager = (AppOpsManager) context.getSystemService(
                     Context.APP_OPS_SERVICE);
             if (manager == null) {
-                return true;
+                return -1;
             }
             int value = manager.unsafeCheckOpNoThrow(op, Process.myUid(),
                     context.getPackageName());
-            return value == AppOpsManager.MODE_ALLOWED || value == 3 || value == 4;
+            // A foreground app can still read "ignore" from the public wrapper on some OEM
+            // builds even though the raw op is allow; the raw value is the same grant without
+            // the foreground projection.
+            if (value == 1 && Build.VERSION.SDK_INT >= 31) {
+                try {
+                    int raw = manager.unsafeCheckOpRawNoThrow(op, Process.myUid(),
+                            context.getPackageName());
+                    if (raw == 0 || raw == 3 || raw == 4) {
+                        return raw;
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+            return value;
         } catch (Throwable t) {
-            return true;
+            return -1;
         }
     }
 

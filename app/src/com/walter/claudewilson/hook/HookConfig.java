@@ -53,11 +53,22 @@ final class HookConfig {
         locale = o.optString("locale", "");
         tz = o.optString("tz", "");
         hideAccounts = o.optBoolean("hideAccounts", false);
-        locationEnabled = o.optBoolean("locationEnabled", false);
-        latitude = o.optDouble("latitude", Double.NaN);
-        longitude = o.optDouble("longitude", Double.NaN);
-        locationCity = o.optString("locationCity", "");
-        locationSeed = o.optLong("locationSeed", 0L);
+        JSONObject location = o.optJSONObject("location");
+        locationEnabled = location != null
+                ? location.optBoolean("enabled", false)
+                : o.optBoolean("locationEnabled", false);
+        latitude = location != null
+                ? location.optDouble("latitude", Double.NaN)
+                : o.optDouble("latitude", Double.NaN);
+        longitude = location != null
+                ? location.optDouble("longitude", Double.NaN)
+                : o.optDouble("longitude", Double.NaN);
+        locationCity = location != null
+                ? location.optString("city", "")
+                : o.optString("locationCity", "");
+        locationSeed = location != null
+                ? location.optLong("seed", 0L)
+                : o.optLong("locationSeed", 0L);
         build = map(o.optJSONObject("build"));
         props = map(o.optJSONObject("props"));
     }
