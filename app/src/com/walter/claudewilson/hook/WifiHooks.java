@@ -27,6 +27,10 @@ import de.robv.android.xposed.XposedHelpers;
  */
 final class WifiHooks {
     static volatile String status = "not-run";
+    static final java.util.concurrent.atomic.AtomicInteger scanServed =
+            new java.util.concurrent.atomic.AtomicInteger();
+    static final java.util.concurrent.atomic.AtomicInteger connectionServed =
+            new java.util.concurrent.atomic.AtomicInteger();
     private static volatile ClassLoader classLoader;
 
     private WifiHooks() {
@@ -46,6 +50,7 @@ final class WifiHooks {
                     if (!active()) {
                         return;
                     }
+                    scanServed.incrementAndGet();
                     param.setResult(scanResults(aps));
                 }
             });
@@ -54,6 +59,7 @@ final class WifiHooks {
                     if (!active()) {
                         return;
                     }
+                    connectionServed.incrementAndGet();
                     param.setResult(connectionInfo(aps));
                 }
             });

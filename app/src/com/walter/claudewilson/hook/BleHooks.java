@@ -33,6 +33,10 @@ import de.robv.android.xposed.XposedHelpers;
  */
 final class BleHooks {
     static volatile String status = "not-run";
+    static final java.util.concurrent.atomic.AtomicInteger scanServed =
+            new java.util.concurrent.atomic.AtomicInteger();
+    static final java.util.concurrent.atomic.AtomicInteger bondedServed =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     private static final Map<Object, ScanTask> REGISTRATIONS =
             Collections.synchronizedMap(new IdentityHashMap<Object, ScanTask>());
@@ -68,6 +72,7 @@ final class BleHooks {
                         }
                     }
                     param.setResult(devices);
+                    bondedServed.incrementAndGet();
                 }
             });
             Class<?> scanner = XposedHelpers.findClass(
@@ -181,6 +186,7 @@ final class BleHooks {
                                 SystemClock.elapsedRealtimeNanos());
                         XposedHelpers.callMethod(callback, "onScanResult",
                                 ScanSettings.CALLBACK_TYPE_ALL_MATCHES, result);
+                        scanServed.incrementAndGet();
                     } catch (Throwable t) {
                         XposedBridge.log("ClaudeWilsonHook ble result: " + t);
                     }

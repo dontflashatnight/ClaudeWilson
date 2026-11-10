@@ -3,6 +3,7 @@ package com.walter.claudewilson.model;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Random;
 
 /**
@@ -61,6 +62,11 @@ public final class WifiProfile {
 
     public static List<Ap> forRegion(double latitude, double longitude, String city, long seed,
             int count, List<Template> templates) {
+        return forRegion(latitude, longitude, city, seed, count, templates, null);
+    }
+
+    public static List<Ap> forRegion(double latitude, double longitude, String city, long seed,
+            int count, List<Template> templates, Map<String, List<String>> oui) {
         List<Ap> out = new ArrayList<>();
         Random random = new Random(seed ^ 0x57494649L);
         List<Template> pool = templates == null || templates.isEmpty()
@@ -71,7 +77,7 @@ public final class WifiProfile {
             String ssid = expand(template.ssid, random);
             int frequency = frequency(template.band, random);
             int level = Math.max(-92, Math.min(-35, -42 - random.nextInt(45)));
-            String bssid = bssid(random);
+            String bssid = bssid(ssid, random, oui);
             double lat = latitude + (random.nextDouble() - 0.5d) * 0.006d;
             double lng = longitude + (random.nextDouble() - 0.5d) * 0.006d;
             out.add(new Ap(ssid, bssid, frequency, level,
@@ -156,12 +162,53 @@ public final class WifiProfile {
         return "[WPA2-PSK][ESS]";
     }
 
-    private static String bssid(Random random) {
-        StringBuilder out = new StringBuilder("02");
-        for (int i = 0; i < 5; i++) {
+    private static String bssid(String ssid, Random random,
+            Map<String, List<String>> oui) {
+        String prefix = prefix(ssid, random, oui);
+        StringBuilder out = new StringBuilder(prefix);
+        for (int i = 0; i < 3; i++) {
             out.append(':').append(String.format(Locale.ROOT, "%02X", random.nextInt(256)));
         }
         return out.toString();
+    }
+
+    private static String prefix(String ssid, Random random, Map<String, List<String>> oui) {
+        String vendor = vendor(ssid);
+        if (oui != null) {
+            List<String> exact = vendor == null ? null : oui.get(vendor);
+            if (exact != null && !exact.isEmpty()) {
+                return exact.get(random.nextInt(exact.size()));
+            }
+            List<String> generic = oui.get("GENERIC");
+            if (generic != null && !generic.isEmpty()) {
+                return generic.get(random.nextInt(generic.size()));
+            }
+        }
+        return "02:00:00";
+    }
+
+    private static String vendor(String ssid) {
+        String value = ssid == null ? "" : ssid.toLowerCase(Locale.ROOT);
+        if (value.contains("docomo")) return "NTT";
+        if (value.contains("buffalo")) return "BUFFALO";
+        if (value.contains("aterm") || value.contains("elecom")) return "NEC";
+        if (value.contains("tp-link")) return "TP-LINK";
+        if (value.contains("xfinity") || value.contains("att-")) return "TECHNICOLOR";
+        if (value.contains("singtel") || value.contains("starhub")
+                || value.contains("m1-")) return "SAGEMCOM";
+        if (value.contains("telekom") || value.contains("vodafone")
+                || value.contains("o2-") || value.contains("orange")
+                || value.contains("sfr") || value.contains("freebox")) return "AVM";
+        if (value.contains("jio") || value.contains("airtel")
+                || value.contains("act-")) return "HUAWEI";
+        if (value.contains("vivo") || value.contains("claro")
+                || value.contains("tim-")) return "TECHNICOLOR";
+        if (value.contains("telstra") || value.contains("optus")
+                || value.contains("iinet")) return "NETGEAR";
+        if (value.contains("rogers") || value.contains("bell-")
+                || value.contains("telus")) return "SAGEMCOM";
+        if (value.contains("googlefiber")) return "GOOGLE";
+        return null;
     }
 
     private static String hex(Random random, int digits) {

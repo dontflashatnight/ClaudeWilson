@@ -181,11 +181,12 @@ final class PersonaPanel extends UiSection {
                                 place.latitude, place.longitude,
                                 place.city.isEmpty() ? r.iso.toUpperCase(java.util.Locale.ROOT)
                                         : place.city, profileSeed, 8,
-                                ProfileLibrary.wifi(this, r.iso)));
+                                ProfileLibrary.wifi(this, r.iso), ProfileLibrary.oui(this)));
         final String bleJson = place == null ? "[]"
                 : com.walter.claudewilson.model.BleProfile.json(
                         com.walter.claudewilson.model.BleProfile.forRegion(
-                                profileSeed, 4, ProfileLibrary.ble(this, r.iso)));
+                                profileSeed, 4, ProfileLibrary.ble(this, r.iso),
+                                ProfileLibrary.oui(this)));
         final String sensorJson;
         if (place == null) {
             sensorJson = "{}";

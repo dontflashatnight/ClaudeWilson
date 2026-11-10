@@ -20,6 +20,7 @@ import java.util.Map;
 final class ProfileLibrary {
     private static final Map<String, List<WifiProfile.Template>> WIFI = new HashMap<>();
     private static final Map<String, List<BleProfile.Template>> BLE = new HashMap<>();
+    private static final Map<String, List<String>> OUI = new HashMap<>();
     private static List<String[]> sensors;
 
     private ProfileLibrary() {
@@ -65,6 +66,24 @@ final class ProfileLibrary {
         }
         BLE.put(key, out);
         return out;
+    }
+
+    static synchronized Map<String, List<String>> oui(Context context) {
+        if (!OUI.isEmpty()) {
+            return OUI;
+        }
+        for (String[] row : rows(context, "catalog/oui.txt")) {
+            if (row.length < 2) {
+                continue;
+            }
+            List<String> prefixes = OUI.get(row[0]);
+            if (prefixes == null) {
+                prefixes = new ArrayList<>();
+                OUI.put(row[0], prefixes);
+            }
+            prefixes.add(row[1].toUpperCase(Locale.ROOT));
+        }
+        return OUI;
     }
 
     static synchronized String[] sensor(Context context, long seed) {

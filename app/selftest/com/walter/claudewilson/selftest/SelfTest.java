@@ -2021,7 +2021,7 @@ public final class SelfTest {
                 first.get(1).bssid.equals(second.get(1).bssid));
         check("wifi: one connected", first.get(0).connected);
         check("wifi: valid bssid",
-                first.get(0).bssid.matches("02(:[0-9A-F]{2}){5}"));
+                first.get(0).bssid.matches("([0-9A-F]{2}:){5}[0-9A-F]{2}"));
         check("wifi: json shape", WifiProfile.json(first).startsWith("[{")
                 && WifiProfile.json(first).endsWith("}]"));
         java.util.List<BleProfile.Device> ble = BleProfile.forRegion(42L, 4);
