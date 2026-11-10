@@ -29,6 +29,7 @@ final class PersonaState {
     private static final String LOC_LAT = "root_loc_lat.";
     private static final String LOC_LNG = "root_loc_lng.";
     private static final String LOC_CITY = "root_loc_city.";
+    private static final String PROFILE_SALT = "root_psalt.";
     private static final String INJECT_SIG = "inject_sig.";
     private static final String USERS = "root_users";
     private static final String LEGACY_AID = "root_aid";
@@ -160,6 +161,22 @@ final class PersonaState {
 
     void clearLocationPoint(String user) {
         prefs.edit().remove(LOC_LAT + user).remove(LOC_LNG + user).remove(LOC_CITY + user).apply();
+    }
+
+    /**
+     * Stable per-space salt for the radio/sensor profile library. Without it every space using
+     * the same region would generate the same SSIDs, BLE addresses and sensor values.
+     */
+    long profileSalt(String user) {
+        long value = prefs.getLong(PROFILE_SALT + user, 0L);
+        if (value == 0L) {
+            value = new java.security.SecureRandom().nextLong();
+            if (value == 0L) {
+                value = 0x9E3779B97F4A7C15L;
+            }
+            prefs.edit().putLong(PROFILE_SALT + user, value).apply();
+        }
+        return value;
     }
 
     /** Drop the AID override: the row falls back to the device's own SSAID. */

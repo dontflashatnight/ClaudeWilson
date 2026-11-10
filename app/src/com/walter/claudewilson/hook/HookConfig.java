@@ -42,6 +42,12 @@ final class HookConfig {
     final List<WifiProfile.Ap> wifi;
     final List<BleProfile.Device> ble;
     final boolean sensorsEnabled;
+    final float[] sensorAccel;
+    final float[] sensorGyro;
+    final float[] sensorMag;
+    final float sensorLight;
+    final float sensorPressure;
+    final float sensorProximity;
     final Map<String, String> build;
     final Map<String, String> props;
 
@@ -80,6 +86,15 @@ final class HookConfig {
         wifi = parseWifi(o.optJSONArray("wifi"));
         ble = parseBle(o.optJSONArray("ble"));
         sensorsEnabled = o.optBoolean("sensorsEnabled", false);
+        JSONObject sensors = o.optJSONObject("sensors");
+        sensorAccel = floats(sensors, "accelerometer");
+        sensorGyro = floats(sensors, "gyroscope");
+        sensorMag = floats(sensors, "magnetometer");
+        sensorLight = sensors == null ? 120.0f : (float) sensors.optDouble("light", 120.0d);
+        sensorPressure = sensors == null ? 1013.25f
+                : (float) sensors.optDouble("pressure", 1013.25d);
+        sensorProximity = sensors == null ? 0.0f
+                : (float) sensors.optDouble("proximity", 0.0d);
         build = map(o.optJSONObject("build"));
         props = map(o.optJSONObject("props"));
     }
@@ -147,6 +162,21 @@ final class HookConfig {
                 .hashCode());
     }
 
+    private static float[] floats(JSONObject object, String name) {
+        if (object == null) {
+            return null;
+        }
+        JSONArray array = object.optJSONArray(name);
+        if (array == null || array.length() == 0) {
+            return null;
+        }
+        float[] out = new float[array.length()];
+        for (int i = 0; i < array.length(); i++) {
+            out[i] = (float) array.optDouble(i, 0.0d);
+        }
+        return out;
+    }
+
     private static java.util.List<WifiProfile.Ap> parseWifi(JSONArray array) {
         java.util.List<WifiProfile.Ap> out = new ArrayList<>();
         if (array == null) {
@@ -176,7 +206,8 @@ final class HookConfig {
                 continue;
             }
             out.add(new BleProfile.Device(o.optString("name", ""), o.optString("address", ""),
-                    o.optInt("rssi", -70), o.optBoolean("bonded", false)));
+                    o.optInt("rssi", -70), o.optInt("txPower", 0),
+                    o.optBoolean("bonded", false)));
         }
         return out;
     }

@@ -177,7 +177,7 @@ final class BleHooks {
                         ScanResult result = new ScanResult(remote,
                                 ScanSettings.CALLBACK_TYPE_ALL_MATCHES,
                                 ScanSettings.SCAN_MODE_LOW_LATENCY,
-                                0, 0, 0, device.rssi, 0, null,
+                                0, 0, device.txPower, device.rssi, 0, null,
                                 SystemClock.elapsedRealtimeNanos());
                         XposedHelpers.callMethod(callback, "onScanResult",
                                 ScanSettings.CALLBACK_TYPE_ALL_MATCHES, result);

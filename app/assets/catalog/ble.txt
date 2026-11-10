@@ -1,0 +1,57 @@
+# iso|name|tx_power|weight
+jp|AirPods Pro|-1|5
+jp|Galaxy Watch6|-2|3
+jp|Mi Band 8|0|3
+jp|Sony WF-1000XM5|-3|3
+jp|Tile Mate|-6|2
+kr|Galaxy Buds3|-1|4
+kr|Galaxy Watch7|-2|3
+kr|AirPods Pro|-1|3
+kr|Mi Band 8|0|2
+sg|AirPods Pro|-1|4
+sg|Galaxy Watch6|-2|3
+sg|JBL Flip 6|-4|2
+sg|Mi Band 8|0|3
+my|AirPods Pro|-1|3
+my|Galaxy Watch6|-2|3
+my|Mi Band 8|0|2
+id|Mi Band 8|0|4
+id|Galaxy Watch6|-2|3
+id|AirPods Pro|-1|2
+th|AirPods Pro|-1|4
+th|Galaxy Watch6|-2|2
+th|Mi Band 8|0|3
+in|Mi Band 8|0|4
+in|Boat Airdopes|-2|3
+in|Galaxy Watch6|-2|2
+tw|AirPods Pro|-1|4
+tw|Galaxy Watch6|-2|2
+au|AirPods Pro|-1|4
+au|Galaxy Watch6|-2|3
+au|Mi Band 8|0|2
+us|AirPods Pro|-1|5
+us|Galaxy Watch6|-2|3
+us|Mi Band 8|0|3
+us|JBL Flip 6|-4|2
+ca|AirPods Pro|-1|4
+ca|Galaxy Watch6|-2|2
+gb|AirPods Pro|-1|4
+gb|Galaxy Watch6|-2|2
+gb|Mi Band 8|0|2
+de|AirPods Pro|-1|4
+de|Galaxy Watch6|-2|2
+fr|AirPods Pro|-1|4
+fr|Galaxy Watch6|-2|2
+ae|AirPods Pro|-1|3
+ae|Galaxy Watch6|-2|2
+tr|AirPods Pro|-1|3
+tr|Mi Band 8|0|2
+br|AirPods Pro|-1|3
+br|Galaxy Watch6|-2|2
+za|AirPods Pro|-1|3
+za|Mi Band 8|0|2
+*|Mi Band 8|0|3
+*|AirPods Pro|-1|3
+*|Galaxy Watch6|-2|2
+*|Tile Mate|-6|2
+*|JBL Flip 6|-4|2
