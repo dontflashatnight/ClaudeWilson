@@ -58,6 +58,7 @@ Claude and ChatGPT read a lot more than your IP:
 - SIM MCC/MNC, country, carrier and the visited network;
 - device model, fingerprint, build id and region tag;
 - values read inside the target process, such as AID, installation ids and SDK device ids;
+- the target's location: the region centre and its precision under fine/coarse permission;
 - VPN, DNS, IPv6, UDP and the actual egress.
 
 When those values contradict each other, the client environment is inconsistent. ClaudeWilson does two things:
@@ -116,7 +117,7 @@ Shizuku, first run: allow ClaudeWilson in the Shizuku app. If the header says "S
 The order is fixed:
 
 1. **Target**: Claude / ChatGPT. Switching only changes what is inspected; it never launches an app.
-2. **Persona space**: field, expected, actual. `✓` matches, `✗` differs, `—` not compared or not possible on this channel.
+2. **Persona space**: field, expected, actual. `✓` matches, `✗` differs, `○` boundary, `—` not compared or not possible on this channel. The **location** row shows the city the target should see; tap it to switch simulation on/off and read the coordinates.
 3. **Region switch**: pick a region; `✕` closes and restores.
 4. **Network**: VPN, IP exit, line, DNS, IPv6, UDP, node.
 5. **Data cleanup**: clear the target's local data.
@@ -135,6 +136,7 @@ Tap the target country/region. The app will:
 - write the region's language (root uses the hook; Shizuku writes per-app locale for the target and browser);
 - write SIM MCC/MNC, country, carrier and the visited network (root only);
 - optionally write model/build properties (root only); the region tag CSC is a separate soft-reboot action, off by default;
+- write the region centre into the persona; a target with fine location gets that point, coarse-only gets a 3 km grid;
 - publish the same persona to the Vector module for the target's next start.
 
 After it finishes, **close the target from recents and open it again** so the new values enter the target process.
@@ -153,6 +155,7 @@ Tap the `✕` at the left of the region row. The app restores the baseline captu
 ### Two rules that surprise people
 
 - **Changing region clears the current space's manual MCC/MNC and carrier overrides**, so the new region's defaults win. Re-tapping the *same* region keeps them.
+- **The location switch is stored per space.** Turning it off only changes the next published persona; a running target must be restarted before it reads the system location again.
 - A selected region is device-wide. The other target chip is dimmed until you tap `✕` and close the region.
 
 ### About the soft reboot
@@ -258,6 +261,7 @@ No. This is an Android tool.
 - The app has **no `INTERNET` permission**. Only when you tap `scan` does the shell side contact ipinfo / ip-api / ipify / Google STUN and similar endpoints.
 - Results stay on the device: app-private files and `/data/local/tmp/claudewilson/`. No accounts, device identifiers or persona data are uploaded.
 - Target diagnostics do not read tokens, cookie values, accounts or file contents; sensitive items are masked in UI/logs.
+- Location simulation only constructs a fake fix inside the target process; it **never reads the device's real location**. Turning it off lets the target read the system location again.
 - The app does not launch the target, does not modify system partitions, and does not forge integrity.
 - Use only on devices you own for compatibility testing and environment diagnosis. Check the target's terms and local law yourself.
 
@@ -296,11 +300,12 @@ app/src/com/walter/claudewilson/
 ├── DataClean.java               per-user target data cleanup
 ├── TargetIdentityReset.java     local identity reset
 ├── TargetDataEdit.java          reversible single-field ChatGPT DataStore edit
+├── Geo.java                     region coordinate asset loader
 ├── Targets.java                 target selection and package state
-├── model/                       pure data and rules (35 files)
+├── model/                       pure data and rules (38 files)
 ├── rule/                        pure probe rules (36 files)
 ├── platform/                    the only device collection layer (5 files)
-└── hook/                        Vector module (10 files)
+└── hook/                        Vector module (11 files)
 ```
 
 The important `model/` types:
@@ -309,7 +314,8 @@ The important `model/` types:
 - `ChatGptChecklist` / `ClaudeChecklist`: check items and cross-item constraints;
 - `RiskModel`: constraint evaluation;
 - `Snapshot` / `PlatformFacts` / `TargetEvidence`: immutable input for one scan;
-- `CheckItem`: value, source, writability, coverage reason.
+- `CheckItem`: value, source, writability, coverage reason;
+- `GeoTable` / `LocationPlan`: region coordinate table and deterministic location (jitter, coarse grid).
 
 ## One scan
 

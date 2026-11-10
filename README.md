@@ -58,6 +58,7 @@ Claude 和 ChatGPT 都会从 Android 读取大量环境信号。它们不只看 
 - SIM 的 MCC/MNC、国家、运营商，以及“拜访网络”；
 - 机型、指纹、构建号、区域标记；
 - 目标进程自己读到的值，例如 AID、安装 ID、SDK 设备标识；
+- 目标进程的定位：地区中心坐标、精确/粗略权限下的不同精度；
 - VPN、DNS、IPv6、UDP 和实际出口。
 
 这些值互相矛盾时，客户端环境就不一致。ClaudeWilson 做两件事：
@@ -116,7 +117,7 @@ Shizuku 第一次使用：在 Shizuku 应用里允许 ClaudeWilson；如果顶�
 从上到下是固定的顺序：
 
 1. **目标**：Claude / ChatGPT。切换只改变诊断对象，不启动应用。
-2. **人设空间**：字段、期望值、实际值。`✓` 一致，`✗` 不一致，`—` 不比较或当前通道做不到。
+2. **人设空间**：字段、期望值、实际值。`✓` 一致，`✗` 不一致，`○` 边界，`—` 不比较或当前通道做不到。“定位”行显示目标应看到的城市，点开可开关模拟并查看坐标。
 3. **地区切换**：选地区；`✕` 关闭并恢复。
 4. **网络**：VPN、IP 出口、线路、DNS、IPv6、UDP、节点。
 5. **数据清理**：清除目标本地数据。
@@ -135,6 +136,7 @@ Shizuku 第一次使用：在 Shizuku 应用里允许 ClaudeWilson；如果顶�
 - 写入该地区的语言（root 走注入；Shizuku 写目标/浏览器的 per-app locale）；
 - 写 SIM 的 MCC/MNC、国家、运营商，以及拜访网络（需要 root）；
 - 可选地写机型/构建属性（需要 root）；区域标记 CSC 是单独的软重启动作，默认不做；
+- 把地区中心坐标写进人设；目标有精确定位权限时返回该点，只有粗略权限时返回 3 km 网格；
 - 把同一份人设发布给 Vector 模块，目标下次启动时读取。
 
 应用完成后，**从最近任务关掉目标再打开**，新值才会进入目标进程。
@@ -153,6 +155,7 @@ Shizuku 第一次使用：在 Shizuku 应用里允许 ClaudeWilson；如果顶�
 ### 两个容易踩的规则
 
 - **换地区会清掉当前空间手动填的 MCC/MNC 和运营商**，让新地区的默认值生效；在同一个地区上再点一次，会保留手动值。
+- **“定位”开关按空间保存**；关闭只改变下一次发布的人设，已经在运行的目标进程要重启后才会恢复读取系统定位。
 - 地区一旦选中就是设备级状态；此时另一个目标标签会变暗，必须先点 `✕` 关闭地区，才能切换目标。
 
 ### 关于软重启
@@ -257,6 +260,7 @@ KernelSU 默认不弹窗。到 KernelSU → 超级用户里搜索 `ClaudeWilson`
 - 本应用**没有 `INTERNET` 权限**；只有你点 `scan` 时，才通过 shell 侧访问 ipinfo / ip-api / ipify / Google STUN 等端点。
 - 诊断结果只在本机显示，写入本应用私有目录和 `/data/local/tmp/claudewilson/`；不上传账号、设备标识或人设数据。
 - 目标诊断不读 token、cookie 内容、账号或文件正文；敏感项在 UI/日志中 masked。
+- 定位模拟只在目标进程里构造假坐标，**不读取本机真实定位**；关闭模拟后目标恢复读取系统定位。
 - 本应用不启动目标应用；不修改系统分区；不做完整性伪造。
 - 只用于自有设备上的兼容性测试和环境排查。请自行确认目标应用的服务条款和当地法律。
 
@@ -295,11 +299,12 @@ app/src/com/walter/claudewilson/
 ├── DataClean.java              按用户清理目标数据
 ├── TargetIdentityReset.java    本地身份重置
 ├── TargetDataEdit.java         ChatGPT DataStore 单字段可逆写入
+├── Geo.java                    地区坐标资产加载
 ├── Targets.java                目标选择与包状态
-├── model/                      纯数据与纯规则（35 个文件）
+├── model/                      纯数据与纯规则（38 个文件）
 ├── rule/                       纯规则 probe（36 个文件）
 ├── platform/                   唯一设备采集层（5 个文件）
-└── hook/                       Vector 模块（10 个文件）
+└── hook/                       Vector 模块（11 个文件）
 ```
 
 `model/` 下最重要的是：
@@ -308,7 +313,8 @@ app/src/com/walter/claudewilson/
 - `ChatGptChecklist` / `ClaudeChecklist`：检查项与跨项约束；
 - `RiskModel`：约束求值；
 - `Snapshot` / `PlatformFacts` / `TargetEvidence`：一次扫描的不可变输入；
-- `CheckItem`：值、来源、可改性、覆盖原因。
+- `CheckItem`：值、来源、可改性、覆盖原因；
+- `GeoTable` / `LocationPlan`：地区坐标表与确定性定位（抖动、粗略网格）。
 
 ## 一次扫描
 

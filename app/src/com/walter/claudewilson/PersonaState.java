@@ -25,6 +25,7 @@ final class PersonaState {
     private static final String OP = "root_op.";
     private static final String CSC = "root_csc.";
     private static final String CC_HINT = "root_cc_hint.";
+    private static final String LOCATION = "root_loc.";
     private static final String INJECT_SIG = "inject_sig.";
     private static final String USERS = "root_users";
     private static final String LEGACY_AID = "root_aid";
@@ -118,6 +119,15 @@ final class PersonaState {
 
     void clearCountryHint(String user) {
         prefs.edit().remove(CC_HINT + user).apply();
+    }
+
+    /** Synthetic location defaults on: a region persona without a place is only half an identity. */
+    boolean location(String user) {
+        return prefs.getBoolean(LOCATION + user, true);
+    }
+
+    void putLocation(String user, boolean enabled) {
+        prefs.edit().putBoolean(LOCATION + user, enabled).apply();
     }
 
     /** Drop the AID override: the row falls back to the device's own SSAID. */

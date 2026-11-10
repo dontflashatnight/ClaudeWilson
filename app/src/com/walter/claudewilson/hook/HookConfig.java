@@ -29,6 +29,11 @@ final class HookConfig {
     final String locale;
     final String tz;
     final boolean hideAccounts;
+    final boolean locationEnabled;
+    final double latitude;
+    final double longitude;
+    final String locationCity;
+    final long locationSeed;
     final Map<String, String> build;
     final Map<String, String> props;
 
@@ -48,6 +53,11 @@ final class HookConfig {
         locale = o.optString("locale", "");
         tz = o.optString("tz", "");
         hideAccounts = o.optBoolean("hideAccounts", false);
+        locationEnabled = o.optBoolean("locationEnabled", false);
+        latitude = o.optDouble("latitude", Double.NaN);
+        longitude = o.optDouble("longitude", Double.NaN);
+        locationCity = o.optString("locationCity", "");
+        locationSeed = o.optLong("locationSeed", 0L);
         build = map(o.optJSONObject("build"));
         props = map(o.optJSONObject("props"));
     }
@@ -92,6 +102,13 @@ final class HookConfig {
                 && androidId.matches("[0-9a-fA-F]{16}");
     }
 
+    /** True only for a complete, finite point; a half-written payload never fakes a fix. */
+    boolean hasLocation() {
+        return locationEnabled
+                && Double.isFinite(latitude) && latitude >= -90.0d && latitude <= 90.0d
+                && Double.isFinite(longitude) && longitude >= -180.0d && longitude <= 180.0d;
+    }
+
     /** A canonical payload must name its target; the legacy single-target payload may omit it. */
     private boolean validFor(TargetSpec spec) {
         return valid() && (target.isEmpty() || target.equals(spec.id()));
@@ -101,7 +118,9 @@ final class HookConfig {
         return Integer.toHexString((targetId + "|" + target + "|" + countryCodeHint + "|"
                 + simOperator + "|" + simCountryIso + "|"
                 + simOperatorName + "|" + netOperator + "|" + netCountryIso + "|"
-                + netOperatorName + "|" + androidId + "|" + locale + "|" + tz)
+                + netOperatorName + "|" + androidId + "|" + locale + "|" + tz + "|"
+                + locationEnabled + "|" + latitude + "|" + longitude + "|"
+                + locationCity + "|" + locationSeed)
                 .hashCode());
     }
 

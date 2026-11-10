@@ -14,7 +14,10 @@ import com.walter.claudewilson.model.TlsFacts;
 import com.walter.claudewilson.model.UserSpaces;
 import com.walter.claudewilson.model.Command;
 import com.walter.claudewilson.model.Finding;
+import com.walter.claudewilson.model.GeoTable;
 import com.walter.claudewilson.model.Layer;
+import com.walter.claudewilson.model.LocationFix;
+import com.walter.claudewilson.model.LocationPlan;
 import com.walter.claudewilson.model.Mount;
 import com.walter.claudewilson.model.Outcome;
 import com.walter.claudewilson.model.Output;
@@ -228,6 +231,11 @@ public final class SelfTest {
         claudeChecklistFlagsRootEvidence();
         claudeStoppedTargetIsStale();
         claudeMissingSegmentUserIsNoRecord();
+
+        geoTableResolvesZoneAndCentre();
+        locationPlanStaysInsideItsRadius();
+        coarseLocationSnapsAndDropsMotion();
+        locationPlanRejectsImpossibleCoordinates();
 
         report();
     }
@@ -1893,6 +1901,79 @@ public final class SelfTest {
 
     private static Mount mount(String source, String mountPoint, String fsType, String options) {
         return new Mount(source, mountPoint, fsType, options);
+    }
+
+    // ---- synthetic location ------------------------------------------------------------
+
+    private static void geoTableResolvesZoneAndCentre() {
+        String text = "# iso|city|lat|lng|zone\n"
+                + "us||39.8283|-98.5795|\n"
+                + "us|New York|40.7128|-74.0060|America/New_York\n"
+                + "zz|Broken|91.0000|0.0000|\n"
+                + "zz|Broken|0.0000|181.0000|Bad/Zone\n";
+        GeoTable table = GeoTable.parse(text);
+        check("geo: one country centre", table.centers() == 1, "centers=" + table.centers());
+        check("geo: one zone row", table.zones() == 1, "zones=" + table.zones());
+        GeoTable.Point zone = table.point("us", "America/New_York");
+        check("geo: zone wins", zone != null && "New York".equals(zone.city)
+                && Math.abs(zone.latitude - 40.7128d) < 1.0E-9d, String.valueOf(zone));
+        GeoTable.Point centre = table.point("us", "America/Chicago");
+        check("geo: country centre falls back", centre != null && centre.city.isEmpty()
+                && Math.abs(centre.longitude + 98.5795d) < 1.0E-9d, String.valueOf(centre));
+        check("geo: unknown iso is null", table.point("xx", null) == null);
+        check("geo: invalid rows skipped", table.point("zz", "Bad/Zone") == null);
+    }
+
+    private static void locationPlanStaysInsideItsRadius() {
+        LocationPlan plan = new LocationPlan(35.6762d, 139.6503d, 42L, false);
+        LocationFix first = plan.fix(1700000000000L, 1234567890123L);
+        LocationFix second = plan.fix(1700000000000L, 1234567890123L);
+        check("location: deterministic coordinates",
+                first.latitude == second.latitude && first.longitude == second.longitude,
+                first.latitude + "," + first.longitude);
+        double north = (first.latitude - 35.6762d) * 111320.0d;
+        double east = (first.longitude - 139.6503d) * 111320.0d
+                * Math.cos(Math.toRadians(35.6762d));
+        double distance = Math.hypot(north, east);
+        check("location: jitter inside 4 m", distance <= 4.01d, "distance=" + distance);
+        check("location: accuracy in 5 m band",
+                first.accuracy >= 4.39f && first.accuracy <= 5.61f,
+                "accuracy=" + first.accuracy);
+        check("location: altitude/speed/bearing present",
+                first.hasAltitude && first.hasSpeed && first.hasBearing);
+        check("location: satellite count", first.satellites == 20, "sat=" + first.satellites);
+        check("location: clocks copied", first.timeMillis == 1700000000000L
+                && first.elapsedRealtimeNanos == 1234567890123L);
+    }
+
+    private static void coarseLocationSnapsAndDropsMotion() {
+        LocationPlan plan = new LocationPlan(35.6762d, 139.6503d, 42L, true);
+        LocationFix fix = plan.fix(1700000000000L, 1234567890123L);
+        check("coarse: no altitude", !fix.hasAltitude);
+        check("coarse: no speed", !fix.hasSpeed);
+        check("coarse: no bearing", !fix.hasBearing);
+        check("coarse: accuracy at least 3 km", fix.accuracy >= 3000.0f,
+                "accuracy=" + fix.accuracy);
+        double north = (fix.latitude - 35.6762d) * 111320.0d;
+        double east = (fix.longitude - 139.6503d) * 111320.0d
+                * Math.cos(Math.toRadians(35.6762d));
+        double distance = Math.hypot(north, east);
+        check("coarse: snapped no farther than 3.5 km", distance <= 3500.0d,
+                "distance=" + distance);
+    }
+
+    private static void locationPlanRejectsImpossibleCoordinates() {
+        check("location: valid point", LocationPlan.valid(0.0d, 0.0d));
+        check("location: latitude bound", !LocationPlan.valid(90.1d, 0.0d));
+        check("location: longitude bound", !LocationPlan.valid(0.0d, -180.1d));
+        check("location: NaN rejected", !LocationPlan.valid(Double.NaN, 0.0d));
+        boolean rejected = false;
+        try {
+            new LocationPlan(91.0d, 0.0d, 0L, false);
+        } catch (IllegalArgumentException expected) {
+            rejected = true;
+        }
+        check("location: constructor rejects", rejected);
     }
 
     // ---- harness -----------------------------------------------------------------------

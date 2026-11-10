@@ -107,6 +107,8 @@ final class SelfCheck {
         out.append("pid=").append(android.os.Process.myPid()).append('\n');
         out.append("config=").append(config.signature()).append('\n');
         out.append("telemetry=").append(TelephonyHooks.status).append('\n');
+        LocationHooks.refreshStatus();
+        out.append("location=").append(LocationHooks.status).append('\n');
         out.append("simop=").append(value(() -> {
             TelephonyManager tm = (TelephonyManager) context.getSystemService(
                     Context.TELEPHONY_SERVICE);
