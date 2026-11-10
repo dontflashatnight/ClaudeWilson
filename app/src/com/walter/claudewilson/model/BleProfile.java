@@ -1,10 +1,12 @@
 package com.walter.claudewilson.model;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 /**
  * Virtual BLE neighbourhood. The catalog chooses device names by region; the seed chooses how
@@ -57,10 +59,15 @@ public final class BleProfile {
         Random random = new Random(seed ^ 0x424C45L);
         List<Template> pool = templates == null || templates.isEmpty() ? fallback() : templates;
         int total = Math.max(2, Math.min(6, count + random.nextInt(4) - 1));
+        Set<String> used = new HashSet<>();
         for (int i = 0; i < total; i++) {
             Template template = pick(pool, random);
             int rssi = -46 - random.nextInt(38);
             String address = address(template.name, random, oui);
+            int retry = 0;
+            while (!used.add(address) && retry++ < 8) {
+                address = address(template.name, random, oui);
+            }
             out.add(new Device(template.name, address, rssi, template.txPower, i == 0));
         }
         return out;

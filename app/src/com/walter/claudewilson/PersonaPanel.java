@@ -174,7 +174,8 @@ final class PersonaPanel extends UiSection {
             customLocation = true;
         }
         final boolean locationOn = hasPersona && persona.location(user);
-        final long profileSeed = seed ^ (hasPersona ? persona.profileSalt(user) : 0L);
+        final long profileSeed = seed
+                ^ (hasPersona ? persona.profileSalt(user, devIdx) : 0L);
         final String wifiJson = place == null ? "[]"
                 : com.walter.claudewilson.model.WifiProfile.json(
                         com.walter.claudewilson.model.WifiProfile.forRegion(

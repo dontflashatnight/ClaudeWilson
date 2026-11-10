@@ -2029,6 +2029,31 @@ public final class SelfTest {
         check("ble: valid address",
                 ble.get(0).address.matches("([0-9A-F]{2}:){5}[0-9A-F]{2}"));
         check("ble: json shape", BleProfile.json(ble).contains("\"rssi\":"));
+        java.util.List<WifiProfile.Ap> otherWifi = WifiProfile.forRegion(
+                35.6762d, 139.6503d, "Tokyo", 43L, 8);
+        java.util.Set<String> firstBssid = new java.util.HashSet<>();
+        for (WifiProfile.Ap ap : first) {
+            firstBssid.add(ap.bssid);
+        }
+        boolean sharedBssid = false;
+        for (WifiProfile.Ap ap : otherWifi) {
+            if (firstBssid.contains(ap.bssid)) {
+                sharedBssid = true;
+            }
+        }
+        check("wifi: different seed has different bssids", !sharedBssid);
+        java.util.List<BleProfile.Device> otherBle = BleProfile.forRegion(43L, 4);
+        java.util.Set<String> firstBle = new java.util.HashSet<>();
+        for (BleProfile.Device device : ble) {
+            firstBle.add(device.address);
+        }
+        boolean sharedBle = false;
+        for (BleProfile.Device device : otherBle) {
+            if (firstBle.contains(device.address)) {
+                sharedBle = true;
+            }
+        }
+        check("ble: different seed has different addresses", !sharedBle);
     }
 
     private static void checklistsIncludePermissionRows() {
