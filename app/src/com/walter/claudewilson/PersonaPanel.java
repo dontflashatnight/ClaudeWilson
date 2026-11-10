@@ -527,6 +527,9 @@ final class PersonaPanel extends UiSection {
         } else if (!locationOn) {
             locActual = Lang.t("关闭", "off", "オフ");
             locStatus = -1;
+        } else if (place == null) {
+            locActual = Lang.t("无坐标", "no coordinate", "座標なし");
+            locStatus = -3;
         } else if (targetLocation == 0) {
             locActual = Lang.t("无权限", "no permission", "権限なし");
             locStatus = -3;
