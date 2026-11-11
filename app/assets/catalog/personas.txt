@@ -23,4 +23,3 @@ Xiaomi 15|Xiaomi|Xiaomi|24129PN74G|dada|dada_global|qcom|sun|Xiaomi/dada_global/
 OnePlus 13|OnePlus|OnePlus|CPH2655|OP5D0DL1|CPH2655EE|qcom|sun|OnePlus/CPH2655EE/OP5D0DL1:15/UKQ1.231108.001/V.2f9c1a:user/release-keys|UKQ1.231108.001|V.2f9c1a|15|35|2024-12-05
 Xperia 1 VI|Sony|Sony|XQ-EC54|XQ-EC54|XQ-EC54|qcom|kalama|Sony/XQ-EC54/XQ-EC54:15/69.2.A.2.160/069002A002016001234567890:user/release-keys|69.2.A.2.160|069002A002016001234567890|15|35|2024-10-01
 Nothing 2a|Nothing|Nothing|A142|Aerodactyl|Aerodactyl|mt6886|mt6886|Nothing/Aerodactyl/Aerodactyl:15/AP3A.240905.015.A2/2507082038:user/release-keys|AP3A.240905.015.A2|2507082038|15|35|2025-01-01
-Moto G 5G (legacy mixed)|motorola|samsung|moto g 5G|pa3q|pa3qxxx|qcom|kalama|samsung/pa3qxxx/pa3q:15/AP3A.240905.015.A2/S938BXXS1AYC2_OXM1AYC2:user/release-keys|AP3A.240905.015.A2|S938BXXS1AYC2_OXM1AYC2|15|35|2024-11-01|pinned
