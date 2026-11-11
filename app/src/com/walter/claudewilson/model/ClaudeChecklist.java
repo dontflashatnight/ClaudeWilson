@@ -368,22 +368,22 @@ public final class ClaudeChecklist {
 
         out.add(value(item("transport.cfuvid"), count(data.get("cfuvid"))));
         out.add(value(item("transport.session"), count(data.get("session"))));
-        out.add(value(item("transport.datatransport.country"),
-                data.get("transport_country")));
-        out.add(value(item("transport.datatransport.locale"),
-                data.get("transport_locale")));
-        out.add(value(item("transport.datatransport.mcc"), data.get("transport_mcc")));
-        out.add(value(item("transport.datatransport.tz"), data.get("transport_tz")));
-        out.add(value(item("transport.datatransport.fingerprint"),
-                data.get("transport_fingerprint")));
-        out.add(value(item("transport.datatransport.build_parts"),
-                data.get("transport_build")));
-        out.add(value(item("transport.datatransport.net_type"),
-                data.get("transport_net_type")));
-        out.add(value(item("transport.datatransport.mobile_subtype"),
-                data.get("transport_mobile_subtype")));
-        out.add(value(item("transport.datatransport.os_build"),
-                data.get("transport_os_build")));
+        out.add(transport(item("transport.datatransport.country"), data,
+                "transport_country"));
+        out.add(transport(item("transport.datatransport.locale"), data,
+                "transport_locale"));
+        out.add(transport(item("transport.datatransport.mcc"), data, "transport_mcc"));
+        out.add(transport(item("transport.datatransport.tz"), data, "transport_tz"));
+        out.add(transport(item("transport.datatransport.fingerprint"), data,
+                "transport_fingerprint"));
+        out.add(transport(item("transport.datatransport.build_parts"), data,
+                "transport_build"));
+        out.add(transport(item("transport.datatransport.net_type"), data,
+                "transport_net_type"));
+        out.add(transport(item("transport.datatransport.mobile_subtype"), data,
+                "transport_mobile_subtype"));
+        out.add(transport(item("transport.datatransport.os_build"), data,
+                "transport_os_build"));
 
         out.add(value(item("target.state"), data.get("target_state")));
         out.add(value(item("target.version"), data.get("target_app")));
@@ -538,6 +538,20 @@ public final class ClaudeChecklist {
 
     private static CheckItem value(CheckItem spec, String raw) {
         return raw == null ? spec.unreadable() : spec.withValue(raw);
+    }
+
+    /**
+     * An empty datatransport queue is not a read failure: the target uploads and deletes rows.
+     * Only a probe error is UNREADABLE; an empty queue is NO_RECORD.
+     */
+    private static CheckItem transport(CheckItem spec, java.util.Map<String, String> data,
+            String key) {
+        String value = data.get(key);
+        if (value != null) {
+            return spec.withValue(value);
+        }
+        return "0".equals(data.get("transport_readable"))
+                ? spec.unreadable() : spec.withCoverage(CheckItem.Coverage.NO_RECORD);
     }
 
     private static String permission(Snapshot snapshot, String key) {

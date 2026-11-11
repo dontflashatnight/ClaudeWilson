@@ -77,6 +77,8 @@ final class SelfCheck {
             String body = collect(context, target, config);
             try {
                 write(new File(context.getFilesDir(), "hookcheck.txt"), body);
+                write(new File(context.getFilesDir(), "hookcheck." + processTag() + ".txt"),
+                        body);
             } catch (Throwable t) {
                 XposedBridge.log("ClaudeWilsonHook selfcheck write: " + t);
             }
@@ -87,6 +89,7 @@ final class SelfCheck {
                 if (dir != null) {
                     dir.mkdirs();
                     write(new File(dir, "cw-hookcheck.txt"), body);
+                    write(new File(dir, "cw-hookcheck." + processTag() + ".txt"), body);
                 }
             } catch (Throwable t) {
                 XposedBridge.log("ClaudeWilsonHook selfcheck external write: " + t);
@@ -98,10 +101,12 @@ final class SelfCheck {
             body = collect(context, target, config);
             try {
                 write(new File(context.getFilesDir(), "hookcheck.txt"), body);
+                write(new File(context.getFilesDir(), "hookcheck." + processTag() + ".txt"), body);
                 File dir = context.getExternalFilesDir(null);
                 if (dir != null) {
                     dir.mkdirs();
                     write(new File(dir, "cw-hookcheck.txt"), body);
+                    write(new File(dir, "cw-hookcheck." + processTag() + ".txt"), body);
                 }
             } catch (Throwable t) {
                 XposedBridge.log("ClaudeWilsonHook selfcheck refresh: " + t);
@@ -111,11 +116,38 @@ final class SelfCheck {
         worker.start();
     }
 
+    private static String processName() {
+        try (java.io.FileInputStream in = new java.io.FileInputStream("/proc/self/cmdline")) {
+            byte[] data = new byte[256];
+            int count = in.read(data);
+            if (count > 0) {
+                int end = 0;
+                while (end < count && data[end] != 0) {
+                    end++;
+                }
+                if (end > 0) {
+                    return new String(data, 0, end, "UTF-8");
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return "main";
+    }
+
+    private static String processTag() {
+        String name = processName();
+        int colon = name.indexOf(':');
+        String tag = colon >= 0 ? name.substring(colon + 1) : "main";
+        tag = tag.replaceAll("[^A-Za-z0-9_.-]", "_");
+        return tag.isEmpty() ? "main" : tag;
+    }
+
     private static String collect(Context context, TargetSpec target, HookConfig config) {
         StringBuilder out = new StringBuilder();
         out.append("engine=vector\n");
         out.append("target=").append(target.id()).append('\n');
         out.append("target_pkg=").append(target.packageName()).append('\n');
+        out.append("process=").append(processName()).append('\n');
         out.append("cc_hint=").append(config.countryCodeHint).append('\n');
         out.append("armed=1\n");
         out.append("selfcheck=2\n");
@@ -127,6 +159,7 @@ final class SelfCheck {
         out.append("location_served=").append(LocationHooks.served()).append('\n');
         out.append("location_last=").append(LocationHooks.lastServedAgeMs()).append('\n');
         out.append("wifi=").append(WifiHooks.status).append('\n');
+        out.append("telemetry=").append(TelemetryHooks.status).append('\n');
         out.append("wifi_scan=").append(WifiHooks.scanServed.get()).append('\n');
         out.append("wifi_connection=").append(WifiHooks.connectionServed.get()).append('\n');
         out.append("ble=").append(BleHooks.status).append('\n');
