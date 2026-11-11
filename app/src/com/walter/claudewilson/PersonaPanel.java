@@ -978,16 +978,16 @@ final class PersonaPanel extends UiSection {
         form.setPadding(pad, dp(this, 8), pad, 0);
 
         android.widget.EditText brand = customField(form,
-                Lang.t("品牌", "brand", "ブランド"), base[2]);
+                Lang.t("品牌 / brand", "brand", "ブランド"), base[2]);
         android.widget.EditText model = customField(form,
-                Lang.t("型号", "model", "型番"), base[3]);
+                Lang.t("型号 / model", "model", "型番"), base[3]);
         android.widget.EditText device = customField(form,
-                Lang.t("device（小写）", "device (lowercase)", "device（小文字）"), base[4]);
+                Lang.t("device", "device", "device"), base[4]);
         android.widget.EditText product = customField(form,
-                Lang.t("product（小写）", "product (lowercase)", "product（小文字）"), base[5]);
+                Lang.t("product", "product", "product"), base[5]);
         android.widget.EditText release = customField(form,
-                Lang.t("Android 版本（14/15/16）", "Android release (14/15/16)",
-                        "Android バージョン（14/15/16）"), base[11]);
+                Lang.t("系统版本 / release（14 / 15 / 16）", "Android release (14 / 15 / 16)",
+                        "Android バージョン（14 / 15 / 16）"), base[11]);
 
         android.widget.ScrollView scroll = new android.widget.ScrollView(this);
         scroll.addView(form);
@@ -999,10 +999,10 @@ final class PersonaPanel extends UiSection {
                 .create();
         dialog.setOnShowListener(ignored -> dialog.getButton(
                 android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String b = brand.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
+            String b = brand.getText().toString().trim();
             String m = model.getText().toString().trim();
-            String d = device.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
-            String p = product.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
+            String d = device.getText().toString().trim();
+            String p = product.getText().toString().trim();
             String r = release.getText().toString().trim();
             if (b.isEmpty() || m.isEmpty() || d.isEmpty() || p.isEmpty()) {
                 toast(Lang.t("品牌、型号、device、product 都要填",
@@ -1010,10 +1010,16 @@ final class PersonaPanel extends UiSection {
                         "ブランド・型番・device・product は必須です"));
                 return;
             }
-            if (!d.matches("[a-z0-9_]+") || !p.matches("[a-z0-9_]+")) {
-                toast(Lang.t("device / product 只能用小写字母、数字、下划线",
-                        "device / product: lowercase letters, digits, underscore only",
-                        "device / product は小文字・数字・_ のみ"));
+            if (!b.matches("[A-Za-z0-9._-]{1,92}")
+                    || !d.matches("[A-Za-z0-9._-]{1,92}")
+                    || !p.matches("[A-Za-z0-9._-]{1,92}")) {
+                toast(Lang.t("brand / device / product 只能包含字母、数字、点、下划线、连字符",
+                        "brand / device / product: letters, digits, dot, underscore, hyphen only",
+                        "brand / device / product は英数字・.・_・- のみ"));
+                return;
+            }
+            if (m.length() > 64) {
+                toast(Lang.t("型号过长", "model is too long", "型番が長すぎます"));
                 return;
             }
             int sdk;
@@ -1062,10 +1068,34 @@ final class PersonaPanel extends UiSection {
             new android.app.AlertDialog.Builder(PersonaPanel.this)
                     .setTitle(Lang.t("确认修改机型", "confirm model change"))
                     .setMessage(Lang.t(
-                            "机型：" + dv[3] + "\n指纹：" + shortFp(dv[8])
+                            "品牌 brand：" + dv[2]
+                                    + "\n厂商 manufacturer：" + dv[1]
+                                    + "\n型号 model：" + dv[3]
+                                    + "\ndevice：" + dv[4]
+                                    + "\nproduct：" + dv[5]
+                                    + "\nhardware：" + dv[6]
+                                    + "\nboard：" + dv[7]
+                                    + "\n系统版本 release：" + dv[11]
+                                    + "\nSDK：" + dv[12]
+                                    + "\nbuild ID：" + dv[9]
+                                    + "\nincremental：" + dv[10]
+                                    + "\nsecurity patch：" + dv[13]
+                                    + "\nfingerprint：" + dv[8]
                                     + "\n区域：" + where + "\nCSC：" + (csc == null ? "—" : csc)
                                     + "\n需要软重启，是否确认？",
-                            "model: " + dv[3] + "\nfingerprint: " + shortFp(dv[8])
+                            "brand: " + dv[2]
+                                    + "\nmanufacturer: " + dv[1]
+                                    + "\nmodel: " + dv[3]
+                                    + "\ndevice: " + dv[4]
+                                    + "\nproduct: " + dv[5]
+                                    + "\nhardware: " + dv[6]
+                                    + "\nboard: " + dv[7]
+                                    + "\nrelease: " + dv[11]
+                                    + "\nSDK: " + dv[12]
+                                    + "\nbuild ID: " + dv[9]
+                                    + "\nincremental: " + dv[10]
+                                    + "\nsecurity patch: " + dv[13]
+                                    + "\nfingerprint: " + dv[8]
                                     + "\nregion: " + where + "\nCSC: " + (csc == null ? "—" : csc)
                                     + "\nsoft reboot required. Continue?"))
                     .setPositiveButton(Lang.t("确认软重启", "reboot now"),
@@ -1082,9 +1112,14 @@ final class PersonaPanel extends UiSection {
     }
 
     private android.widget.EditText customField(android.widget.LinearLayout form,
-            String hint, String value) {
+            String label, String value) {
+        android.widget.TextView caption = new android.widget.TextView(this);
+        caption.setText(label);
+        caption.setTextSize(11);
+        caption.setTextColor(0x66DDE4EE);
+        caption.setPadding(0, dp(this, 6), 0, 0);
+        form.addView(caption);
         android.widget.EditText field = new android.widget.EditText(this);
-        field.setHint(hint);
         field.setSingleLine(true);
         field.setText(value == null ? "" : value);
         form.addView(field);
