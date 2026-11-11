@@ -1,4 +1,4 @@
-ClaudeWilson 0.9.1 (versionCode 18)
-SHA-256: caa135d8b31db3130e78aa6f4bb1bc6960cad1f8bdaf86a99aa6411ed7c99789
+ClaudeWilson 0.9.2 (versionCode 19)
+SHA-256: f70ae22298891416f81c96f95567b49c08a381029e951a956144e0000dd52ed3
 
-Custom model field rules and detail list.
+Pinned legacy Motorola/Samsung mixed profile.
