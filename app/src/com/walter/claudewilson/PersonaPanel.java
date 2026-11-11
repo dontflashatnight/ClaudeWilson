@@ -120,6 +120,10 @@ final class PersonaPanel extends UiSection {
         if (!persona.hasDeviceOverride(user)) {
             return null;
         }
+        String[] custom = persona.customDevice(user);
+        if (custom != null) {
+            return PersonaSynth.cross(custom, persona.seed(user));
+        }
         int index = Math.floorMod(persona.device(user), deviceCount());
         return PersonaSynth.cross(deviceAt(index), persona.seed(user));
     }
@@ -158,9 +162,12 @@ final class PersonaPanel extends UiSection {
         // No persona value is minted up front: an unset AID means "this device's own id", and
         // only an explicit save in the AID dialog turns it into an override.
         String aidOverride = persona.aid(user);
+        String[] customDevice = hasPersona ? persona.customDevice(user) : null;
         int devIdx = hasPersona ? persona.device(user) % deviceCount() : 0;
         long seed = hasPersona ? persona.seed(user) : 0L;
-        String[] dv = hasPersona ? PersonaSynth.cross(deviceAt(devIdx), seed) : null;
+        String[] dv = hasPersona
+                ? PersonaSynth.cross(customDevice != null ? customDevice : deviceAt(devIdx), seed)
+                : null;
         final String loc = hasPersona && applyLocale != null ? applyLocale : "—";
         final String tz  = hasPersona && applyZone   != null ? applyZone   : "—";
         com.walter.claudewilson.model.GeoTable.Point regionPoint =
@@ -901,13 +908,21 @@ final class PersonaPanel extends UiSection {
         if (!com.walter.claudewilson.model.ShellQuote.numeric(user)) return;
         final String aid = persona.aid(user);
         final Regions.R region = regionIdx >= 0 ? Regions.ALL.get(regionIdx) : null;
-        String[][] table = devices();
-        String[] names = new String[deviceCount()];
+        String[] names = new String[deviceCount() + 1];
         names[0] = Lang.t("本机", "this device", "実機") + ": " + selfDevice()[0];
-        for (int i = 1; i < names.length; i++) names[i] = deviceAt(i)[0];
+        for (int i = 1; i < deviceCount(); i++) names[i] = deviceAt(i)[0];
+        String[] custom = persona.customDevice(user);
+        int customIndex = names.length - 1;
+        names[customIndex] = custom == null
+                ? Lang.t("自定义机型…", "custom model…", "カスタム機種…")
+                : Lang.t("自定义机型：", "custom model: ", "カスタム機種：") + custom[3];
         new android.app.AlertDialog.Builder(this)
                 .setTitle(Lang.t("选择机型", "select model", "機種を選択"))
                 .setItems(names, (dialog, which) -> {
+                    if (which == customIndex) {
+                        editCustomModel(region, user, aid);
+                        return;
+                    }
                     long seed = new java.util.Random().nextLong();
                     String[] dv = which == 0 ? null
                             : taggedForRegion(PersonaSynth.cross(deviceAt(which), seed), region);
@@ -942,6 +957,142 @@ final class PersonaPanel extends UiSection {
                             .setNegativeButton(Lang.t("取消", "cancel"), null)
                             .show();
                 }).show();
+    }
+
+    /**
+     * Backend/catalog rows cannot cover every device, so the same fourteen fields are editable
+     * here. Only the identity fields are asked for; build ID, incremental and patch are generated
+     * coherently from the release and one seed.
+     */
+    private void editCustomModel(Regions.R region, String user, String aid) {
+        String[] base = persona.customDevice(user);
+        if (base == null) {
+            base = deviceValues(user);
+        }
+        if (base == null) {
+            base = selfDevice();
+        }
+        int pad = dp(this, 20);
+        android.widget.LinearLayout form = new android.widget.LinearLayout(this);
+        form.setOrientation(android.widget.LinearLayout.VERTICAL);
+        form.setPadding(pad, dp(this, 8), pad, 0);
+
+        android.widget.EditText brand = customField(form,
+                Lang.t("品牌", "brand", "ブランド"), base[2]);
+        android.widget.EditText model = customField(form,
+                Lang.t("型号", "model", "型番"), base[3]);
+        android.widget.EditText device = customField(form,
+                Lang.t("device（小写）", "device (lowercase)", "device（小文字）"), base[4]);
+        android.widget.EditText product = customField(form,
+                Lang.t("product（小写）", "product (lowercase)", "product（小文字）"), base[5]);
+        android.widget.EditText release = customField(form,
+                Lang.t("Android 版本（14/15/16）", "Android release (14/15/16)",
+                        "Android バージョン（14/15/16）"), base[11]);
+
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(form);
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
+                .setTitle(Lang.t("自定义机型", "custom model", "カスタム機種"))
+                .setView(scroll)
+                .setPositiveButton(Lang.t("下一步", "next", "次へ"), null)
+                .setNegativeButton(Lang.t("取消", "cancel", "キャンセル"), null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(
+                android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String b = brand.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
+            String m = model.getText().toString().trim();
+            String d = device.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
+            String p = product.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
+            String r = release.getText().toString().trim();
+            if (b.isEmpty() || m.isEmpty() || d.isEmpty() || p.isEmpty()) {
+                toast(Lang.t("品牌、型号、device、product 都要填",
+                        "brand, model, device and product are required",
+                        "ブランド・型番・device・product は必須です"));
+                return;
+            }
+            if (!d.matches("[a-z0-9_]+") || !p.matches("[a-z0-9_]+")) {
+                toast(Lang.t("device / product 只能用小写字母、数字、下划线",
+                        "device / product: lowercase letters, digits, underscore only",
+                        "device / product は小文字・数字・_ のみ"));
+                return;
+            }
+            int sdk;
+            if ("14".equals(r)) {
+                sdk = 34;
+            } else if ("15".equals(r)) {
+                sdk = 35;
+            } else if ("16".equals(r)) {
+                sdk = 36;
+            } else {
+                toast(Lang.t("Android 版本只支持 14/15/16",
+                        "Android release must be 14/15/16",
+                        "Android バージョンは 14/15/16 のみ"));
+                return;
+            }
+            java.util.Random random = new java.util.Random();
+            java.time.LocalDate now = java.time.LocalDate.now();
+            String date = now.format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
+            String buildId = "AP3A." + date + "." + (100000 + random.nextInt(900000));
+            String incremental = String.valueOf(10000000 + random.nextInt(90000000));
+            String patch = now.minusMonths(random.nextInt(12)).withDayOfMonth(1).toString();
+            String[] row = {
+                    b + " " + m,
+                    b,
+                    b,
+                    m,
+                    d,
+                    p,
+                    d,
+                    d,
+                    "",
+                    buildId,
+                    incremental,
+                    r,
+                    String.valueOf(sdk),
+                    patch
+            };
+            row[8] = PersonaSynth.fingerprint(row[2], row[5], row[4], row[11], row[9], row[10]);
+            long seed = random.nextLong();
+            String[] dv = taggedForRegion(PersonaSynth.cross(row, seed), region);
+            dialog.dismiss();
+            String csc = region != null ? Regions.cscFor(region.iso) : null;
+            String where = region != null
+                    ? region.name + " " + region.iso.toUpperCase(java.util.Locale.ROOT)
+                    : "—";
+            new android.app.AlertDialog.Builder(PersonaPanel.this)
+                    .setTitle(Lang.t("确认修改机型", "confirm model change"))
+                    .setMessage(Lang.t(
+                            "机型：" + dv[3] + "\n指纹：" + shortFp(dv[8])
+                                    + "\n区域：" + where + "\nCSC：" + (csc == null ? "—" : csc)
+                                    + "\n需要软重启，是否确认？",
+                            "model: " + dv[3] + "\nfingerprint: " + shortFp(dv[8])
+                                    + "\nregion: " + where + "\nCSC: " + (csc == null ? "—" : csc)
+                                    + "\nsoft reboot required. Continue?"))
+                    .setPositiveButton(Lang.t("确认软重启", "reboot now"),
+                            (confirm, button) -> {
+                                persona.putCustom(user, row, aid, seed);
+                                renderScreen.run();
+                                syncSystemThenPublish(dv, region,
+                                        PersonaPanel.this::rebootZygote);
+                            })
+                    .setNegativeButton(Lang.t("取消", "cancel"), null)
+                    .show();
+        }));
+        dialog.show();
+    }
+
+    private android.widget.EditText customField(android.widget.LinearLayout form,
+            String hint, String value) {
+        android.widget.EditText field = new android.widget.EditText(this);
+        field.setHint(hint);
+        field.setSingleLine(true);
+        field.setText(value == null ? "" : value);
+        form.addView(field);
+        return field;
+    }
+
+    private void toast(String message) {
+        android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show();
     }
 
     /** Samsung profiles have no CSC in their template; append the selected region's CSC. */
