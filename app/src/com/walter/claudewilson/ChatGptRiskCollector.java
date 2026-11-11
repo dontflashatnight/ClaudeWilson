@@ -55,6 +55,7 @@ final class ChatGptRiskCollector {
             } else {
                 Map<String, String> raw = sections(dump);
                 parse(raw, data);
+                applyTelemetry(context, spec, raw, data);
                 put(data, "sim_carrier_id", carrierId(context));
                 hook = parseHook(raw.get("hookcheck"));
             }
@@ -101,8 +102,8 @@ final class ChatGptRiskCollector {
         put(out, "segment_device", xml(prefs, "segment.device.id"));
 
         String statsig = raw.get("statsig");
-        put(out, "statsig_stable", lastJson(statsig, "stableID"));
-        put(out, "statsig_locale", lastJson(statsig, "locale"));
+        put(out, "statsig_stable", latestStatsig(statsig, "stableID"));
+        put(out, "statsig_locale", latestStatsig(statsig, "locale"));
 
         Map<String, String> firebase = keyPrefix(raw.get("firebase"));
         if (firebase != null) {
@@ -229,13 +230,18 @@ final class ChatGptRiskCollector {
                         + "[ -n \"$F\" ] && grep -a -o '\"Fid\":\"[^\"]*\"' \"$F\" | head -1");
         section(s, "statsig",
                 "DB=$(ls \"$P\"/no_backup/statsig_event_queue_*.db 2>/dev/null | head -1); "
-                        + "[ -n \"$DB\" ] && grep -a -o -E "
+                        + "[ -n \"$DB\" ] && strings \"$DB\" | grep -a -E "
                         + "'\"(stableID|locale|language|appVersion|deviceModel"
-                        + "|deviceManufacturer)\":\"[^\"]*\"' \"$DB\" | tail -40");
+                        + "|deviceManufacturer|time)\"' | tail -80");
         section(s, "firebase",
                 "DB=\"$P/databases/com.google.android.datatransport.events\"; "
                         + "[ -f \"$DB\" ] && strings \"$DB\" | grep -a -E "
-                        + "'^(country|locale|mcc_mnc|tz-offset|fingerprint)' | tail -25");
+                        + "'^(country|locale|mcc_mnc|tz-offset|fingerprint|net-type"
+                        + "|mobile-subtype|os-build|os-uild|manufacturer|model|device"
+                        + "|product|hardware|sdk-version|application_build)' | tail -80");
+        section(s, "journal",
+                "F=\"$P/cache/cw-telemetry/events.jsonl\"; "
+                        + "[ -f \"$F\" ] && cat \"$F\" 2>/dev/null");
         section(s, "statsig_account",
                 "DB=$(ls \"$P\"/no_backup/statsig_event_queue_*.db 2>/dev/null | head -1); "
                         + "[ -n \"$DB\" ] && grep -a -o -E "
@@ -269,7 +275,10 @@ final class ChatGptRiskCollector {
                         + "oai-sc= conv_key_; do C=$(grep -a -o \"$N\" \"$F\" | wc -l); "
                         + "echo \"$C $N\"; done; fi");
         section(s, "hookcheck",
-                "cat \"$P/files/hookcheck.txt\" 2>/dev/null");
+                "cat \"$P/files/hookcheck.txt\" 2>/dev/null; "
+                        + "for F in \"$P\"/files/hookcheck.*.txt; do "
+                        + "[ -f \"$F\" ] || continue; "
+                        + "echo \"process_file=$(basename \"$F\")\"; cat \"$F\"; done");
         section(s, "payload",
                 "F=/data/local/tmp/claudewilson/" + id + ".json; "
                         + "[ -f \"$F\" ] && head -c 8192 \"$F\"");
@@ -336,17 +345,56 @@ final class ChatGptRiskCollector {
         return out.isEmpty() ? null : out;
     }
 
+    /** Same persistent merge as Claude: the Firebase datatransport queue is not historical. */
+    private static void applyTelemetry(Context context, TargetSpec spec,
+            Map<String, String> raw, Map<String, String> data) {
+        String target = spec.id();
+        String live = raw.get("firebase");
+        boolean readable = live == null
+                || (!live.startsWith("exc:") && !live.startsWith("timeout:"));
+        Map<String, String> firebase = keyPrefix(live);
+        TelemetryStore.ingest(context, target, firebase, "datatransport");
+        TelemetryStore.ingestJournal(context, target, raw.get("journal"));
+        TelemetryStore.ingestDatabase(context, target, spec.packageName());
+        Map<String, TelemetryStore.Entry> stored = TelemetryStore.read(context, target);
+        fill(data, stored, "firebase_country", "country");
+        fill(data, stored, "firebase_locale", "locale");
+        fill(data, stored, "firebase_mcc", "mcc_mnc");
+        fill(data, stored, "firebase_tz", "tz-offset");
+        fill(data, stored, "firebase_fingerprint", "fingerprint");
+        data.put("firebase_readable", readable ? "1" : "0");
+
+        Map<String, String> extra = new LinkedHashMap<String, String>();
+        Map<String, String> hook = parseHook(raw.get("hookcheck"));
+        for (Map.Entry<String, String> item : hook.entrySet()) {
+            extra.put("hook." + item.getKey(), item.getValue());
+        }
+        TelemetryStore.ingest(context, target, extra, "snapshot");
+    }
+
+    private static void fill(Map<String, String> data,
+            Map<String, TelemetryStore.Entry> stored, String outKey, String storeKey) {
+        String value = TelemetryStore.latest(stored, storeKey);
+        if (value != null && !value.isEmpty()) {
+            put(data, outKey, value);
+        }
+    }
+
     /** Firebase transport stores the metadata as protobuf; strings leaves key+value pairs. */
     private static Map<String, String> keyPrefix(String text) {
         if (text == null || text.trim().isEmpty()) {
             return null;
         }
-        String[] keys = {"country", "locale", "mcc_mnc", "tz-offset", "fingerprint"};
+        String[] keys = {"country", "locale", "mcc_mnc", "tz-offset", "fingerprint",
+                "net-type", "mobile-subtype", "os-build", "os-uild",
+                "manufacturer", "model", "device", "product", "hardware",
+                "sdk-version", "application_build"};
         Map<String, String> out = new LinkedHashMap<String, String>();
         for (String line : text.split("\\n")) {
             for (String key : keys) {
                 if (line.startsWith(key) && line.length() > key.length()) {
-                    out.put(key, line.substring(key.length()).trim());
+                    String canonical = "os-uild".equals(key) ? "os-build" : key;
+                    out.put(canonical, line.substring(key.length()).trim());
                 }
             }
         }
@@ -364,6 +412,29 @@ final class ChatGptRiskCollector {
 
     private static String lastJson(String text, String key) {
         return json(text, key, true);
+    }
+
+    /** Statsig stores many queued events; the one with the largest time is the current value. */
+    private static String latestStatsig(String text, String key) {
+        if (text == null || text.isEmpty()) {
+            return null;
+        }
+        String best = null;
+        long bestTime = Long.MIN_VALUE;
+        for (String line : text.split("\\n")) {
+            String value = json(line, key, true);
+            if (value == null) {
+                continue;
+            }
+            java.util.regex.Matcher time = java.util.regex.Pattern
+                    .compile("\"time\"\\s*:\\s*(\\d{10,})").matcher(line);
+            long at = time.find() ? Long.parseLong(time.group(1)) : Long.MIN_VALUE;
+            if (at >= bestTime) {
+                best = value;
+                bestTime = at;
+            }
+        }
+        return best;
     }
 
     /** Last scalar (number/bool/quoted string) for keys the Statsig DB stores unquoted. */
