@@ -378,7 +378,9 @@ final class PersonaPanel extends UiSection {
                 + ("docomo".equals(car) ? 1185 : -1)
                 + ",\"androidId\":\"" + (aidOverride != null ? aidOverride : liveAidText)
                 + (applyLocale != null
-                        ? "\",\"locale\":\"" + applyLocale : "")
+                        ? "\",\"locale\":\"" + applyLocale
+                                + "\",\"localeList\":[\"" + applyLocale + "\",\"en-US\"]"
+                        : "")
                 + (applyZone != null
                         ? "\",\"tz\":\"" + applyZone : "")
                 + (place != null

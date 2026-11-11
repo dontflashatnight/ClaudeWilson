@@ -32,6 +32,7 @@ final class HookConfig {
     final int simCarrierId;
     final String androidId;
     final String locale;
+    final List<String> localeList;
     final String tz;
     final boolean hideAccounts;
     final boolean locationEnabled;
@@ -64,7 +65,11 @@ final class HookConfig {
         netOperatorName = o.optString("netOperatorName", simOperatorName);
         simCarrierId = o.optInt("simCarrierId", -1);
         androidId = o.optString("androidId", "");
-        locale = o.optString("locale", "");
+        JSONObject localeObject = o.optJSONObject("locale");
+        locale = localeObject != null
+                ? localeObject.optString("tag", "")
+                : o.optString("locale", "");
+        localeList = localeList(locale, localeObject, o.optJSONArray("localeList"));
         tz = o.optString("tz", "");
         hideAccounts = o.optBoolean("hideAccounts", false);
         JSONObject location = o.optJSONObject("location");
@@ -155,11 +160,35 @@ final class HookConfig {
         return Integer.toHexString((targetId + "|" + target + "|" + countryCodeHint + "|"
                 + simOperator + "|" + simCountryIso + "|"
                 + simOperatorName + "|" + netOperator + "|" + netCountryIso + "|"
-                + netOperatorName + "|" + androidId + "|" + locale + "|" + tz + "|"
+                + netOperatorName + "|" + androidId + "|" + locale + "|" + localeList + "|"
+                + tz + "|"
                 + locationEnabled + "|" + latitude + "|" + longitude + "|"
                 + locationCity + "|" + locationSeed + "|" + wifi.size() + "|" + ble.size()
                 + "|" + sensorsEnabled)
                 .hashCode());
+    }
+
+    private static List<String> localeList(String tag, JSONObject object, JSONArray top) {
+        List<String> out = new ArrayList<>();
+        JSONArray list = top;
+        if (list == null && object != null) {
+            list = object.optJSONArray("list");
+        }
+        if (list != null) {
+            for (int i = 0; i < list.length(); i++) {
+                String value = list.optString(i, "").trim();
+                if (!value.isEmpty() && !out.contains(value)) {
+                    out.add(value);
+                }
+            }
+        }
+        if (!tag.isEmpty() && !out.contains(tag)) {
+            out.add(0, tag);
+        }
+        if (!tag.isEmpty() && out.isEmpty()) {
+            out.add(tag);
+        }
+        return out;
     }
 
     private static float[] floats(JSONObject object, String name) {

@@ -340,13 +340,13 @@ public final class ChatGptChecklist {
         out.add(value(item("sdk.datadog.anonymous"), data.get("datadog_anonymous")));
         out.add(value(item("sdk.datadog.play_country"),
                 data.get("datadog_play_country")));
-        out.add(value(item("sdk.firebase.fid"), data.get("firebase_fid")));
-        out.add(value(item("sdk.firebase.country"), data.get("firebase_country")));
-        out.add(value(item("sdk.firebase.locale"), data.get("firebase_locale")));
-        out.add(value(item("sdk.firebase.mcc"), data.get("firebase_mcc")));
-        out.add(value(item("sdk.firebase.tz"), data.get("firebase_tz")));
-        out.add(value(item("sdk.firebase.fingerprint"),
-                data.get("firebase_fingerprint")));
+        out.add(storedValue(item("sdk.firebase.fid"), data, "firebase_fid"));
+        out.add(storedValue(item("sdk.firebase.country"), data, "firebase_country"));
+        out.add(storedValue(item("sdk.firebase.locale"), data, "firebase_locale"));
+        out.add(storedValue(item("sdk.firebase.mcc"), data, "firebase_mcc"));
+        out.add(storedValue(item("sdk.firebase.tz"), data, "firebase_tz"));
+        out.add(storedValue(item("sdk.firebase.fingerprint"),
+                data, "firebase_fingerprint"));
         out.add(value(item("sdk.bitdrift"), "not-local"));
 
         out.add(value(item("account.local_handle"), data.get("account_handle")));
@@ -515,6 +515,17 @@ public final class ChatGptChecklist {
 
     private static CheckItem value(CheckItem spec, String raw) {
         return raw == null ? spec.unreadable() : spec.withValue(raw);
+    }
+
+    /** Empty datatransport queue is no-record, not a read failure. */
+    private static CheckItem storedValue(CheckItem spec, java.util.Map<String, String> data,
+            String key) {
+        String value = data.get(key);
+        if (value != null) {
+            return spec.withValue(value);
+        }
+        return "0".equals(data.get("firebase_readable"))
+                ? spec.unreadable() : spec.withCoverage(CheckItem.Coverage.NO_RECORD);
     }
 
     private static String permission(Snapshot snapshot, String key) {
