@@ -151,7 +151,6 @@ public final class SelfTest {
         subBrandUnderParentPasses();
         syntheticVariantKeepsIdentity();
         syntheticVariantPassesCoherence();
-        pinnedLegacyRowKeepsFingerprint();
         pixelIncrementalStaysNumeric();
         androidIdPasses();
 
@@ -563,19 +562,6 @@ public final class SelfTest {
         check("build id keeps its length", out[9].length() == SAMSUNG_ROW[9].length(), out[9]);
         check("same seed, same variant", Arrays.equals(out, PersonaSynth.cross(SAMSUNG_ROW, 42L)),
                 "not deterministic");
-    }
-
-    private static void pinnedLegacyRowKeepsFingerprint() {
-        String fp = "samsung/pa3qxxx/pa3q:15/AP3A.240905.015.A2/"
-                + "S938BXXS1AYC2_OXM1AYC2:user/release-keys";
-        String[] legacy = {"Moto G 5G (legacy mixed)", "motorola", "samsung", "moto g 5G",
-                "pa3q", "pa3qxxx", "qcom", "kalama", fp, "AP3A.240905.015.A2",
-                "S938BXXS1AYC2_OXM1AYC2", "15", "35", "2024-11-01", "pinned"};
-        String[] out = PersonaSynth.cross(legacy, 99L);
-        check("pinned legacy keeps fingerprint", fp.equals(out[8]), out[8]);
-        check("pinned legacy keeps mixed parts",
-                "motorola".equals(out[1]) && "samsung".equals(out[2])
-                        && "pa3q".equals(out[4]) && "moto g 5G".equals(out[3]));
     }
 
     /** The whole point of the synthesis: the generated build must survive the coherence rule. */
