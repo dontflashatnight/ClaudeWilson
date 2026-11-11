@@ -59,6 +59,7 @@ final class ClaudeRiskCollector {
             } else {
                 Map<String, String> raw = sections(dump);
                 parse(raw, data);
+                applyTelemetry(context, spec, raw, data);
                 if (!data.containsKey("target_app")) {
                     put(data, "target_app", packageVersion(context, spec.packageName()));
                 }
@@ -160,8 +161,7 @@ final class ClaudeRiskCollector {
         }
 
         String payload = raw.get("payload");
-        put(out, "payload_cc_hint", json(payload, "countryCodeHint", false));
-        put(out, "payload_locale", json(payload, "locale", false));
+        put(out, "payload_cc_hint", json(payload, "countryCodeHint", false));        put(out, "payload_locale", json(payload, "locale", false));
         put(out, "payload_tz", json(payload, "tz", false));
         put(out, "payload_simop", json(payload, "simOperator", false));
         put(out, "payload_simiso", json(payload, "simCountryIso", false));
@@ -225,13 +225,19 @@ final class ClaudeRiskCollector {
         section(s, "transport",
                 "F=\"$P/databases/com.google.android.datatransport.events\"; "
                         + "[ -f \"$F\" ] && strings \"$F\" | grep -a -E "
-                        + "'^(country|locale|mcc_mnc|tz-offset|fingerprint|net-type|mobile-subtype|os-build|manufacturer|model|device|product|hardware)' | tail -80");
+                        + "'^(country|locale|mcc_mnc|tz-offset|fingerprint|net-type|mobile-subtype|os-build|os-uild|manufacturer|model|device|product|hardware|sdk-version|application_build)' | tail -80");
+        section(s, "journal",
+                "F=\"$P/cache/cw-telemetry/events.jsonl\"; "
+                        + "[ -f \"$F\" ] && cat \"$F\" 2>/dev/null");
         section(s, "cookies",
                 "F=$(ls \"$P\"/shared_prefs/user_cookies_*.xml 2>/dev/null | head -1); "
                         + "if [ -n \"$F\" ]; then for N in _cfuvid sessionKeyV3; do "
                         + "C=$(grep -a -o \"$N\" \"$F\" | wc -l); echo \"$C $N\"; done; fi");
         section(s, "hookcheck",
-                "cat \"$P/files/hookcheck.txt\" 2>/dev/null");
+                "cat \"$P/files/hookcheck.txt\" 2>/dev/null; "
+                        + "for F in \"$P\"/files/hookcheck.*.txt; do "
+                        + "[ -f \"$F\" ] || continue; "
+                        + "echo \"process_file=$(basename \"$F\")\"; cat \"$F\"; done");
         section(s, "payload",
                 "F=/data/local/tmp/claudewilson/claude.json; "
                         + "[ -f \"$F\" ] && head -c 8192 \"$F\"");
@@ -298,19 +304,79 @@ final class ClaudeRiskCollector {
         return out.isEmpty() ? null : out;
     }
 
+    /**
+     * Merge the live queue with the persistent observation store. A successful datatransport
+     * upload deletes its rows, so the live queue alone cannot answer what the target last saw.
+     */
+    private static void applyTelemetry(Context context, TargetSpec spec,
+            Map<String, String> raw, Map<String, String> data) {
+        String target = spec.id();
+        String live = raw.get("transport");
+        boolean readable = live == null
+                || (!live.startsWith("exc:") && !live.startsWith("timeout:"));
+        Map<String, String> transport = keyPrefix(live);
+        TelemetryStore.ingest(context, target, transport, "datatransport");
+        TelemetryStore.ingestJournal(context, target, raw.get("journal"));
+        TelemetryStore.ingestDatabase(context, target, spec.packageName());
+
+        Map<String, TelemetryStore.Entry> stored = TelemetryStore.read(context, target);
+        fill(data, stored, "transport_country", "country");
+        fill(data, stored, "transport_locale", "locale");
+        fill(data, stored, "transport_mcc", "mcc_mnc");
+        fill(data, stored, "transport_tz", "tz-offset");
+        fill(data, stored, "transport_fingerprint", "fingerprint");
+        fill(data, stored, "transport_net_type", "net-type");
+        fill(data, stored, "transport_mobile_subtype", "mobile-subtype");
+        fill(data, stored, "transport_os_build", "os-build");
+        if (data.get("transport_build") == null) {
+            String build = buildParts(TelemetryStore.latest(stored, "manufacturer"),
+                    TelemetryStore.latest(stored, "device"),
+                    TelemetryStore.latest(stored, "product"),
+                    TelemetryStore.latest(stored, "hardware"),
+                    TelemetryStore.latest(stored, "model"));
+            if (build != null) {
+                put(data, "transport_build", build);
+            }
+        }
+        data.put("transport_readable", readable ? "1" : "0");
+
+        Map<String, String> extra = new LinkedHashMap<String, String>();
+        Map<String, String> hook = parseHook(raw.get("hookcheck"));
+        for (Map.Entry<String, String> item : hook.entrySet()) {
+            extra.put("hook." + item.getKey(), item.getValue());
+        }
+        Map<String, String> cookies = counts(raw.get("cookies"));
+        if (cookies != null) {
+            for (Map.Entry<String, String> item : cookies.entrySet()) {
+                extra.put("cookie." + item.getKey(), item.getValue());
+            }
+        }
+        TelemetryStore.ingest(context, target, extra, "snapshot");
+    }
+
+    private static void fill(Map<String, String> data,
+            Map<String, TelemetryStore.Entry> stored, String outKey, String storeKey) {
+        String value = TelemetryStore.latest(stored, storeKey);
+        if (value != null && !value.isEmpty()) {
+            put(data, outKey, value);
+        }
+    }
+
     /** The datatransport metadata is stored as protobuf; strings leaves key+value pairs. */
     private static Map<String, String> keyPrefix(String text) {
         if (text == null || text.trim().isEmpty()) {
             return null;
         }
         String[] keys = {"country", "locale", "mcc_mnc", "tz-offset", "fingerprint",
-                "net-type", "mobile-subtype", "os-build",
-                "manufacturer", "model", "device", "product", "hardware"};
+                "net-type", "mobile-subtype", "os-build", "os-uild",
+                "manufacturer", "model", "device", "product", "hardware",
+                "sdk-version", "application_build"};
         Map<String, String> out = new LinkedHashMap<String, String>();
         for (String line : text.split("\\n")) {
             for (String key : keys) {
                 if (line.startsWith(key) && line.length() > key.length()) {
-                    out.put(key, clean(line.substring(key.length())));
+                    String canonical = "os-uild".equals(key) ? "os-build" : key;
+                    out.put(canonical, clean(line.substring(key.length())));
                 }
             }
         }

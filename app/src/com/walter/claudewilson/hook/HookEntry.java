@@ -33,6 +33,7 @@ public final class HookEntry implements IXposedHookLoadPackage {
             TelephonyHooks.install(param.classLoader, config);
             IdentityHooks.install(param.classLoader, config);
             LocationHooks.install(param.classLoader, config);
+            TelemetryHooks.install(param.classLoader);
             WifiHooks.install(param.classLoader, config);
             BleHooks.install(param.classLoader, config);
             SensorHooks.install(param.classLoader, config);

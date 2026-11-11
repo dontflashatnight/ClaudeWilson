@@ -30,6 +30,7 @@ final class IdentityHooks {
 
         if (!config.locale.isEmpty()) {
             final Locale value = Locale.forLanguageTag(config.locale.replace('_', '-'));
+            final android.os.LocaleList locales = localeList(config, value);
             try {
                 Class<?> locale = XposedHelpers.findClass("java.util.Locale", loader);
                 XposedBridge.hookAllMethods(locale, "getDefault",
@@ -41,7 +42,7 @@ final class IdentityHooks {
             } catch (Throwable t) {
                 XposedBridge.log("ClaudeWilsonHook locale: " + t);
             }
-            applyResourcesLocale(loader, value);
+            applyResourcesLocale(loader, value, locales);
         }
         if (!config.tz.isEmpty()) {
             try {
@@ -79,13 +80,14 @@ final class IdentityHooks {
         }
     }
 
-    private static void applyResourcesLocale(ClassLoader loader, final Locale value) {
+    private static void applyResourcesLocale(ClassLoader loader, final Locale value,
+            final android.os.LocaleList locales) {
         try {
             Class<?> localeList = XposedHelpers.findClass("android.os.LocaleList", loader);
             XposedBridge.hookAllMethods(localeList, "getDefault",
                     new XC_MethodHook(XC_MethodHook.PRIORITY_HIGHEST) {
                         @Override protected void afterHookedMethod(MethodHookParam param) {
-                            param.setResult(new android.os.LocaleList(value));
+                            param.setResult(locales);
                         }
                     });
         } catch (Throwable t) {
@@ -97,7 +99,13 @@ final class IdentityHooks {
             XposedBridge.hookAllMethods(config, "getLocales",
                     new XC_MethodHook(XC_MethodHook.PRIORITY_HIGHEST) {
                         @Override protected void afterHookedMethod(MethodHookParam param) {
-                            param.setResult(new android.os.LocaleList(value));
+                            param.setResult(locales);
+                        }
+                    });
+            XposedBridge.hookAllMethods(config, "getLocale",
+                    new XC_MethodHook(XC_MethodHook.PRIORITY_HIGHEST) {
+                        @Override protected void afterHookedMethod(MethodHookParam param) {
+                            param.setResult(value);
                         }
                     });
         } catch (Throwable t) {
@@ -107,7 +115,7 @@ final class IdentityHooks {
             @Override protected void beforeHookedMethod(MethodHookParam param) {
                 for (Object arg : param.args) {
                     if (arg instanceof android.content.res.Configuration) {
-                        ((android.content.res.Configuration) arg).setLocale(value);
+                        ((android.content.res.Configuration) arg).setLocales(locales);
                     }
                 }
             }
@@ -116,7 +124,16 @@ final class IdentityHooks {
             XposedHelpers.findAndHookConstructor("android.content.res.Resources", loader,
                     android.content.res.AssetManager.class,
                     android.util.DisplayMetrics.class,
-                    android.content.res.Configuration.class, constructor);
+                    android.content.res.Configuration.class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam param) {
+                            for (Object arg : param.args) {
+                                if (arg instanceof android.content.res.Configuration) {
+                                    ((android.content.res.Configuration) arg).setLocales(locales);
+                                }
+                            }
+                        }
+                    });
         } catch (Throwable t) {
             XposedBridge.log("ClaudeWilsonHook resources-ctor: " + t);
         }
@@ -127,6 +144,78 @@ final class IdentityHooks {
                     android.content.res.Configuration.class, constructor);
         } catch (Throwable t) {
             XposedBridge.log("ClaudeWilsonHook resourcesimpl-ctor: " + t);
+        }
+        try {
+            XposedHelpers.findAndHookMethod("android.content.res.Resources", loader,
+                    "getConfiguration", new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam param) {
+                            Object result = param.getResult();
+                            if (result instanceof android.content.res.Configuration) {
+                                android.content.res.Configuration copy =
+                                        new android.content.res.Configuration(
+                                                (android.content.res.Configuration) result);
+                                copy.setLocales(locales);
+                                param.setResult(copy);
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            XposedBridge.log("ClaudeWilsonHook resources-config: " + t);
+        }
+        try {
+            Class<?> context = XposedHelpers.findClass("android.content.Context", loader);
+            XposedBridge.hookAllMethods(context, "createConfigurationContext",
+                    new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam param) {
+                            applyContextLocale(param.getResult(), value);
+                        }
+                    });
+            XposedBridge.hookAllMethods(context, "createDisplayContext",
+                    new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam param) {
+                            applyContextLocale(param.getResult(), value);
+                        }
+                    });
+            XposedBridge.hookAllMethods(context, "applyOverrideConfiguration",
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam param) {
+                            for (Object arg : param.args) {
+                                if (arg instanceof android.content.res.Configuration) {
+                                    ((android.content.res.Configuration) arg).setLocales(locales);
+                                }
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            XposedBridge.log("ClaudeWilsonHook context-locale: " + t);
+        }
+        try {
+            Class<?> system = XposedHelpers.findClass(
+                    "android.provider.Settings$System", loader);
+            XposedBridge.hookAllMethods(system, "getString", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    if (param.args.length >= 2 && "system_locales".equals(
+                            String.valueOf(param.args[1]))) {
+                        param.setResult(locales.toLanguageTags());
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            XposedBridge.log("ClaudeWilsonHook settings-locale: " + t);
+        }
+        try {
+            Class<?> ulocale = XposedHelpers.findClass("android.icu.util.ULocale", loader);
+            XposedBridge.hookAllMethods(ulocale, "getDefault", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        param.setResult(XposedHelpers.callStaticMethod(ulocale, "forLocale",
+                                value));
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            XposedBridge.log("ClaudeWilsonHook icu-locale: " + t);
         }
         XC_MethodHook apply = new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam param) {
@@ -170,11 +259,28 @@ final class IdentityHooks {
             android.content.res.Resources resources = context.getResources();
             android.content.res.Configuration config =
                     new android.content.res.Configuration(resources.getConfiguration());
-            config.setLocale(value);
+            config.setLocales(new android.os.LocaleList(value));
             resources.updateConfiguration(config, resources.getDisplayMetrics());
         } catch (Throwable t) {
             XposedBridge.log("ClaudeWilsonHook apply-locale: " + t);
         }
+    }
+
+    private static android.os.LocaleList localeList(HookConfig config, Locale value) {
+        java.util.List<Locale> values = new java.util.ArrayList<>();
+        for (String tag : config.localeList) {
+            try {
+                Locale parsed = Locale.forLanguageTag(tag.replace('_', '-'));
+                if (!parsed.getLanguage().isEmpty() && !values.contains(parsed)) {
+                    values.add(parsed);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        if (values.isEmpty()) {
+            values.add(value);
+        }
+        return new android.os.LocaleList(values.toArray(new Locale[0]));
     }
 
     private static void constant(Class<?> clazz, String name, String value) {
