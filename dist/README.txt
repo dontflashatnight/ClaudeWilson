@@ -1,4 +1,4 @@
-ClaudeWilson 0.9.0 (versionCode 17)
-SHA-256: 559b66604a57fb9aaf58faefeb25f73cdeb1fe0c48f64e71cc2cc7efcc28d960
+ClaudeWilson 0.9.1 (versionCode 18)
+SHA-256: caa135d8b31db3130e78aa6f4bb1bc6960cad1f8bdaf86a99aa6411ed7c99789
 
-Custom model input; radio identity follows model fields.
+Custom model field rules and detail list.
