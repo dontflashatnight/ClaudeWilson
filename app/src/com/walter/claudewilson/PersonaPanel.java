@@ -378,9 +378,7 @@ final class PersonaPanel extends UiSection {
                 + ("docomo".equals(car) ? 1185 : -1)
                 + ",\"androidId\":\"" + (aidOverride != null ? aidOverride : liveAidText)
                 + (applyLocale != null
-                        ? "\",\"locale\":\"" + applyLocale
-                                + "\",\"localeList\":[\"" + applyLocale + "\",\"en-US\"]"
-                        : "")
+                        ? "\",\"locale\":\"" + applyLocale : "")
                 + (applyZone != null
                         ? "\",\"tz\":\"" + applyZone : "")
                 + (place != null
@@ -812,6 +810,14 @@ final class PersonaPanel extends UiSection {
         }
         final String user = currentUser.get();
         final String sig = Integer.toHexString(json.hashCode());
+        try {
+            new org.json.JSONObject(json);
+        } catch (Exception e) {
+            showRootHint(Lang.t("人设 JSON 无效，已拒绝写入: ",
+                    "persona JSON is invalid; not publishing: ",
+                    "人設 JSON が不正なため配信しません: ") + e.getMessage());
+            return;
+        }
         new Thread(() -> {
             try {
                 String out;
