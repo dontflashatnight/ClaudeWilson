@@ -33,6 +33,12 @@ public final class PersonaSynth {
         if (device == null || device.length < 14) {
             return device;
         }
+        // A pinned row keeps its stored fingerprint verbatim. The legacy mixed Motorola/Samsung
+        // preset uses this: the value already went to a server, so changing it now would rotate
+        // an identity rather than fix it.
+        if (device.length > 14 && "pinned".equals(device[14])) {
+            return device.clone();
+        }
         Random random = new Random(seed);
         String[] out = device.clone();
         out[9] = vary(device[9], random);
