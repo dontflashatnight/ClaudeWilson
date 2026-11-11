@@ -17,6 +17,7 @@ import java.util.List;
 final class PersonaState {
     private static final String AID = "root_aid.";
     private static final String DEVICE = "root_dev.";
+    private static final String CUSTOM_DEVICE = "root_custom.";
     private static final String DEVICE_OVERRIDE = "ovr_dev.";
     private static final String AID_OVERRIDE = "ovr_aid.";
     private static final String SEED = "root_seed.";
@@ -221,7 +222,38 @@ final class PersonaState {
     }
 
     void clearDeviceOverride(String user) {
-        prefs.edit().remove(DEVICE_OVERRIDE + user).apply();
+        prefs.edit().remove(DEVICE_OVERRIDE + user).remove(CUSTOM_DEVICE + user).apply();
+    }
+
+    /** Custom 14-field device row for this space, or null when the catalog/self row is used. */
+    String[] customDevice(String user) {
+        String raw = prefs.getString(CUSTOM_DEVICE + user, null);
+        if (raw == null || raw.isEmpty()) {
+            return null;
+        }
+        String[] parts = raw.split("\u001F", -1);
+        return parts.length == 14 ? parts : null;
+    }
+
+    void putCustom(String user, String[] device, String aid, long seed) {
+        if (device == null || device.length != 14) {
+            return;
+        }
+        StringBuilder raw = new StringBuilder();
+        for (int i = 0; i < device.length; i++) {
+            if (i > 0) {
+                raw.append('\u001F');
+            }
+            raw.append(device[i] == null ? "" : device[i]);
+        }
+        prefs.edit()
+                .putInt(DEVICE + user, 0)
+                .putString(CUSTOM_DEVICE + user, raw.toString())
+                .putString(AID + user, aid)
+                .putLong(SEED + user, seed)
+                .putBoolean(DEVICE_OVERRIDE + user, true)
+                .putString(USERS, withUser(users(), user))
+                .apply();
     }
 
     boolean hasAidOverride(String user) {
@@ -271,6 +303,7 @@ final class PersonaState {
     void put(String user, int device, String aid, long seed) {
         prefs.edit()
                 .putInt(DEVICE + user, device)
+                .remove(CUSTOM_DEVICE + user)
                 .putString(AID + user, aid)
                 .putLong(SEED + user, seed)
                 .putString(USERS, withUser(users(), user))
