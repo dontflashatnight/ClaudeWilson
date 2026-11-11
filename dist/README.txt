@@ -1,4 +1,4 @@
-ClaudeWilson 1.0.0 (versionCode 28)
-SHA-256: 6f469d8966304c0565ca58d13edeb618a45ea5c710eec41b83b1fcca294692a1
+ClaudeWilson 1.0.1 (versionCode 29)
+SHA-256: f1af9c0a28560bfbf954996ce6bde1ad73d88b9fe37b332e8e399cc18c1057f4
 
-Persistent telemetry, locale coverage, latest-event selection.
+Fix malformed locale payload; validate before publish.
