@@ -1,4 +1,4 @@
-ClaudeWilson 0.9.1 (versionCode 18)
-SHA-256: caa135d8b31db3130e78aa6f4bb1bc6960cad1f8bdaf86a99aa6411ed7c99789
+ClaudeWilson 1.0.0 (versionCode 28)
+SHA-256: 6f469d8966304c0565ca58d13edeb618a45ea5c710eec41b83b1fcca294692a1
 
-Custom model field rules and detail list.
+Persistent telemetry, locale coverage, latest-event selection.
