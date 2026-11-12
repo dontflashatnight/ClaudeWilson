@@ -26,12 +26,14 @@ ClaudeWilson 是一个可逆的环境观测与对齐工具。它把目标应用�
 - [它解决什么问题](#它解决什么问题)
 - [30 秒上手](#30-秒上手)
 - [准备什么](#准备什么)
+- [临时 root](#临时-root可选)
 - [界面怎么读](#界面怎么读)
 - [地区切换与恢复](#地区切换与恢复)
 - [网络检查](#网络检查)
 - [数据清理与本地身份](#数据清理与本地身份)
 - [常见问题](#常见问题)
 - [隐私与边界](#隐私与边界)
+- [许可证](#许可证)
 
 **第二部分 · 工程说明**（假设你会读 Java / shell）
 
@@ -120,16 +122,19 @@ Shizuku 第一次使用：在 Shizuku 应用里允许 ClaudeWilson；如果顶�
 
 ### 现代工具
 
-| 工具 | 方式 | 说明 |
-|---|---|---|
-| [DFRoot](https://github.com/diabl0w/DFRoot) | CVE-2026-43284 DirtyFrag 一键加载 LKM | 不需要解锁 bootloader；SU 管理器无关，支持 Samsung 专用 KernelSU 及 KernelSU/Next/KowSU；有 Start on Boot、自动 soft reboot；前提是内核仍可被 DirtyFrag 利用 |
-| [DFReroot](https://github.com/polygraphene/DFReroot) | Dirty Frag 二阶段持久 root | 先用临时 root，把 DFReroot 以 `android.uid.system` 持久化，之后每次从它重新拿 root；已不是纯临时方案，作者也推荐优先用 DFRoot |
-| [Root My Galaxy](https://github.com/BuSung-dev/Root-My-Galaxy) | Samsung 专用 loader | 按型号 + 内核匹配 payload；S25 系列（含 SM-S938B）在支持表中，已测内核 `6.6.98`；必须用完全匹配的 build |
-| [DirtyFrag](https://github.com/mitschud/dirtyfrag) / [DirtyFragX](https://github.com/dugongzi/DirtyFragX) | CVE-2026-43284 页面缓存写 | 确定性利用；需要匹配设备 KMI 的内核模块；锁定 bootloader 也能用 |
-| [GhostLock](https://github.com/JoinChang/ghostlock-oneplus) / GhostSam / GhostLock-Galaxy / GhostLock App | CVE-2026-43499 futex PI UAF | 竞态利用；同一内核布局才稳定，失败重试和 kernel panic 都正常 |
-| [RootMyS24](https://github.com/NanoTurtle1145/root-my-s24) | CVE-2026-98260 POSIX CPU timer UAF | 主要覆盖 S24 / Z Flip6 / 中国版 Z Fold6 的特定 build，要求 One UI 9 / 指定内核 |
-| [RootMyVivo](https://github.com/zenyxx-xd/RootMyVivo) | Adreno GPU CVE-2025-21479 等 | vivo/iQOO 老 5.10/5.15 机型；不是通用工具 |
-| [Root My Pixel](https://github.com/alex193a/Root-My-Pixel) | Pixel 6–11 | 上游明确报告不稳定，可能重试 20 次以上或重启 |
+- [DFRoot](https://github.com/diabl0w/DFRoot) — CVE-2026-43284 DirtyFrag 一键加载 LKM；不需要解锁 bootloader；SU 管理器无关，Samsung 用 diabl0w 的 KernelSU，其他设备可用 KernelSU / KernelSU Next / KowSU；带 Start on Boot、自动 soft reboot。
+- [DFReroot](https://github.com/polygraphene/DFReroot) — Dirty Frag 二阶段持久 root；先用临时 root 把 DFReroot 以 `android.uid.system` 持久化，之后从它重新拿 root；不是纯临时方案，作者推荐优先 DFRoot。
+- [Root My Galaxy](https://github.com/BuSung-dev/Root-My-Galaxy) — Samsung 专用 loader；按型号 + 内核匹配 payload；S25 系列（含 SM-S938B）在支持表中，已测内核 `6.6.98`；必须用完全匹配的 build。
+- [DirtyFrag](https://github.com/mitschud/dirtyfrag) — CVE-2026-43284 页面缓存写；确定性利用；需要匹配设备 KMI 的内核模块；锁定 bootloader 也能用。
+- [DirtyFragX](https://github.com/dugongzi/DirtyFragX) — DirtyFrag 的易用封装/临时 root 版本。
+- [GhostLock](https://github.com/JoinChang/ghostlock-oneplus) — CVE-2026-43499 futex PI UAF；竞态利用，失败重试和 kernel panic 都正常；主要覆盖 OnePlus/OPPO/Xiaomi。
+- [GhostLock App](https://github.com/YuKongA/ghostlock-app) — GhostLock 一键执行 App。
+- [GhostSam](https://github.com/snothin/GhostSam) — Samsung 临时 root 工具，组合 GhostLock/DirtyFrag exploit chain。
+- [GhostLock-Galaxy](https://github.com/wxxsfxyzm/GhostLock-Galaxy) — Samsung Galaxy 的 GhostLock 移植。
+- [CyberMeowfia](https://github.com/polygraphene/CyberMeowfia) — Galaxy S26 的 GhostLock 端口。
+- [RootMyS24](https://github.com/NanoTurtle1145/root-my-s24) — CVE-2026-98260 POSIX CPU timer UAF；S24 / Z Flip6 / 中国版 Z Fold6 特定 build，One UI 9 / 指定内核。
+- [RootMyVivo](https://github.com/zenyxx-xd/RootMyVivo) — Adreno GPU CVE-2025-21479 等；vivo/iQOO 老 5.10/5.15 机型，不是通用工具。
+- [Root My Pixel](https://github.com/alex193a/Root-My-Pixel) — Pixel 6–11；上游明确报告不稳定，可能重试 20 次以上或重启。
 
 对照说明：
 
@@ -544,6 +549,18 @@ adb install -r app/out/build-*/ClaudeWilson.apk
 - `/system/bin/su` 仍在磁盘：KernelSU direct-su 架构；目标进程内隐藏不等于磁盘不存在。
 - 关闭地区恢复的是**第一次 apply 的 baseline**，不是“上一个地区”，也不是出厂设置。
 - 换地区会丢弃当前空间的手动 SIM 覆盖；apply 失败时这些覆盖不会自动恢复。
+
+## 许可证
+
+本项目采用 **[PolyForm Noncommercial License 1.0.0](LICENSE)**，仅允许非商业用途。
+
+```text
+Required Notice: Copyright (c) 2026 ClaudeWilson contributors
+```
+
+商业使用、商业分发、商业集成需要单独授权；默认不授予任何商业许可。
+
+这不是 OSI 认可的开源许可证，而是 source-available / noncommercial 许可证。
 
 ---
 

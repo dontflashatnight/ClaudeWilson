@@ -26,12 +26,14 @@ ClaudeWilson is a reversible environment observer and aligner. It puts the regio
 - [What it solves](#what-it-solves)
 - [30-second start](#30-second-start)
 - [Before you start](#before-you-start)
+- [Temporary root](#temporary-root-optional)
 - [Reading the screen](#reading-the-screen)
 - [Region switch and restore](#region-switch-and-restore)
 - [Network check](#network-check)
 - [Data cleanup and local identity](#data-cleanup-and-local-identity)
 - [FAQ](#faq)
 - [Privacy and boundaries](#privacy-and-boundaries)
+- [License](#license)
 
 **Part II — Engineering notes** (Java / shell assumed)
 
@@ -120,16 +122,19 @@ Temporary root grants UID 0 for **the current boot only**: a loader exploits a k
 
 ### Modern tools
 
-| Tool | Method | Notes |
-|---|---|---|
-| [DFRoot](https://github.com/diabl0w/DFRoot) | CVE-2026-43284 DirtyFrag, one-click LKM load | No bootloader unlock; SU-manager agnostic, supports Samsung-specific KernelSU plus KernelSU/Next/KowSU; Start on Boot and auto soft reboot; kernel must still be vulnerable |
-| [DFReroot](https://github.com/polygraphene/DFReroot) | Two-stage persistent Dirty Frag root | Uses a temporary root once, persists a system-UID app, then re-roots from it; no longer purely temporary, and its author recommends DFRoot instead |
-| [Root My Galaxy](https://github.com/BuSung-dev/Root-My-Galaxy) | Samsung loader | Per-model/per-kernel payloads; S25 series (including SM-S938B) is listed with tested kernel `6.6.98`; exact build required |
-| [DirtyFrag](https://github.com/mitschud/dirtyfrag) / [DirtyFragX](https://github.com/dugongzi/DirtyFragX) | CVE-2026-43284 page-cache write | Deterministic; needs a KMI-matched kernel module; works with a locked bootloader |
-| [GhostLock](https://github.com/JoinChang/ghostlock-oneplus) / GhostSam / GhostLock-Galaxy / GhostLock App | CVE-2026-43499 futex PI UAF | Race-based; retries and kernel panics are normal; payload is tied to the exact kernel layout |
-| [RootMyS24](https://github.com/NanoTurtle1145/root-my-s24) | CVE-2026-98260 POSIX CPU timer UAF | Specific S24 / Z Flip6 builds on One UI 9 / listed kernels |
-| [RootMyVivo](https://github.com/zenyxx-xd/RootMyVivo) | Adreno CVE-2025-21479 and ports | Older 5.10/5.15 vivo/iQOO devices; not generic |
-| [Root My Pixel](https://github.com/alex193a/Root-My-Pixel) | Pixel 6–11 | Upstream reports unreliable runs, sometimes 20+ attempts or a reboot |
+- [DFRoot](https://github.com/diabl0w/DFRoot) — one-click CVE-2026-43284 DirtyFrag LKM loader; no bootloader unlock; SU-manager agnostic; Samsung uses diabl0w's KernelSU, others can use KernelSU / KernelSU Next / KowSU; Start on Boot and auto soft reboot.
+- [DFReroot](https://github.com/polygraphene/DFReroot) — two-stage persistent Dirty Frag root; persists a `android.uid.system` app after one temporary root, then re-roots from it; no longer purely temporary, and its author recommends DFRoot first.
+- [Root My Galaxy](https://github.com/BuSung-dev/Root-My-Galaxy) — Samsung loader; per-model/per-kernel payloads; S25 series (including SM-S938B) is listed with tested kernel `6.6.98`; exact build required.
+- [DirtyFrag](https://github.com/mitschud/dirtyfrag) — CVE-2026-43284 page-cache write; deterministic; needs a KMI-matched kernel module; works with a locked bootloader.
+- [DirtyFragX](https://github.com/dugongzi/DirtyFragX) — friendlier DirtyFrag wrapper / temporary-root build.
+- [GhostLock](https://github.com/JoinChang/ghostlock-oneplus) — CVE-2026-43499 futex PI UAF; race-based; retries and kernel panics are normal; mainly OnePlus/OPPO/Xiaomi.
+- [GhostLock App](https://github.com/YuKongA/ghostlock-app) — one-tap GhostLock runner.
+- [GhostSam](https://github.com/snothin/GhostSam) — Samsung temporary-root tool combining GhostLock/DirtyFrag exploit chains.
+- [GhostLock-Galaxy](https://github.com/wxxsfxyzm/GhostLock-Galaxy) — Samsung Galaxy GhostLock port.
+- [CyberMeowfia](https://github.com/polygraphene/CyberMeowfia) — Galaxy S26 GhostLock port.
+- [RootMyS24](https://github.com/NanoTurtle1145/root-my-s24) — CVE-2026-98260 POSIX CPU timer UAF; specific S24 / Z Flip6 builds on One UI 9 / listed kernels.
+- [RootMyVivo](https://github.com/zenyxx-xd/RootMyVivo) — Adreno CVE-2025-21479 and ports; older 5.10/5.15 vivo/iQOO devices, not generic.
+- [Root My Pixel](https://github.com/alex193a/Root-My-Pixel) — Pixel 6–11; upstream reports unreliable runs, sometimes 20+ attempts or a reboot.
 
 Contrast:
 
@@ -539,6 +544,18 @@ Support levels:
 - `/system/bin/su` remains on disk: KernelSU's direct-su architecture. Hiding it inside the target is not the same as removing the file.
 - Closing the region restores the **baseline of the first apply**, not "the previous region" and not factory settings.
 - A region change discards the current space's manual SIM overrides; they are not restored if the apply fails.
+
+## License
+
+This project is licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)**. Noncommercial use only.
+
+```text
+Required Notice: Copyright (c) 2026 ClaudeWilson contributors
+```
+
+Commercial use, commercial distribution, or commercial integration requires a separate license; no commercial license is granted by default.
+
+This is not an OSI-approved open-source license; it is source-available / noncommercial.
 
 ---
 
