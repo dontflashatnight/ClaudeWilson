@@ -112,6 +112,43 @@ On Magisk, grant root when prompted. A green `root` or cyan `Shizuku` at the top
 
 Shizuku, first run: allow ClaudeWilson in the Shizuku app. If the header says "Shizuku not granted", tap the header or grant it manually in Shizuku.
 
+## Temporary root (optional)
+
+Temporary root grants UID 0 for **the current boot only**: a loader exploits a kernel bug, starts a root daemon, and late-loads a KernelSU kernel module. A reboot ends the session. It does not unlock the bootloader or flash a boot image.
+
+> These are kernel exploits. They can panic, reboot, lose data, or trip Knox / risk checks. Use only on your own test device, back up first, and match model + firmware build + kernel exactly. Never try the "closest" build.
+
+### Modern tools
+
+| Tool | Method | Notes |
+|---|---|---|
+| [Root My Galaxy](https://github.com/BuSung-dev/Root-My-Galaxy) | Samsung loader | Per-model/per-kernel payloads; S25 series (including SM-S938B) is listed with tested kernel `6.6.98`; exact build required |
+| [DirtyFrag](https://github.com/mitschud/dirtyfrag) / [DirtyFragX](https://github.com/dugongzi/DirtyFragX) | CVE-2026-43284 page-cache write | Deterministic; needs a KMI-matched kernel module; works with a locked bootloader |
+| [GhostLock](https://github.com/JoinChang/ghostlock-oneplus) / GhostSam / GhostLock-Galaxy / GhostLock App | CVE-2026-43499 futex PI UAF | Race-based; retries and kernel panics are normal; payload is tied to the exact kernel layout |
+| [RootMyS24](https://github.com/NanoTurtle1145/root-my-s24) | CVE-2026-98260 POSIX CPU timer UAF | Specific S24 / Z Flip6 builds on One UI 9 / listed kernels |
+| [RootMyVivo](https://github.com/zenyxx-xd/RootMyVivo) | Adreno CVE-2025-21479 and ports | Older 5.10/5.15 vivo/iQOO devices; not generic |
+| [Root My Pixel](https://github.com/alex193a/Root-My-Pixel) | Pixel 6–11 | Upstream reports unreliable runs, sometimes 20+ attempts or a reboot |
+
+Contrast:
+
+- **KernelSU / KernelSU Next / SukiSU Ultra / APatch / Magisk** are **persistent root** methods; they modify boot/kernel and are not temporary.
+- **Shizuku** provides adb-shell privileges, not root. It can change timezone/locale for this app but not SIM/build properties or Vector injection.
+- `fastboot boot` with a patched boot image is a non-flashing temporary root only on an **unlocked bootloader** that supports it; locked Samsung devices cannot use it.
+
+### This device: SM-S938B
+
+Galaxy S25 Ultra international. Root My Galaxy lists the S25 series and `SM-S938B` with tested kernel `6.6.98`; the exact firmware build must match. Do not use it when the build or kernel differs. This device already has persistent KernelSU root, so ClaudeWilson does not need temporary root.
+
+### Using it with ClaudeWilson
+
+1. Run the matching loader to get root for the current boot.
+2. Grant `su` to ClaudeWilson in a KernelSU-compatible manager.
+3. Confirm the app header shows green `root`.
+4. For in-process hooks, install Vector + Zygisk and add Claude / ChatGPT to its scope.
+5. A reboot removes temporary root; run the loader again. Do not treat it as persistent root.
+
+If you only need diagnostics, timezone or per-app locale, use Shizuku instead of running a kernel exploit.
+
 ## Reading the screen
 
 The order is fixed:
