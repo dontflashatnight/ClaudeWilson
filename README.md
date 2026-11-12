@@ -112,6 +112,51 @@ Magisk 按提示授权即可。顶部显示绿色 `root` 或青色 `Shizuku` 就
 
 Shizuku 第一次使用：在 Shizuku 应用里允许 ClaudeWilson；如果顶部显示“Shizuku 未授权”，点一下应用顶部的状态，或到 Shizuku 里手动授权。
 
+## 临时 root（可选）
+
+临时 root 只给**当前这次开机** UID 0：它利用内核漏洞启动 root daemon，再延迟加载 KernelSU 内核模块；重启后模块卸载，root 结束。它不解除 bootloader，也不刷 boot 分区。
+
+> 这些是内核漏洞利用。会 panic、重启、丢数据，部分机型会触发 Knox/风控；只在自己的测试机上用，先备份。不要拿“最接近的机型”硬套，必须匹配型号 + 固件 build + 内核版本。
+
+### 现代工具
+
+| 工具 | 方式 | 说明 |
+|---|---|---|
+| [Root My Galaxy](https://github.com/BuSung-dev/Root-My-Galaxy) | Samsung 专用 loader | 按型号 + 内核匹配 payload；S25 系列（含 SM-S938B）在支持表中，已测内核 `6.6.98`；必须用完全匹配的 build |
+| [DirtyFrag](https://github.com/mitschud/dirtyfrag) / [DirtyFragX](https://github.com/dugongzi/DirtyFragX) | CVE-2026-43284 页面缓存写 | 确定性利用；需要匹配设备 KMI 的内核模块；锁定 bootloader 也能用 |
+| [GhostLock](https://github.com/JoinChang/ghostlock-oneplus) / GhostSam / GhostLock-Galaxy / GhostLock App | CVE-2026-43499 futex PI UAF | 竞态利用；同一内核布局才稳定，失败重试和 kernel panic 都正常 |
+| [RootMyS24](https://github.com/NanoTurtle1145/root-my-s24) | CVE-2026-98260 POSIX CPU timer UAF | 主要覆盖 S24 / Z Flip6 / 中国版 Z Fold6 的特定 build，要求 One UI 9 / 指定内核 |
+| [RootMyVivo](https://github.com/zenyxx-xd/RootMyVivo) | Adreno GPU CVE-2025-21479 等 | vivo/iQOO 老 5.10/5.15 机型；不是通用工具 |
+| [Root My Pixel](https://github.com/alex193a/Root-My-Pixel) | Pixel 6–11 | 上游明确报告不稳定，可能重试 20 次以上或重启 |
+
+对照说明：
+
+- **KernelSU / KernelSU Next / SukiSU Ultra / APatch / Magisk** 是**持久 root**，需要解锁 bootloader 或改 boot/kernel；不是临时 root。
+- **Shizuku** 通过 ADB/无线调试获得 shell 权限，不是 root；本应用可用来改时区/locale，但改不了 SIM、构建属性和 Vector 注入。
+- `fastboot boot` 加载已打补丁的 boot 镜像可以做到“不刷入的临时 root”，但需要**已解锁 bootloader** 且设备支持 `fastboot boot`；Samsung 锁定机不走这条路。
+
+### 本机 SM-S938B
+
+这台是 Galaxy S25 Ultra 国际版。Root My Galaxy 的支持表包含 S25 系列和 `SM-S938B`，前提是：
+
+```text
+型号 = SM-S938B
+内核 = 6.6.98（对应 build）
+固件 build 完全匹配
+```
+
+不要在 build/内核不匹配时套用。当前设备已经通过 KernelSU 持久 root，正常使用 ClaudeWilson 不需要再做临时 root。
+
+### 临时 root 后怎么接 ClaudeWilson
+
+1. 用对应 loader 在当前开机拿到 root；
+2. 用 KernelSU 兼容管理器给 `su` 授权；
+3. 确认 ClaudeWilson 顶部显示绿色 `root`；
+4. 需要进程内注入时，装 Vector + Zygisk，把 Claude / ChatGPT 加进 scope；
+5. 重启后临时 root 消失，需要重新执行 loader；不要把它当持久 root。
+
+如果只需要诊断、时区、per-app locale，优先用 Shizuku；不要为了这些功能去跑内核 exploit。
+
 ## 界面怎么读
 
 从上到下是固定的顺序：
