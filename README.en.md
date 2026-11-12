@@ -122,9 +122,8 @@ Temporary root grants UID 0 for **the current boot only**: a loader exploits a k
 
 ### Modern tools
 
-- [DFRoot](https://github.com/diabl0w/DFRoot) — one-click CVE-2026-43284 DirtyFrag LKM loader; no bootloader unlock; SU-manager agnostic; Samsung uses diabl0w's KernelSU, others can use KernelSU / KernelSU Next / KowSU; Start on Boot and auto soft reboot.
-- [DFReroot](https://github.com/polygraphene/DFReroot) — two-stage persistent Dirty Frag root; persists a `android.uid.system` app after one temporary root, then re-roots from it; no longer purely temporary, and its author recommends DFRoot first.
-- [Root My Galaxy](https://github.com/BuSung-dev/Root-My-Galaxy) — Samsung loader; per-model/per-kernel payloads; S25 series (including SM-S938B) is listed with tested kernel `6.6.98`; exact build required.
+- [DFRoot](https://github.com/diabl0w/DFRoot) — one-click CVE-2026-43284 DirtyFrag LKM loader; no bootloader unlock; SU-manager agnostic; Start on Boot and auto soft reboot.
+- [Root My Galaxy](https://github.com/BuSung-dev/Root-My-Galaxy) — Samsung loader; per-model, per-firmware, per-kernel payloads; use only the exact build listed by the vendor.
 - [DirtyFrag](https://github.com/mitschud/dirtyfrag) — CVE-2026-43284 page-cache write; deterministic; needs a KMI-matched kernel module; works with a locked bootloader.
 - [DirtyFragX](https://github.com/dugongzi/DirtyFragX) — friendlier DirtyFrag wrapper / temporary-root build.
 - [GhostLock](https://github.com/JoinChang/ghostlock-oneplus) — CVE-2026-43499 futex PI UAF; race-based; retries and kernel panics are normal; mainly OnePlus/OPPO/Xiaomi.
@@ -139,14 +138,13 @@ Temporary root grants UID 0 for **the current boot only**: a loader exploits a k
 Contrast:
 
 - **DFRoot** is the simplest one-click DirtyFrag option; it is still a per-boot/replayable temporary root, not a bootloader unlock.
-- **DFReroot** is a two-stage persistent method: it modifies `packages.xml` to keep a system-UID app, then re-roots with Dirty Frag. It touches the package database and carries more risk; use DFRoot for normal temporary-root use.
-- **KernelSU / KernelSU Next / SukiSU Ultra / APatch / Magisk** are **persistent root** methods; they modify boot/kernel and are not temporary.
-- **Shizuku** provides adb-shell privileges, not root. It can change timezone/locale for this app but not SIM/build properties or Vector injection.
-- `fastboot boot` with a patched boot image is a non-flashing temporary root only on an **unlocked bootloader** that supports it; locked Samsung devices cannot use it.
+- This list covers temporary root only. Persistent root, Shizuku and `fastboot boot` are out of scope here.
 
-### This device: SM-S938B
+### This device
 
-Galaxy S25 Ultra international. Root My Galaxy lists the S25 series and `SM-S938B` with tested kernel `6.6.98`; the exact firmware build must match. Do not use it when the build or kernel differs. DFRoot also works on kernels still vulnerable to DirtyFrag, but it is not matched against a Samsung build table; on Samsung it needs diabl0w's KernelSU. This device already has persistent KernelSU root, so ClaudeWilson does not need temporary root.
+No specific model, build number or fingerprint is recorded here. For temporary root, check the loader's model, firmware build and kernel requirements; if any one differs, do not run it.
+
+If the device already has working root, temporary root is not needed.
 
 ### Using it with ClaudeWilson
 

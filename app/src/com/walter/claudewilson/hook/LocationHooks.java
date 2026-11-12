@@ -583,9 +583,9 @@ final class LocationHooks {
         }
         // Runtime permission is the gate. AppOps is deliberately not a veto here: inside a
         // Vector-specialized process on Android 15 it can report "ignore" even when the shell
-        // shows COARSE_LOCATION allow (measured on SM-S938B), which would make the hook a no-op
-        // while the target still holds the permission. The simulation is already an explicit
-        // per-target choice; the diagnostic line records the AppOps value for evidence.
+        // shows COARSE_LOCATION allow (measured on a supported test device), which would make
+        // the hook a no-op while the target still holds the permission. The simulation is already
+        // an explicit per-target choice; the diagnostic line records the AppOps value for evidence.
         if (context.checkSelfPermission(FINE) == 0) {
             return 2;
         }
