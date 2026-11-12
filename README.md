@@ -122,6 +122,8 @@ Shizuku 第一次使用：在 Shizuku 应用里允许 ClaudeWilson；如果顶�
 
 | 工具 | 方式 | 说明 |
 |---|---|---|
+| [DFRoot](https://github.com/diabl0w/DFRoot) | CVE-2026-43284 DirtyFrag 一键加载 LKM | 不需要解锁 bootloader；SU 管理器无关，支持 Samsung 专用 KernelSU 及 KernelSU/Next/KowSU；有 Start on Boot、自动 soft reboot；前提是内核仍可被 DirtyFrag 利用 |
+| [DFReroot](https://github.com/polygraphene/DFReroot) | Dirty Frag 二阶段持久 root | 先用临时 root，把 DFReroot 以 `android.uid.system` 持久化，之后每次从它重新拿 root；已不是纯临时方案，作者也推荐优先用 DFRoot |
 | [Root My Galaxy](https://github.com/BuSung-dev/Root-My-Galaxy) | Samsung 专用 loader | 按型号 + 内核匹配 payload；S25 系列（含 SM-S938B）在支持表中，已测内核 `6.6.98`；必须用完全匹配的 build |
 | [DirtyFrag](https://github.com/mitschud/dirtyfrag) / [DirtyFragX](https://github.com/dugongzi/DirtyFragX) | CVE-2026-43284 页面缓存写 | 确定性利用；需要匹配设备 KMI 的内核模块；锁定 bootloader 也能用 |
 | [GhostLock](https://github.com/JoinChang/ghostlock-oneplus) / GhostSam / GhostLock-Galaxy / GhostLock App | CVE-2026-43499 futex PI UAF | 竞态利用；同一内核布局才稳定，失败重试和 kernel panic 都正常 |
@@ -131,6 +133,8 @@ Shizuku 第一次使用：在 Shizuku 应用里允许 ClaudeWilson；如果顶�
 
 对照说明：
 
+- **DFRoot** 是当前最省事的一键 DirtyFrag 方案；它仍然是“每次开机重新拿 root”的临时/可重放 root，不是解锁 bootloader。
+- **DFReroot** 是二阶段持久化：改 `packages.xml` 让一个 system UID app 常驻，再用 Dirty Frag 重新 root；会改系统包数据库，风险更高，普通场景用 DFRoot 即可。
 - **KernelSU / KernelSU Next / SukiSU Ultra / APatch / Magisk** 是**持久 root**，需要解锁 bootloader 或改 boot/kernel；不是临时 root。
 - **Shizuku** 通过 ADB/无线调试获得 shell 权限，不是 root；本应用可用来改时区/locale，但改不了 SIM、构建属性和 Vector 注入。
 - `fastboot boot` 加载已打补丁的 boot 镜像可以做到“不刷入的临时 root”，但需要**已解锁 bootloader** 且设备支持 `fastboot boot`；Samsung 锁定机不走这条路。
@@ -145,7 +149,7 @@ Shizuku 第一次使用：在 Shizuku 应用里允许 ClaudeWilson；如果顶�
 固件 build 完全匹配
 ```
 
-不要在 build/内核不匹配时套用。当前设备已经通过 KernelSU 持久 root，正常使用 ClaudeWilson 不需要再做临时 root。
+不要在 build/内核不匹配时套用。DFRoot 也适用于已打补丁市场的 DirtyFrag 内核，但它不是按 Samsung build 表匹配的；Samsung 上要配 diabl0w 的 KernelSU。当前设备已经通过 KernelSU 持久 root，正常使用 ClaudeWilson 不需要再做临时 root。
 
 ### 临时 root 后怎么接 ClaudeWilson
 
