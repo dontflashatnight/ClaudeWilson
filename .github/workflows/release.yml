@@ -1,0 +1,24 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/ClaudeWilson-1.0.21.apk \
+            dist/ClaudeWilson-1.0.21.apk.sha256 \
+            --title "ClaudeWilson ${GITHUB_REF_NAME}" \
+            --notes "versionCode 49 / SHA-256 2CABA112198DFA8D9E35379BE2BB4AFBA1BB27435CA620CD4B35F4040E4DFA87"
