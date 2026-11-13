@@ -125,23 +125,31 @@ final class HookConfig {
     }
 
     private static HookConfig read(TargetSpec spec, String path) {
+        HookConfig config = parse(spec.id(), path);
+        return config != null && config.validFor(spec) ? config : null;
+    }
+
+    private static HookConfig parse(String targetId, String path) {
         try (InputStream in = new FileInputStream(path)) {
             byte[] data = new byte[Math.max(1024, in.available())];
             int n = in.read(data);
             if (n <= 0) return null;
             JSONObject o = new JSONObject(new String(data, 0, n, "UTF-8"));
-            HookConfig config = new HookConfig(spec.id(), path, o);
-            return config.validFor(spec) ? config : null;
+            return new HookConfig(targetId, path, o);
         } catch (Throwable t) {
             return null;
         }
     }
 
-    boolean valid() {
+    /** The SIM fields every identity-only consumer needs; the app id is not required. */
+    boolean validIdentity() {
         return simOperator.matches("\\d{5,6}")
                 && simCountryIso.matches("[A-Za-z]{2}")
-                && !simOperatorName.isEmpty()
-                && androidId.matches("[0-9a-fA-F]{16}");
+                && !simOperatorName.isEmpty();
+    }
+
+    boolean valid() {
+        return validIdentity() && androidId.matches("[0-9a-fA-F]{16}");
     }
 
     /** True only for a complete, finite point; a half-written payload never fakes a fix. */

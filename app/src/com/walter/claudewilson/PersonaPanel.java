@@ -150,25 +150,28 @@ final class PersonaPanel extends UiSection {
         }
         Regions.R r = regionIdx >= 0 ? Regions.ALL.get(regionIdx) : null;
         boolean hasPersona = r != null;
+        RegionPersona.Snapshot saved = hasPersona
+                ? RegionPersona.of(this, user, r) : null;
+        if (saved != null) {
+            // The region record is the truth after the first selection; do not re-pick.
+            applyZone = saved.zone;
+            applyLocale = saved.locale;
+        }
         String iso = hasPersona ? r.iso : "—";
         String ccHint = persona.countryHint(user);
         if (ccHint == null || !ccHint.matches("[A-Za-z]{2}")) {
             ccHint = iso;
         }
         String[] net = netFor(iso);
-        String opOv = hasPersona ? persona.op(user) : null;
-        String carOv = hasPersona ? persona.carrier(user) : null;
-        String op = opOv != null && opOv.matches("\\d{5,6}") ? opOv
+        String op = saved != null && saved.op.matches("\\d{5,6}") ? saved.op
                 : net != null ? net[1]
                 : (hasPersona ? r.mcc.split("/")[0] + "01" : "—");
-        String car = carOv != null && !carOv.isEmpty() ? carOv
+        String car = saved != null && !saved.carrier.isEmpty() ? saved.carrier
                 : net != null ? net[2]
                 : (hasPersona && r.carriers != null && !r.carriers.isEmpty()
                         ? r.carriers.split("/")[0] : "—");
-        // "*" marks a per-space override; without it a user sees the same value after switching
-        // regions and concludes the switch did nothing.
-        String opShown = opOv != null ? op + "*" : op;
-        String carShown = carOv != null && !carOv.isEmpty() ? car + "*" : car;
+        String opShown = op;
+        String carShown = car;
         // No persona value is minted up front: an unset AID means "this device's own id", and
         // only an explicit save in the AID dialog turns it into an override.
         String aidOverride = persona.aid(user);
@@ -183,6 +186,10 @@ final class PersonaPanel extends UiSection {
         com.walter.claudewilson.model.GeoTable.Point regionPoint =
                 hasPersona ? Geo.point(this, r.iso, applyZone) : null;
         com.walter.claudewilson.model.GeoTable.Point place = regionPoint;
+        if (hasPersona && saved != null && !saved.city.isEmpty()) {
+            place = com.walter.claudewilson.model.GeoTable.Point.of(
+                    saved.city, saved.latitude, saved.longitude);
+        }
         boolean customLocation = false;
         if (hasPersona && persona.hasLocationPoint(user)) {
             place = com.walter.claudewilson.model.GeoTable.Point.of(
@@ -439,6 +446,25 @@ final class PersonaPanel extends UiSection {
         }
         String payloadSig = payload == null ? null : Integer.toHexString(payload.hashCode());
         boolean injectedNow = payloadSig != null && payloadSig.equals(persona.injectedSig(user));
+        boolean targetLive = injectedNow && targetProcessLive();
+        // The four SIM rows describe what the target will read, not what the system property
+        // currently holds. A fresh target self-check wins; otherwise the published persona is
+        // the next-launch projection. The system values remain available to the data plane only.
+        com.walter.claudewilson.model.CheckItem simOpItem = modelItem("target.simop");
+        com.walter.claudewilson.model.CheckItem simIsoItem = modelItem("target.simiso");
+        com.walter.claudewilson.model.CheckItem simCarItem = modelItem("target.carrier");
+        boolean simFresh = targetLive && fresh(simOpItem) && fresh(simIsoItem) && fresh(simCarItem);
+        // With no region there is no persona projection: the three SIM rows must fall back to
+        // the card's own values, not to the expected-column dash.
+        String actualOp = !hasPersona ? liveOp : simFresh ? simOpItem.value() : op;
+        String actualIso = !hasPersona ? liveIso : simFresh ? simIsoItem.value() : iso;
+        String actualCar = !hasPersona ? liveCarrier : simFresh ? simCarItem.value() : car;
+        int opStatus = !hasPersona ? -1
+                : simFresh ? mccComparison(op, actualOp) : -3;
+        int isoStatus = !hasPersona ? -1
+                : simFresh ? comparison(iso, actualIso) : -3;
+        int carStatus = !hasPersona ? -1
+                : simFresh ? comparison(car, actualCar) : -3;
         card.addView(row(hasPersona, Lang.t("字段", "field", "項目"),
                 Lang.t("期待", "expected", "期待"),
                 Lang.t("实际", "actual", "実際"), -2));
@@ -456,8 +482,8 @@ final class PersonaPanel extends UiSection {
         // Group 1: values the region switch writes by itself, so they belong at the top.
         LinearLayout mccRow = row(hasPersona, "SIM MCC/MNC",
                 hasPersona ? opShown : dash,
-                shown(liveOp),
-                !hasPersona ? -1 : mccComparison(op, liveOp));
+                shown(actualOp),
+                opStatus);
         if (hasPersona) gateRoot(mccRow,
                 Lang.t("SIM MCC/MNC 覆写需要系统级权限（root）",
                         "SIM MCC/MNC override needs the system channel (root)",
@@ -466,8 +492,8 @@ final class PersonaPanel extends UiSection {
         card.addView(mccRow);
         LinearLayout isoRow = row(hasPersona, Lang.t("SIM 国家", "SIM country", "SIM 国"),
                 hasPersona ? iso : dash,
-                shown(liveIso),
-                !hasPersona ? -1 : comparison(iso, liveIso));
+                shown(actualIso),
+                isoStatus);
         if (hasPersona) {
             if (simCarrierWritable) {
                 gateAnyChannel(isoRow,
@@ -486,8 +512,8 @@ final class PersonaPanel extends UiSection {
         card.addView(isoRow);
         LinearLayout carrierRow = row(hasPersona, Lang.t("SIM 运营商", "SIM carrier", "SIM キャリア"),
                 hasPersona ? carShown : dash,
-                shown(liveCarrier),
-                !hasPersona ? -1 : comparison(car, liveCarrier));
+                shown(actualCar),
+                carStatus);
         if (hasPersona) {
             if (simCarrierWritable) {
                 gateAnyChannel(carrierRow,
@@ -518,7 +544,10 @@ final class PersonaPanel extends UiSection {
                 liveNetIso = derived;
             }
         }
-        String netTarget = val(op) + " · " + iso + " · " + val(car);
+        String netOp = saved != null && !saved.netOp.isEmpty() ? saved.netOp : op;
+        String netIso = saved != null && !saved.netIso.isEmpty() ? saved.netIso : iso;
+        String netName = saved != null && !saved.netName.isEmpty() ? saved.netName : car;
+        String netTarget = val(netOp) + " · " + netIso + " · " + val(netName);
         String liveNetTrio = shown(liveNet) + " · " + shown(liveNetIso) + " · "
                 + shown(liveNetName);
         if (airplane) {
@@ -528,20 +557,16 @@ final class PersonaPanel extends UiSection {
                     Lang.t("拜访网络", "visited network", "訪問ネットワーク"),
                     dash, dash, -1));
         } else {
-            // What the target app currently receives: the injected payload while it is attached,
-            // otherwise whatever the system reports. A radio event rewrites gsm.operator.*, so the
-            // property value alone would flip back to the real PLMN under an active injection.
-            // Without a region the value is still worth showing: it is the network the device is
-            // actually attached to.
-            boolean targetLive = injectedNow && targetProcessLive();
-            String netActual = targetLive ? netTarget : liveNetTrio;
+            // The visited-network trio is its own region salt: it may name a different carrier
+            // than the SIM operator. With a fresh target it is the published payload; otherwise
+            // it is the stored next-launch value.
+            String targetNetTrio = netTarget;
+            int netStatus = !hasPersona ? -1 : simFresh ? 1 : -3;
             card.addView(row(hasPersona,
                     Lang.t("拜访网络", "visited network", "訪問ネットワーク"),
                     hasPersona ? netTarget : dash,
-                    hasPersona ? netActual : liveNetTrio,
-                    !hasPersona ? -1
-                            : targetLive ? 1
-                            : visitedStatus(op, iso, liveNet, liveNetIso)));
+                    hasPersona ? targetNetTrio : liveNetTrio,
+                    netStatus));
         }
         int langStatus;
         if (!hasPersona) {
@@ -941,7 +966,10 @@ final class PersonaPanel extends UiSection {
                         editCustomModel(region, user, aid);
                         return;
                     }
-                    long seed = new java.util.Random().nextLong();
+                    // Re-choosing the same model must not mint a new fingerprint. Only a real
+                    // model change gets a fresh seed; the choice and seed are persisted with it.
+                    long seed = which == persona.device(user) && persona.seed(user) != 0L
+                            ? persona.seed(user) : new java.util.Random().nextLong();
                     String[] dv = which == 0 ? null
                             : taggedForRegion(PersonaSynth.cross(deviceAt(which), seed), region);
                     String model = dv != null ? dv[3] : selfDevice()[3];
@@ -1230,6 +1258,10 @@ final class PersonaPanel extends UiSection {
 
     /** Effective carrier for a region: persona override, else curated, else region list head. */
     private String currentCarrier(Regions.R r) {
+        RegionPersona.Snapshot saved = RegionPersona.of(this, currentUser.get(), r);
+        if (saved != null && saved.carrier != null && !saved.carrier.isEmpty()) {
+            return saved.carrier;
+        }
         String ov = persona.carrier(currentUser.get());
         if (ov != null && !ov.isEmpty()) return ov;
         String[] n = netFor(r.iso);
@@ -1238,8 +1270,12 @@ final class PersonaPanel extends UiSection {
                 ? r.carriers.split("/")[0] : "";
     }
 
-    /** Effective operator code: persona override, else curated, else first MCC + 01. */
+    /** Effective operator code: persisted region salt, else persona override, else curated. */
     private String currentOp(Regions.R r) {
+        RegionPersona.Snapshot saved = RegionPersona.of(this, currentUser.get(), r);
+        if (saved != null && saved.op != null && saved.op.matches("\\d{5,6}")) {
+            return saved.op;
+        }
         String ov = persona.op(currentUser.get());
         if (ov != null && ov.matches("\\d{5,6}")) return ov;
         String[] n = netFor(r.iso);
@@ -1457,7 +1493,8 @@ final class PersonaPanel extends UiSection {
     }
 
     private void editMccManual(final String user, final Regions.R r) {
-        android.widget.EditText input = edit(persona.op(user));
+        RegionPersona.Snapshot saved = RegionPersona.of(this, user, r);
+        android.widget.EditText input = edit(saved == null ? persona.op(user) : saved.op);
         input.setHint("52501");
         new android.app.AlertDialog.Builder(this)
                 .setTitle("SIM MCC/MNC")
@@ -1471,6 +1508,7 @@ final class PersonaPanel extends UiSection {
                                         "MCC/MNC は 5-6 桁の数字"));
                                 return;
                             }
+                            RegionPersona.putOp(PersonaPanel.this, user, r, value);
                             persona.putOp(user, value);
                             sysWrite(simScript(value, r, null));
                             renderScreen.run();
@@ -1487,10 +1525,11 @@ final class PersonaPanel extends UiSection {
         String name = com.walter.claudewilson.model.ShellQuote.quote(car);
         com.walter.claudewilson.model.Command cmd = com.walter.claudewilson.model.Command.sh()
                 .raw("APK=$(pm path " + getPackageName() + " | cut -d: -f2)");
+        boolean keepReal = RootShell.preservesMobileData();
         // Property writes need uid 0; the carrier-config override works from a shell uid too.
         // Writing them unconditionally made a shell-channel tap report a setprop failure after the
         // override had already been accepted.
-        if (RootShell.rootReady()) {
+        if (RootShell.rootReady() && !keepReal) {
             cmd.raw("setprop gsm.sim.operator.numeric " + op
                             + " && setprop gsm.sim.operator.iso-country " + r.iso
                             + " && setprop gsm.sim.operator.alpha " + name)
@@ -1499,6 +1538,16 @@ final class PersonaPanel extends UiSection {
                     .raw("setprop gsm.operator.numeric " + op
                             + " && setprop gsm.operator.iso-country " + r.iso
                             + " && setprop gsm.operator.alpha " + name);
+        }
+        if (keepReal) {
+            // These stacks resolve the data APN from the SIM operator properties; a global
+            // persona there kills data. The target process still gets the persona from the
+            // hook, and the subscription display name is a safe, local rename.
+            return cmd.raw(sub < 0 ? "echo no-sub"
+                            : "app_process -Djava.class.path=$APK /system/bin "
+                                    + "com.walter.claudewilson.Bridge subname " + sub + " "
+                                    + name + " " + CarrierCommands.nameSourceUserInput())
+                    .build();
         }
         return cmd.raw(sub < 0 ? "echo no-sub"
                         : "app_process -Djava.class.path=$APK /system/bin "
@@ -1559,9 +1608,18 @@ final class PersonaPanel extends UiSection {
     }
 
     private void applyCarrier(String user, Regions.R r, String value) {
-        // null means "no per-space override": drop it and let the region profile win, otherwise
-        // every later region switch keeps re-applying this one carrier.
-        if (value == null) persona.clearCarrier(user); else persona.putCarrier(user, value);
+        // Persist the edit in the region record. null resets to the region's primary carrier.
+        if (value == null) {
+            String[] net = netFor(r.iso);
+            String fallback = net != null ? net[2]
+                    : r.carriers != null && !r.carriers.isEmpty()
+                            ? r.carriers.split("/")[0] : "";
+            RegionPersona.putCarrier(this, user, r, fallback);
+            persona.clearCarrier(user);
+        } else {
+            RegionPersona.putCarrier(this, user, r, value);
+            persona.putCarrier(user, value);
+        }
         sysWrite(simScript(currentOp(r), r, value));
         renderScreen.run();
         publishPersona();
@@ -1934,6 +1992,12 @@ final class PersonaPanel extends UiSection {
         TextView t = txt("• " + text, 10, DIM);
         t.setPadding(0, dp(this, 2), 0, 0);
         card.addView(t);
+    }
+
+    /** A self-check value that belongs to a currently running target, not a stale file. */
+    private static boolean fresh(com.walter.claudewilson.model.CheckItem item) {
+        return item != null && item.isRead() && !item.isStale()
+                && item.value() != null && !item.value().isEmpty();
     }
 
     private static int comparison(String expected, String actual) {

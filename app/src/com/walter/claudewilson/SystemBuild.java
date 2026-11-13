@@ -141,6 +141,16 @@ final class SystemBuild {
         return out;
     }
 
+    /** Writes one value into every slot of a per-slot property list. */
+    private static String fillFunction() {
+        return "fill() { key=\"$1\"; val=\"$2\"; "
+                + "cur=\"$(getprop \"$key\" || true)\"; "
+                + "n=$(( $(printf '%s' \"$cur\" | tr -cd ',' | wc -c) + 1 )); "
+                + "out=\"$val\"; i=1; "
+                + "while [ \"$i\" -lt \"$n\" ]; do out=\"$out,$val\"; i=$((i+1)); done; "
+                + "$RP \"$key\" \"$out\"; }\n";
+    }
+
     /** One transaction for both telephony trios, filling every active SIM slot. */
     static String telephonyScript(String op, String iso, String carrier) {
         Map<String, String> values = new LinkedHashMap<String, String>();
@@ -148,16 +158,40 @@ final class SystemBuild {
         values.putAll(simValues(op, iso, carrier));
         StringBuilder sh = new StringBuilder("set -e\n");
         sh.append(RP).append('\n');
-        sh.append("fill() { key=\"$1\"; val=\"$2\"; ")
-                .append("cur=\"$(getprop \"$key\" || true)\"; ")
-                .append("n=$(( $(printf '%s' \"$cur\" | tr -cd ',' | wc -c) + 1 )); ")
-                .append("out=\"$val\"; i=1; ")
-                .append("while [ \"$i\" -lt \"$n\" ]; do out=\"$out,$val\"; i=$((i+1)); done; ")
-                .append("$RP \"$key\" \"$out\"; }\n");
+        sh.append(fillFunction());
         for (Map.Entry<String, String> e : values.entrySet()) {
             sh.append("fill ").append(ShellQuote.quote(e.getKey()))
                     .append(' ').append(ShellQuote.quote(e.getValue())).append('\n');
         }
+        return sh.toString();
+    }
+
+    /**
+     * SIM operator trio alone. Some telephony stacks look the data APN up from this trio, so it
+     * must keep the physical card's values while the visited-network trio carries the persona.
+     */
+    static String simScript(String op, String iso, String carrier) {
+        StringBuilder sh = new StringBuilder("set -e\n");
+        sh.append(RP).append('\n');
+        sh.append(fillFunction());
+        for (Map.Entry<String, String> e : simValues(op, iso, carrier).entrySet()) {
+            sh.append("fill ").append(ShellQuote.quote(e.getKey()))
+                    .append(' ').append(ShellQuote.quote(e.getValue())).append('\n');
+        }
+        return sh.toString();
+    }
+
+    /**
+     * Display name only. Vendor SIM managers cache {@code gsm.sim.operator.alpha} as the
+     * subscription label; the numeric MCC/MNC and country stay untouched so data-APN lookup is
+     * unaffected.
+     */
+    static String alphaScript(String alpha) {
+        StringBuilder sh = new StringBuilder("set -e\n");
+        sh.append(RP).append('\n');
+        sh.append(fillFunction());
+        sh.append("fill ").append(ShellQuote.quote("gsm.sim.operator.alpha"))
+                .append(' ').append(ShellQuote.quote(alpha)).append('\n');
         return sh.toString();
     }
 
@@ -169,12 +203,7 @@ final class SystemBuild {
         // Per-slot properties: the whole list is rewritten with the persona value in every slot.
         // Writing one value left the active slot holding the real network (measured: a two-slot
         // list after a radio update), which made the row fall back to the physical card.
-        sh.append("fill() { key=\"$1\"; val=\"$2\"; ")
-                .append("cur=\"$(getprop \"$key\" || true)\"; ")
-                .append("n=$(( $(printf '%s' \"$cur\" | tr -cd ',' | wc -c) + 1 )); ")
-                .append("out=\"$val\"; i=1; ")
-                .append("while [ \"$i\" -lt \"$n\" ]; do out=\"$out,$val\"; i=$((i+1)); done; ")
-                .append("$RP \"$key\" \"$out\"; }\n");
+        sh.append(fillFunction());
         for (Map.Entry<String, String> e : operatorValues(op, iso, carrier).entrySet()) {
             sh.append("fill ").append(ShellQuote.quote(e.getKey()))
                     .append(' ').append(ShellQuote.quote(e.getValue())).append('\n');
@@ -202,7 +231,11 @@ final class SystemBuild {
     }
 
     /**
-     * Writes the build identity, the visited-network trio and the boot replay.
+     * Writes the build identity and the visited-network trio for this boot.
+     *
+     * <p>No boot-time replay is installed. A service.d prop writer runs in the same early boot
+     * window as the injection framework's module mount; when it is slow or the prop store is not
+     * ready it can block that mount. The identity is applied while the app is running instead.
      *
      * <p>{@code set -e} makes one failed {@code resetprop} fail the whole step, so the caller's
      * {@code FAIL:build-props} marker is truthful instead of reporting the last command's status.
@@ -226,20 +259,7 @@ final class SystemBuild {
         }
         sh.append("$RP -f $T || { rm -f $T; echo FAIL:write-props; exit 1; }\n");
         sh.append("rm -f $T\n");
-        sh.append("mkdir -p ").append(dirOf(BOOT)).append('\n');
-        // Write the replay only when its content changed: a region switch that keeps the same
-        // device row should not chmod/replace the boot script every time.
-        sh.append("B=/data/local/tmp/.cw-boot.$$\n");
-        // Quoted heredoc: the replay must keep `$RP` literal so it resolves at boot time, and the
-        // per-line quoting stays exactly as it was written here.
-        sh.append("cat > $B <<'CWBOOT'\n");
-        for (String line : bootLines(dv)) {
-            sh.append(line).append('\n');
-        }
-        sh.append("CWBOOT\n");
-        sh.append("if cmp -s $B ").append(BOOT)
-                .append("; then rm -f $B; else mv $B ").append(BOOT)
-                .append(" && chmod 755 ").append(BOOT).append("; fi\n");
+        sh.append("rm -f ").append(BOOT).append('\n');
         return sh.toString();
     }
 
@@ -271,18 +291,6 @@ final class SystemBuild {
         return sh.toString();
     }
 
-    /** Lines of the boot replay: the build identity only, quoted per line. */
-    private static java.util.List<String> bootLines(String[] dv) {
-        java.util.List<String> lines = new java.util.ArrayList<String>();
-        lines.add("#!/system/bin/sh");
-        lines.add(RP);
-        for (Map.Entry<String, String> e : buildValues(dv).entrySet()) {
-            lines.add("$RP " + ShellQuote.quote(e.getKey())
-                    + " " + ShellQuote.quote(e.getValue()));
-        }
-        return lines;
-    }
-
     private static java.util.List<String> keys() {
         java.util.List<String> out = new java.util.ArrayList<String>();
         for (String k : BUILD_KEYS) {
@@ -294,8 +302,4 @@ final class SystemBuild {
         return out;
     }
 
-    private static String dirOf(String path) {
-        int slash = path.lastIndexOf('/');
-        return slash > 0 ? path.substring(0, slash) : "/";
-    }
 }

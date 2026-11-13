@@ -26,12 +26,13 @@ final class RegionActions {
         String[] sub = subscriptionIdentity();
         // A per-slot property list ("sg,nl") or an empty value is not a baseline a revert can
         // restore from. The subscription record names the card the device is actually using.
-        if (unusable(num) || unusable(iso) || unusable(alpha)) {
-            if (sub != null) {
-                if (unusable(num)) num = sub[0];
-                if (unusable(iso)) iso = sub[1];
-                if (unusable(alpha)) alpha = sub[2];
-            }
+        // On stacks that resolve the data APN from the SIM operator properties, the properties
+        // may already hold a persona, so the card record is the only trustworthy baseline.
+        if (sub != null && (RootShell.preservesMobileData()
+                || unusable(num) || unusable(iso) || unusable(alpha))) {
+            num = sub[0];
+            iso = sub[1];
+            alpha = sub[2];
         }
         // MCC is the country of the card. The iso prop and the subscription's countryIso can be
         // stale (observed a China MCC next to "tw"); restoring such a pair would recreate the
