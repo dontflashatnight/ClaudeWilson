@@ -138,10 +138,8 @@ final class IdentityHooks {
             XposedBridge.log("ClaudeWilsonHook resources-ctor: " + t);
         }
         try {
-            XposedHelpers.findAndHookConstructor("android.content.res.ResourcesImpl", loader,
-                    android.content.res.AssetManager.class,
-                    android.util.DisplayMetrics.class,
-                    android.content.res.Configuration.class, constructor);
+            Class<?> impl = XposedHelpers.findClass("android.content.res.ResourcesImpl", loader);
+            XposedBridge.hookAllConstructors(impl, constructor);
         } catch (Throwable t) {
             XposedBridge.log("ClaudeWilsonHook resourcesimpl-ctor: " + t);
         }
@@ -163,7 +161,7 @@ final class IdentityHooks {
             XposedBridge.log("ClaudeWilsonHook resources-config: " + t);
         }
         try {
-            Class<?> context = XposedHelpers.findClass("android.content.Context", loader);
+            Class<?> context = XposedHelpers.findClass("android.app.ContextImpl", loader);
             XposedBridge.hookAllMethods(context, "createConfigurationContext",
                     new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam param) {

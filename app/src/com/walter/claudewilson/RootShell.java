@@ -384,10 +384,10 @@ public final class RootShell {
                 .step("auto-detection",
                         "cmd time_zone_detector set_auto_detection_enabled false")
                 .step("timezone", "cmd alarm set-timezone " + zone);
-        // Non-root Shizuku has no hook payload in the target process. Use the system per-app
-        // locale instead; root still prefers the hook, so the app's real configuration is not
-        // rewritten there.
-        if (!root && ShellQuote.packageName(targetPkg)) {
+        // Per-app locale is written on every channel. The hook still supplies the richer
+        // in-process locale, but a partially installed hook must not leave the target on the
+        // system language; the app locale is the fallback that keeps the UI language aligned.
+        if (ShellQuote.packageName(targetPkg)) {
             command.step("locale-target",
                     "cmd locale set-app-locales " + targetPkg + " --locales " + locale);
             if (hasBrowser) {
@@ -438,7 +438,9 @@ public final class RootShell {
         boolean root = rootReady();
         Command command = Command.sh()
                 .raw("APK=$(pm path " + self + " | cut -d: -f2)");
-        if (!root && ShellQuote.packageName(targetPkg)) {
+        // The apply wrote per-app locale on every channel; the revert must clear it on every
+        // channel too, not only on the shell fallback path.
+        if (ShellQuote.packageName(targetPkg)) {
             command.step("locale-target-reset",
                     "(pm path " + targetPkg + " >/dev/null 2>&1 && cmd locale set-app-locales "
                             + targetPkg + ") || echo SKIP:locale-target-reset");
