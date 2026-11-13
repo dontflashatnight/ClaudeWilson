@@ -75,7 +75,7 @@ final class EnvSession {
         if (!p.contains(PHASE)) {
             e.putString(PHASE, p.getBoolean("sel_applied", false) ? ACTIVE : OFF);
         }
-        e.putBoolean("env_migrated", true).apply();
+        e.putBoolean("env_migrated", true).commit();
     }
 
     static String phase(Context context) {
@@ -146,7 +146,7 @@ final class EnvSession {
                     .putString("base_target_locale", targetLocale == null ? "" : targetLocale)
                     .putString("base_browser_locale", browserLocale == null ? "" : browserLocale);
         }
-        e.apply();
+        e.commit();
     }
 
     static String activeIso(Context context) {
@@ -173,18 +173,18 @@ final class EnvSession {
                           boolean applied) {
         migrate(context);
         prefs(context).edit().putString("act_iso", iso).putString("act_zone", zone)
-                .putString("act_locale", locale).putBoolean("act_applied", applied).apply();
+                .putString("act_locale", locale).putBoolean("act_applied", applied).commit();
     }
 
     static void setActiveZone(Context context, String zone) {
         migrate(context);
-        prefs(context).edit().putString("act_zone", zone).apply();
+        prefs(context).edit().putString("act_zone", zone).commit();
     }
 
     static void clearActive(Context context) {
         migrate(context);
         prefs(context).edit().remove("act_iso").remove("act_zone").remove("act_locale")
-                .remove("act_applied").apply();
+                .remove("act_applied").commit();
     }
 
     /** Starts an apply and invalidates every older completion. */
@@ -194,7 +194,7 @@ final class EnvSession {
         long token = p.getLong(TOKEN, 0L) + 1L;
         p.edit().putLong(TOKEN, token).putString(PHASE, APPLYING)
                 .putString("act_iso", iso).putString("act_zone", zone)
-                .putString("act_locale", locale).putBoolean("act_applied", false).apply();
+                .putString("act_locale", locale).putBoolean("act_applied", false).commit();
         return token;
     }
 
@@ -203,7 +203,7 @@ final class EnvSession {
         migrate(context);
         SharedPreferences p = prefs(context);
         long token = p.getLong(TOKEN, 0L) + 1L;
-        p.edit().putLong(TOKEN, token).putString(PHASE, REVERTING).apply();
+        p.edit().putLong(TOKEN, token).putString(PHASE, REVERTING).commit();
         return token;
     }
 
@@ -216,7 +216,7 @@ final class EnvSession {
             return;
         }
         prefs(context).edit().putString(PHASE, ok ? ACTIVE : PARTIAL)
-                .putBoolean("act_applied", ok).apply();
+                .putBoolean("act_applied", ok).commit();
     }
 
     static void finishRevert(Context context, long token, boolean ok) {
@@ -235,6 +235,6 @@ final class EnvSession {
                     .remove("act_iso").remove("act_zone").remove("act_locale")
                     .remove("act_applied");
         }
-        editor.apply();
+        editor.commit();
     }
 }

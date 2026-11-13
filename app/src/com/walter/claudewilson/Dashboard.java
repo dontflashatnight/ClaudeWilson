@@ -412,7 +412,6 @@ final class Dashboard extends UiSection {
         header();
         // 两步：先选空间（人设空间），再选地区（地区切换）。其余卡片都是这两步的结果。
         personaSection();
-        headerVerdict();
         regionSection();
         // The network card is the one control-plane surface kept separate on purpose; it sits
         // between the region controls and data cleanup.
@@ -567,13 +566,13 @@ final class Dashboard extends UiSection {
                 .setTitle(Lang.t("地区写入", "region write"))
                 .setItems(names, (dialog, index) -> {
                     Regions.R r = rows.get(index);
-                    String[] pick = Regions.pick(r);
+                    RegionPersona.Snapshot saved = RegionPersona.of(this, uid(), r);
                     if (index != regionIdx) {
                         clearSimOverrides();
                     }
                     regionIdx = index;
-                    applyZone = pick[0];
-                    applyLocale = pick[1];
+                    applyZone = saved.zone;
+                    applyLocale = saved.locale;
                     regionApplied = false;
                     maybeApply();
                 })
@@ -699,8 +698,8 @@ final class Dashboard extends UiSection {
         capRow.addView(txt(version.isEmpty() ? cap : cap + " · v" + version, 11, DIM));
         root.addView(capRow);
         targetStrip();
-        // The verdict badge is inserted after the persona card has counted its current rows; a
-        // number computed before that render was one frame stale and disagreed with the card.
+        // The header intentionally carries no status banner: state is read from the rows, not
+        // from a top-of-screen prompt.
         verdictIndex = root.getChildCount();
     }
 
@@ -805,32 +804,6 @@ final class Dashboard extends UiSection {
         }
         root.addView(row);
 
-        com.walter.claudewilson.model.TargetSpec current = Targets.current();
-        Targets.State state = Targets.state(current);
-        LinearLayout stateRow = new LinearLayout(this);
-        stateRow.setOrientation(LinearLayout.HORIZONTAL);
-        stateRow.setGravity(Gravity.CENTER_VERTICAL);
-        stateRow.setPadding(0, dp(this, 8), 0, dp(this, 2));
-        View dot = new View(this);
-        GradientDrawable dotBg = new GradientDrawable();
-        dotBg.setShape(GradientDrawable.OVAL);
-        dotBg.setColor(!state.checked ? MUTE : state.installed ? GREEN : AMBER);
-        dot.setBackground(dotBg);
-        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(this, 6), dp(this, 6));
-        dlp.rightMargin = dp(this, 8);
-        dot.setLayoutParams(dlp);
-        stateRow.addView(dot);
-        String normal = targetStateText(state);
-        boolean hint = android.os.SystemClock.elapsedRealtime() < targetHintUntil;
-        String text = hint ? Lang.t("请关闭地区切换", "close region switch") : normal;
-        TextView status = txt(text, 10, hint ? AMBER : MUTE);
-        status.setTypeface(Typeface.MONOSPACE);
-        targetStatus = status;
-        targetStatusRow = stateRow;
-        status.setVisibility(text.isEmpty() ? View.GONE : View.VISIBLE);
-        stateRow.setVisibility(text.isEmpty() ? View.GONE : View.VISIBLE);
-        stateRow.addView(status);
-        root.addView(stateRow);
     }
 
     /** Shows the one allowed hint in the state line, then restores it without shifting layout. */
@@ -1189,8 +1162,8 @@ final class Dashboard extends UiSection {
             regionQuery = "";
             regionIdx = idx;
             if (idx >= 0) {
-                String[] pk = Regions.pick(Regions.ALL.get(idx));
-                applyZone = pk[0]; applyLocale = pk[1];
+                RegionPersona.Snapshot saved = RegionPersona.of(this, uid(), Regions.ALL.get(idx));
+                applyZone = saved.zone; applyLocale = saved.locale;
                 regionApplied = false;
                 persistSelection();
                 // One render: it moves the selection ring and the status line. The old path
@@ -1237,6 +1210,7 @@ final class Dashboard extends UiSection {
             return;
         }
         applyZone = zone;
+        RegionPersona.putZone(this, uid(), Regions.ALL.get(regionIdx), zone);
         EnvSession.setActiveZone(this, zone);
     }
 
@@ -1276,12 +1250,18 @@ final class Dashboard extends UiSection {
             EnvSession.clearActive(this);
             return;
         }
-        String[] fallback = Regions.pick(Regions.ALL.get(idx));
+        RegionPersona.Snapshot saved = RegionPersona.of(this, uid(), Regions.ALL.get(idx));
         regionIdx = idx;
         String zone = EnvSession.activeZone(this);
         String locale = EnvSession.activeLocale(this);
-        applyZone = zone == null ? fallback[0] : zone;
-        applyLocale = locale == null ? fallback[1] : locale;
+        if (zone != null) {
+            RegionPersona.putZone(this, uid(), Regions.ALL.get(idx), zone);
+        }
+        if (locale != null) {
+            RegionPersona.putLocale(this, uid(), Regions.ALL.get(idx), locale);
+        }
+        applyZone = zone == null ? saved.zone : zone;
+        applyLocale = locale == null ? saved.locale : locale;
         regionApplied = EnvSession.activeApplied(this)
                 && !EnvSession.PARTIAL.equals(EnvSession.phase(this));
     }
@@ -1306,8 +1286,12 @@ final class Dashboard extends UiSection {
         requestRender();
     }
 
-    /** Effective carrier for a region: per-space override, else the curated table, else the row. */
-    private static String personaCarrier(PersonaState ps, String user, Regions.R r) {
+    /** Effective carrier for a region: the persisted region salt, else the old global override. */
+    private String personaCarrier(PersonaState ps, String user, Regions.R r) {
+        RegionPersona.Snapshot saved = RegionPersona.of(this, user, r);
+        if (saved != null && saved.carrier != null && !saved.carrier.isEmpty()) {
+            return saved.carrier;
+        }
         String pc = ps.carrier(user);
         if (pc != null && !pc.isEmpty()) {
             return pc;
@@ -1319,8 +1303,12 @@ final class Dashboard extends UiSection {
         return r.carriers != null && !r.carriers.isEmpty() ? r.carriers.split("/")[0] : "";
     }
 
-    /** Effective operator code for a region: per-space override, else the curated table. */
-    private static String personaOp(PersonaState ps, String user, Regions.R r) {
+    /** Effective operator code for a region: the persisted region salt, else the old override. */
+    private String personaOp(PersonaState ps, String user, Regions.R r) {
+        RegionPersona.Snapshot saved = RegionPersona.of(this, user, r);
+        if (saved != null && saved.op != null && saved.op.matches("\\d{5,6}")) {
+            return saved.op;
+        }
         String po = ps.op(user);
         if (po != null && po.matches("\\d{5,6}")) {
             return po;
@@ -1381,6 +1369,12 @@ final class Dashboard extends UiSection {
             final String carrier = personaCarrier(ps, user, r);
             final String op = personaOp(ps, user, r);
             final int sub = regionActions.activeSub();
+            // The physical card's identity, captured before this apply overwrote anything. Some
+            // telephony stacks resolve the APN from these values, so the apply restores them
+            // before touching the carrier config.
+            final EnvSession.Baseline realBase = EnvSession.baseline(this);
+            final String[] realSim = realBase == null ? null
+                    : new String[]{realBase.simNum, realBase.simIso, realBase.simAlpha};
             final String browser = RootShell.browserPackage(activity);
             // The device row this space simulates, resolved before the shell starts so the build
             // identity and the injected payload come from the same 14 fields.
@@ -1393,7 +1387,7 @@ final class Dashboard extends UiSection {
             synchronized (txLock) {
                 outcome = RootShell.applyRegion(
                         z, l, r.iso, carrier, sub, op, browser,
-                        applyTarget.packageName(), device, buildChanged);
+                        applyTarget.packageName(), device, buildChanged, realSim);
             }
             final long t4 = android.os.SystemClock.elapsedRealtime();
             Diag.info("perf", "apply await=" + (t1 - t0) + " props=" + (t2 - t1)
@@ -1608,23 +1602,42 @@ final class Dashboard extends UiSection {
             String num = DeviceSignals.getprop("gsm.sim.operator.numeric");
             String iso = DeviceSignals.getprop("gsm.sim.operator.iso-country");
             String alpha = DeviceSignals.getprop("gsm.sim.operator.alpha");
-            if (!baseline.simNum.equals(num)) {
+            if (!slotHas(baseline.simNum, num)) {
                 out.append(out.length() > 0 ? "; " : "")
                         .append("sim=").append(num).append(" expected=").append(baseline.simNum);
             }
             if (baseline.simIso != null && !baseline.simIso.isEmpty()
-                    && !baseline.simIso.equals(iso)) {
+                    && !slotHas(baseline.simIso, iso)) {
                 out.append(out.length() > 0 ? "; " : "")
                         .append("iso=").append(iso).append(" expected=").append(baseline.simIso);
             }
             if (baseline.simAlpha != null && !baseline.simAlpha.isEmpty()
-                    && !baseline.simAlpha.equals(alpha)) {
+                    && !slotHas(baseline.simAlpha, alpha)) {
                 out.append(out.length() > 0 ? "; " : "")
                         .append("alpha=").append(alpha).append(" expected=")
                         .append(baseline.simAlpha);
             }
         }
         return out.toString();
+    }
+
+    /** A per-slot property list is one value per SIM slot; the baseline names one card. */
+    private static boolean slotHas(String expected, String actual) {
+        if (expected == null || expected.isEmpty()) {
+            return true;
+        }
+        if (expected.equals(actual)) {
+            return true;
+        }
+        if (actual == null) {
+            return false;
+        }
+        for (String part : actual.split(",")) {
+            if (expected.equals(part)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void drainPending() {

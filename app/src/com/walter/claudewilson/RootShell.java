@@ -371,7 +371,8 @@ public final class RootShell {
     public static Outcome applyRegion(String zone, String locale, String iso,
                                       String carrier, int sub, String op,
                                       String browserPkg, String targetPkg,
-                                      String[] device, boolean buildChanged) {
+                                      String[] device, boolean buildChanged,
+                                      String[] realSim) {
         if (!ShellQuote.safeToken(zone) || !ShellQuote.safeToken(locale)
                 || !ShellQuote.safeToken(iso)) {
             return Outcome.of("refused: unsafe region token");
@@ -405,19 +406,39 @@ public final class RootShell {
             command.step("build-props", "echo SKIP:build-props shell-channel");
         }
         if (sub >= 0) {
-            command.step("carrier", carrierStep(sub, iso, carrier));
-            if (carrier != null && !carrier.isEmpty()) {
-                command.step("carrier-name", subnameStep(sub, carrier,
-                        CarrierCommands.nameSourceUserInput()));
-            }
-            if (root && opSafe) {
-                command.step("sim-props", "sh -c " + ShellQuote.quote(
-                        SystemBuild.telephonyScript(op, iso, carrier)));
-                command.step("simop", simopApiAbsent
-                        ? "echo SKIP:simop api-absent"
+            if (preservesMobileData()) {
+                // Some OEM telephony stacks keep a per-subscription carrier-config override
+                // after a region switch, and they resolve the data APN from the SIM operator
+                // properties. A persona value there makes the modem request a temporary APN
+                // that does not exist, and the connection does not recover until those
+                // properties are real again. Put the physical card's values back first, then
+                // clear the override so the resulting reconnect uses the real APN.
+                command.step("sim-real", root
+                        ? simRealStep(realSim) : "echo SKIP:sim-real no-root");
+                command.step("carrier-clear", carrierClearStep(sub));
+                command.step("simop-clear", simopApiAbsent
+                        ? "echo SKIP:simop-clear api-absent"
                         : "app_process -Djava.class.path=$APK /system/bin " + BRIDGE
-                                + " simop " + sub + " " + op + " "
-                                + ShellQuote.quote(carrier));
+                                + " simop " + sub + " - -");
+                if (carrier != null && !carrier.isEmpty()) {
+                    command.step("sim-alpha", simAlphaStep(carrier));
+                }
+                command.step("sim-data-compat", "echo SKIP:sim-data-compat oem-apn");
+            } else {
+                command.step("carrier", carrierStep(sub, iso, carrier));
+                if (carrier != null && !carrier.isEmpty()) {
+                    command.step("carrier-name", subnameStep(sub, carrier,
+                            CarrierCommands.nameSourceUserInput()));
+                }
+                if (root && opSafe) {
+                    command.step("sim-props", "sh -c " + ShellQuote.quote(
+                            SystemBuild.telephonyScript(op, iso, carrier)));
+                    command.step("simop", simopApiAbsent
+                            ? "echo SKIP:simop api-absent"
+                            : "app_process -Djava.class.path=$APK /system/bin " + BRIDGE
+                                    + " simop " + sub + " " + op + " "
+                                    + ShellQuote.quote(carrier));
+                }
             }
         }
         String output = run(command.done("APPLY:DONE").build());
@@ -451,6 +472,14 @@ public final class RootShell {
             }
         }
         if (sub >= 0) {
+            boolean keepReal = preservesMobileData();
+            if (keepReal) {
+                // Restore the card's own SIM operator trio before the carrier-config change
+                // below. That change makes telephony reconnect, and the reconnect must resolve
+                // the real APN, not one keyed by a leftover persona value.
+                command.step("sim-real", root
+                        ? simRealStep(origSim) : "echo SKIP:sim-real no-root");
+            }
             command.step("carrier-clear", carrierClearStep(sub));
             String restoreName = origSim != null && origSim.length > 3
                     && origSim[3] != null && !origSim[3].isEmpty()
@@ -469,21 +498,23 @@ public final class RootShell {
                         ? "echo SKIP:simop-clear api-absent"
                         : "app_process -Djava.class.path=$APK /system/bin " + BRIDGE
                                 + " simop " + sub + " - -");
-                if (origSim != null && origSim[0] != null && !origSim[0].isEmpty()) {
-                    command.step("sim-props-restore",
-                            "setprop gsm.sim.operator.numeric "
-                                    + ShellQuote.quote(origSim[0])
-                                    + " && setprop gsm.sim.operator.iso-country "
-                                    + ShellQuote.quote(origSim[1])
-                                    + " && setprop gsm.sim.operator.alpha "
-                                    + ShellQuote.quote(origSim[2]));
-                } else {
-                    command.step("sim-props-clear",
-                            "if command -v resetprop >/dev/null 2>&1; then"
-                                    + " resetprop --delete gsm.sim.operator.numeric;"
-                                    + " resetprop --delete gsm.sim.operator.iso-country;"
-                                    + " resetprop --delete gsm.sim.operator.alpha;"
-                                    + " else echo SKIP:sim-props-clear; fi");
+                if (!keepReal) {
+                    if (origSim != null && origSim[0] != null && !origSim[0].isEmpty()) {
+                        command.step("sim-props-restore",
+                                "setprop gsm.sim.operator.numeric "
+                                        + ShellQuote.quote(origSim[0])
+                                        + " && setprop gsm.sim.operator.iso-country "
+                                        + ShellQuote.quote(origSim[1])
+                                        + " && setprop gsm.sim.operator.alpha "
+                                        + ShellQuote.quote(origSim[2]));
+                    } else {
+                        command.step("sim-props-clear",
+                                "if command -v resetprop >/dev/null 2>&1; then"
+                                        + " resetprop --delete gsm.sim.operator.numeric;"
+                                        + " resetprop --delete gsm.sim.operator.iso-country;"
+                                        + " resetprop --delete gsm.sim.operator.alpha;"
+                                        + " else echo SKIP:sim-props-clear; fi");
+                    }
                 }
             }
         }
@@ -524,8 +555,57 @@ public final class RootShell {
         if (sub < 0) {
             return "echo SKIP:carrier no-active-sub";
         }
+        if (preservesMobileData()) {
+            return "echo SKIP:sim-data-compat oem-apn";
+        }
         return "APK=$(pm path " + self + " | cut -d: -f2); "
                 + carrierStep(sub, iso, carrier);
+    }
+
+    /**
+     * OEMs that derive their data APN from the real SIM must not receive a global SIM override.
+     *
+     * <p>{@code Build.MANUFACTURER} is not usable here: this app rewrites
+     * {@code ro.product.manufacturer} itself, so a later process start can see the persona and
+     * flip the branch. The per-partition manufacturer properties are not written by the build
+     * replay and therefore still name the physical device.
+     */
+    static boolean preservesMobileData() {
+        return "samsung".equalsIgnoreCase(physicalManufacturer());
+    }
+
+    private static String physicalManufacturer() {
+        String[] keys = {
+                "ro.product.system.manufacturer",
+                "ro.product.vendor.manufacturer",
+                "ro.product.odm.manufacturer",
+        };
+        for (String key : keys) {
+            String value = DeviceSignals.getprop(key);
+            if (value != null && !value.isEmpty() && value.indexOf(',') < 0) {
+                return value;
+            }
+        }
+        return android.os.Build.MANUFACTURER;
+    }
+
+    /** Writes only the SIM display name; MCC/MNC, country and APN inputs stay real. */
+    private static String simAlphaStep(String alpha) {
+        if (alpha == null || alpha.isEmpty()) {
+            return "echo SKIP:sim-alpha empty";
+        }
+        return "sh -c " + ShellQuote.quote(SystemBuild.alphaScript(alpha));
+    }
+
+    /** Restores the physical card's SIM operator trio before a carrier-config reconnect. */
+    private static String simRealStep(String[] realSim) {
+        if (realSim == null || realSim.length < 3
+                || realSim[0] == null || !realSim[0].matches("\\d{5,6}")) {
+            return "echo SKIP:sim-real no-baseline";
+        }
+        return "sh -c " + ShellQuote.quote(SystemBuild.simScript(
+                realSim[0], realSim[1] == null ? "" : realSim[1],
+                realSim[2] == null ? "" : realSim[2]));
     }
 
     private static String carrierClearStep(int sub) {

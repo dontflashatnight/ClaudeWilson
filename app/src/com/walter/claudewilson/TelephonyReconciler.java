@@ -93,6 +93,12 @@ final class TelephonyReconciler {
                 || d.iso == null || d.iso.isEmpty() || !RootShell.rootReady()) {
             return;
         }
+        if (RootShell.preservesMobileData()) {
+            // Some telephony stacks build the data APN from the SIM operator properties. They
+            // must stay on the physical card; the target process reads the persona from the
+            // hook instead. Reasserting the persona here re-breaks data after every apply.
+            return;
+        }
         int slot = PersonaPanel.activeSlotOf(context);
         DeviceSignals.refreshNow();
         boolean simMatch = simMatches(d, slot);

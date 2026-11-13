@@ -41,9 +41,12 @@ final class RootActions {
         if (json == null || json.isEmpty()) {
             return "refused: empty persona";
         }
+        return writeConfig(target.configPath(), json);
+    }
+
+    private String writeConfig(String path, String json) {
         String encoded = Base64.encodeToString(json.getBytes(java.nio.charset.StandardCharsets.UTF_8),
                 Base64.NO_WRAP);
-        String path = target.configPath();
         // base64 is available in Android's toybox on every supported release. The JSON itself is
         // never interpolated into the shell; only the base64 alphabet is.
         String script = "mkdir -p " + CONFIG_DIR
