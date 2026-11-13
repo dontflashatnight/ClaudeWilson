@@ -79,27 +79,37 @@ final class PersonaPanel extends UiSection {
     /**
      * The running device itself, as a preset.
      *
-     * <p>Everything comes from {@code Build}, so the picker is usable on any model instead of only
-     * the curated list above -- which cannot cover a device nobody typed in.
+     * <p>Everything comes from the pre-persona property snapshot when one exists, so a simulated
+     * build does not become "this device" on the next app start. {@code Build} is only the
+     * fallback: it is fixed at zygote start and may already describe the persona.
      */
     private static String[] selfDevice() {
+        String manufacturer = originalOr("ro.product.manufacturer",
+                android.os.Build.MANUFACTURER);
+        String model = originalOr("ro.product.model", android.os.Build.MODEL);
         return new String[]{
-                android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL,
-                android.os.Build.MANUFACTURER,
-                android.os.Build.BRAND,
-                android.os.Build.MODEL,
-                android.os.Build.DEVICE,
-                android.os.Build.PRODUCT,
-                android.os.Build.HARDWARE,
-                android.os.Build.BOARD,
-                android.os.Build.FINGERPRINT,
-                android.os.Build.ID,
-                android.os.Build.VERSION.INCREMENTAL,
-                android.os.Build.VERSION.RELEASE,
+                manufacturer + " " + model,
+                manufacturer,
+                originalOr("ro.product.brand", android.os.Build.BRAND),
+                model,
+                originalOr("ro.product.device", android.os.Build.DEVICE),
+                originalOr("ro.product.name", android.os.Build.PRODUCT),
+                originalOr("ro.hardware", android.os.Build.HARDWARE),
+                originalOr("ro.product.board", android.os.Build.BOARD),
+                originalOr("ro.build.fingerprint", android.os.Build.FINGERPRINT),
+                originalOr("ro.build.id", android.os.Build.ID),
+                originalOr("ro.build.version.incremental", android.os.Build.VERSION.INCREMENTAL),
+                originalOr("ro.build.version.release", android.os.Build.VERSION.RELEASE),
                 String.valueOf(android.os.Build.VERSION.SDK_INT),
-                android.os.Build.VERSION.SECURITY_PATCH == null
-                        ? "" : android.os.Build.VERSION.SECURITY_PATCH,
+                originalOr("ro.build.version.security_patch",
+                        android.os.Build.VERSION.SECURITY_PATCH == null
+                                ? "" : android.os.Build.VERSION.SECURITY_PATCH),
         };
+    }
+
+    private static String originalOr(String key, String fallback) {
+        String value = DeviceSignals.originalProp(key);
+        return value == null || value.isEmpty() ? fallback : value;
     }
 
     /** One extra slot in front of the curated list: the device we are running on. */
@@ -1494,6 +1504,12 @@ final class PersonaPanel extends UiSection {
                         : "app_process -Djava.class.path=$APK /system/bin "
                                 + "com.walter.claudewilson.Bridge cc " + sub + " "
                                 + r.iso + " " + name
+                                // Settings' SIM manager renders the subscription display name,
+                                // not gsm.sim.operator.alpha. Keep the two in step when the
+                                // carrier is edited by hand.
+                                + "; app_process -Djava.class.path=$APK /system/bin "
+                                + "com.walter.claudewilson.Bridge subname " + sub + " "
+                                + name + " " + CarrierCommands.nameSourceUserInput()
                                 + (RootShell.rootReady()
                                         ? "; app_process -Djava.class.path=$APK /system/bin "
                                                 + "com.walter.claudewilson.Bridge simop " + sub + " "

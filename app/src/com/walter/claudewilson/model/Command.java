@@ -78,7 +78,17 @@ public final class Command {
         }
         // SU_RC is su's own status, so a refused or missing su is distinguishable from a payload
         // that ran and exited non-zero: both used to look like an empty result.
-        return "su -c " + ShellQuote.quote(out.toString()) + "; echo SU_RC=$?";
+        return suWrap(out.toString());
+    }
+
+    /**
+     * The {@code su -c} wrapper for one payload.
+     *
+     * <p>Shared with {@code RootShell}, whose channel may already be root and therefore must not
+     * wrap; keeping the quoting here means both paths produce the same command shape.
+     */
+    public static String suWrap(String script) {
+        return "su -c " + ShellQuote.quote(script) + "; echo SU_RC=$?";
     }
 
     public String[] stepNames() {

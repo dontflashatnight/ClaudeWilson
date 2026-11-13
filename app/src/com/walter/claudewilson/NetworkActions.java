@@ -35,11 +35,11 @@ final class NetworkActions {
                 + " vpn=$D bypass=$B"
                 + " pdns=$(settings get global private_dns_mode); "
                 + targetRules;
-        // Root root runs in the shell domain; app_process there has no usable network even
-        // though uid=0. su gives the probe its own domain, which is what the manual probe used.
+        // Root runs in the shell domain; app_process there has no usable network even though
+        // uid=0. su gives the probe its own domain, which is what the manual probe used. A
+        // root-started Shizuku is already in a root domain and has no su to wrap with.
         if (RootShell.rootReady()) {
-            return RootShell.run(com.walter.claudewilson.model.Command.su()
-                    .raw(script).build(), 4096, 45000L);
+            return RootShell.runRoot(script, 4096, 45000L);
         }
         return RootShell.run(script, 4096, 45000L);
     }

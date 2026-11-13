@@ -28,15 +28,17 @@ final class EnvSession {
         final String tz;
         final int autoTz;
         final long at;
-        final String simNum, simIso, simAlpha;
+        final String simNum, simIso, simAlpha, simDisplay;
+        final int simSource;
         final int sub;
         final String target, user;
         final String targetLocale, browserLocale;
         Baseline(String tz, int autoTz, long at, String simNum, String simIso,
-                 String simAlpha, int sub, String target, String user,
-                 String targetLocale, String browserLocale) {
+                 String simAlpha, String simDisplay, int simSource, int sub,
+                 String target, String user, String targetLocale, String browserLocale) {
             this.tz = tz; this.autoTz = autoTz; this.at = at;
             this.simNum = simNum; this.simIso = simIso; this.simAlpha = simAlpha;
+            this.simDisplay = simDisplay; this.simSource = simSource;
             this.sub = sub; this.target = target; this.user = user;
             this.targetLocale = targetLocale; this.browserLocale = browserLocale;
         }
@@ -100,6 +102,7 @@ final class EnvSession {
         return new Baseline(p.getString("base_tz", null), p.getInt("base_autotz", 1),
                 p.getLong("base_at", 0L), p.getString("base_sim_num", ""),
                 p.getString("base_sim_iso", ""), p.getString("base_sim_alpha", ""),
+                p.getString("base_sim_display", ""), p.getInt("base_sim_source", -1),
                 p.getInt("base_sub", -1), p.getString("base_target", null),
                 p.getString("base_user", null), p.getString("base_target_locale", ""),
                 p.getString("base_browser_locale", ""));
@@ -110,7 +113,8 @@ final class EnvSession {
      * the old snapshot rule, while an ordinary re-apply keeps the original baseline.
      */
     static void captureBaseline(Context context, String simNum, String simIso,
-                                String simAlpha, int sub, String target, String user,
+                                String simAlpha, String simDisplay, int simSource,
+                                int sub, String target, String user,
                                 String targetLocale, String browserLocale) {
         migrate(context);
         SharedPreferences p = prefs(context);
@@ -123,6 +127,8 @@ final class EnvSession {
                 .putString("base_sim_num", simNum == null ? "" : simNum)
                 .putString("base_sim_iso", simIso == null ? "" : simIso)
                 .putString("base_sim_alpha", simAlpha == null ? "" : simAlpha)
+                .putString("base_sim_display", simDisplay == null ? "" : simDisplay)
+                .putInt("base_sim_source", simSource)
                 .putInt("base_sub", sub)
                 .putString("base_target", target)
                 .putString("base_user", user)
@@ -224,6 +230,7 @@ final class EnvSession {
             // snapshot that belongs to the previous session.
             editor.remove("base_tz").remove("base_autotz").remove("base_at")
                     .remove("base_sim_num").remove("base_sim_iso").remove("base_sim_alpha")
+                    .remove("base_sim_display").remove("base_sim_source")
                     .remove("base_sub").remove("base_target").remove("base_user")
                     .remove("act_iso").remove("act_zone").remove("act_locale")
                     .remove("act_applied");
