@@ -12,9 +12,11 @@ import com.walter.claudewilson.model.ShellQuote;
  *
  * <p>Every command runs through one transport chosen at probe time. Root grants the full
  * surface (properties, SIM props, carrier config); Shizuku grants shell-uid operations such as
- * timezone, per-app locale, package queries and network probes. The class deliberately keeps a
- * small, synchronous shell surface: region writes and package actions are short, and the UI
- * already runs them off the main thread.
+ * timezone, per-app locale, package queries and network probes. A Shizuku server that was
+ * started as root is a third shape: the transport stays Shizuku, but every command executes as
+ * uid 0 and {@link #rootReady()} is true. The class deliberately keeps a small, synchronous
+ * shell surface: region writes and package actions are short, and the UI already runs them off
+ * the main thread.
  */
 public final class RootShell {
 
@@ -42,7 +44,6 @@ public final class RootShell {
     private static volatile int transport = TRANSPORT_NONE;
     private static volatile int shizukuIdentity = ID_UNKNOWN;
     private static volatile boolean rootCached;
-    private static volatile long rootCheckedAt;
     private static volatile boolean probing;
     private static volatile boolean lastProbeFailed;
     private static volatile String lastError = "";
@@ -119,7 +120,9 @@ public final class RootShell {
                 rootCached = false;
                 lastSuRc = 1;
                 if (shizuku == ShizukuShell.ST_READY) {
-                    shizukuIdentity = ID_UNKNOWN;
+                    // Shizuku can be started as root. That channel runs every command as uid 0
+                    // even though this app has no su binary, so root-only writes must stay on.
+                    shizukuIdentity = shizukuUid();
                     state = ST_READY;
                     lastProbeFailed = false;
                     lastError = "";
@@ -132,7 +135,6 @@ public final class RootShell {
             if (!root && state != ST_READY) {
                 lastError = denied ? out : "no root or Shizuku";
             }
-            rootCheckedAt = System.nanoTime();
             com.walter.claudewilson.platform.Diag.info("root",
                     "probe state=" + state + " transport=" + transport
                             + " out=" + out + " err=" + lastError);
@@ -194,19 +196,23 @@ public final class RootShell {
         if (cached != ID_UNKNOWN) {
             return cached;
         }
+        shizukuIdentity = shizukuUid();
+        return shizukuIdentity;
+    }
+
+    /** Shizuku's remote uid: 0 for a root-started server, 2000 for the ordinary shell. */
+    private static int shizukuUid() {
         try {
             String out = ShizukuShell.run("id -u", 64, 5000L).trim();
             String uid = out.isEmpty() ? "" : out.split("\\s+")[0];
-            shizukuIdentity = "0".equals(uid) ? ID_ROOT : ID_SHELL;
+            return "0".equals(uid) ? ID_ROOT : ID_SHELL;
         } catch (Throwable t) {
-            shizukuIdentity = ID_SHELL;
+            return ID_SHELL;
         }
-        return shizukuIdentity;
     }
 
     /** Forget the cached identity; the next probe re-checks {@code su}. */
     public static void refreshIdentity() {
-        rootCheckedAt = 0L;
         rootCached = false;
         transport = TRANSPORT_NONE;
         shizukuIdentity = ID_UNKNOWN;
@@ -230,13 +236,21 @@ public final class RootShell {
         return run("dumpsys account | grep -E 'Accounts:|, type=com.google}'", 0);
     }
 
-    /** True only while the last {@code su} probe returned uid 0. */
+    /**
+     * True when the live channel runs as uid 0.
+     *
+     * <p>Two shapes qualify: {@code su} itself, and a Shizuku server started as root. A shell-uid
+     * Shizuku does not; property writes and {@code /data} reads would fail there. The transport
+     * choice stays in {@link #run}; this predicate only answers "may root-only work run now".
+     */
     static boolean rootReady() {
-        long now = System.nanoTime();
-        if (now - rootCheckedAt < 2_000_000_000L && rootCheckedAt != 0L) {
-            return rootCached;
+        if (state != ST_READY) {
+            return false;
         }
-        return rootCached && state == ST_READY;
+        if (transport == TRANSPORT_ROOT) {
+            return true;
+        }
+        return transport == TRANSPORT_SHIZUKU && shizukuIdentity == ID_ROOT;
     }
 
     static void grantPermissions(String pkg, String[] permissions) {
@@ -392,6 +406,10 @@ public final class RootShell {
         }
         if (sub >= 0) {
             command.step("carrier", carrierStep(sub, iso, carrier));
+            if (carrier != null && !carrier.isEmpty()) {
+                command.step("carrier-name", subnameStep(sub, carrier,
+                        CarrierCommands.nameSourceUserInput()));
+            }
             if (root && opSafe) {
                 command.step("sim-props", "sh -c " + ShellQuote.quote(
                         SystemBuild.telephonyScript(op, iso, carrier)));
@@ -432,6 +450,18 @@ public final class RootShell {
         }
         if (sub >= 0) {
             command.step("carrier-clear", carrierClearStep(sub));
+            String restoreName = origSim != null && origSim.length > 3
+                    && origSim[3] != null && !origSim[3].isEmpty()
+                    ? origSim[3]
+                    : origSim != null && origSim.length > 2 ? origSim[2] : "";
+            if (!restoreName.isEmpty()) {
+                int source = CarrierCommands.nameSourceUserInput();
+                if (origSim.length > 4 && origSim[4] != null
+                        && origSim[4].matches("\\d+")) {
+                    source = Integer.parseInt(origSim[4]);
+                }
+                command.step("carrier-name-restore", subnameStep(sub, restoreName, source));
+            }
             if (root) {
                 command.step("simop-clear", simopApiAbsent
                         ? "echo SKIP:simop-clear api-absent"
@@ -480,6 +510,13 @@ public final class RootShell {
                         + " cc " + sub + " " + iso + " " + ShellQuote.quote(carrier));
     }
 
+    /** Subscription display name, which is what Settings' SIM manager renders. */
+    private static String subnameStep(int sub, String name, int source) {
+        return wrappedCarrierCall("carrier-name",
+                "app_process -Djava.class.path=$APK /system/bin " + BRIDGE
+                        + " subname " + sub + " " + ShellQuote.quote(name) + " " + source);
+    }
+
     /** Carrier-config reassert for the reconciler; APK is not predefined in a standalone script. */
     static String simReassertScript(int sub, String iso, String carrier) {
         if (sub < 0) {
@@ -524,16 +561,38 @@ public final class RootShell {
 
     public static String run(String sh, int max, long timeoutMs) {
         String out;
-        if (transport == TRANSPORT_SHIZUKU && !rootReady()) {
+        if (transport == TRANSPORT_SHIZUKU) {
             out = ShizukuShell.run(sh, max, timeoutMs);
+        } else if (transport == TRANSPORT_ROOT) {
+            out = RootProcess.run(sh, max, timeoutMs);
         } else {
             out = RootProcess.run(sh, max, timeoutMs);
-            if (ShellQuote.failed(out) && ShizukuShell.ready() && !rootReady()) {
+            if (ShellQuote.failed(out) && ShizukuShell.ready()) {
                 out = ShizukuShell.run(sh, max, timeoutMs);
             }
         }
         lastSuRc = ShellQuote.suRc(out);
         return out;
+    }
+
+    /**
+     * Wraps a root-only payload for the live channel.
+     *
+     * <p>Only the {@code su} transport needs the extra wrapper. A root-started Shizuku already
+     * executes the payload as uid 0, and there may be no {@code su} binary on such a device, so
+     * wrapping it would turn a working write into "command not found".
+     */
+    static String wrapRoot(String payload) {
+        return transport == TRANSPORT_ROOT ? Command.suWrap(payload) : payload;
+    }
+
+    /** Runs a root-only payload through whichever channel currently holds uid 0. */
+    static String runRoot(String payload) {
+        return run(wrapRoot(payload));
+    }
+
+    static String runRoot(String payload, int max, long timeoutMs) {
+        return run(wrapRoot(payload), max, timeoutMs);
     }
 
     /** True when the last root command failed at the transport layer. */

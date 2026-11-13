@@ -23,23 +23,28 @@ final class RegionActions {
         String num = nn(DeviceSignals.getprop("gsm.sim.operator.numeric"));
         String iso = nn(DeviceSignals.getprop("gsm.sim.operator.iso-country"));
         String alpha = nn(DeviceSignals.getprop("gsm.sim.operator.alpha"));
+        String[] sub = subscriptionIdentity();
         // A per-slot property list ("sg,nl") or an empty value is not a baseline a revert can
         // restore from. The subscription record names the card the device is actually using.
         if (unusable(num) || unusable(iso) || unusable(alpha)) {
-            String[] sim = subscriptionIdentity();
-            if (sim != null) {
-                if (unusable(num)) num = sim[0];
-                if (unusable(iso)) iso = sim[1];
-                if (unusable(alpha)) alpha = sim[2];
+            if (sub != null) {
+                if (unusable(num)) num = sub[0];
+                if (unusable(iso)) iso = sub[1];
+                if (unusable(alpha)) alpha = sub[2];
             }
         }
         // MCC is the country of the card. The iso prop and the subscription's countryIso can be
         // stale (observed a China MCC next to "tw"); restoring such a pair would recreate the
         // contradiction.
         iso = mccIso(num, iso);
+        String display = sub == null ? "" : sub[3];
+        int source = -1;
+        if (sub != null && sub[4] != null && sub[4].matches("\\d+")) {
+            source = Integer.parseInt(sub[4]);
+        }
         String targetLocale = appLocales(target == null ? null : target.packageName());
         String browserLocale = appLocales(RootShell.browserPackage(context));
-        EnvSession.captureBaseline(context, num, iso, alpha, active,
+        EnvSession.captureBaseline(context, num, iso, alpha, display, source, active,
                 target == null ? TargetRegistry.CLAUDE.id() : target.id(), userId,
                 targetLocale, browserLocale);
     }
@@ -86,11 +91,13 @@ final class RegionActions {
     }
 
     /**
-     * {mccMnc, iso, carrierName} of the default data subscription, or null when it is unreadable.
+     * {mccMnc, iso, carrierName, displayName, nameSource} of the default data subscription, or
+     * null when it is unreadable.
      *
      * <p>The subscription record is the only per-subscription identity on a shell channel: the
      * property area holds a per-slot list there, and TelephonyManager answers with the overridden
-     * values once a carrier-config override is in place.
+     * values once a carrier-config override is in place. The display name is the one Settings'
+     * SIM manager renders; it is not derived from the carrier-config override.
      */
     String[] subscriptionIdentity() {
         try {
@@ -121,10 +128,26 @@ final class RegionActions {
             if (suffix > 0) {
                 label = label.substring(0, suffix);
             }
+            CharSequence display = chosen.getDisplayName();
+            String shown = display == null ? "" : display.toString();
+            int shownSuffix = shown.indexOf(" | ");
+            if (shownSuffix > 0) {
+                shown = shown.substring(0, shownSuffix);
+            }
+            int source = CarrierCommands.nameSourceUserInput();
+            try {
+                java.lang.reflect.Method m = android.telephony.SubscriptionInfo.class
+                        .getMethod("getNameSource");
+                source = (Integer) m.invoke(chosen);
+            } catch (Throwable ignored) {
+                // Hidden API: the display name is still usable, the source falls back to user.
+            }
             return new String[]{
                     mcc == null || mnc == null ? "" : mcc + mnc,
                     iso == null ? "" : iso,
-                    label.trim()};
+                    label.trim(),
+                    shown.trim(),
+                    String.valueOf(source)};
         } catch (Throwable t) {
             return null;
         }
@@ -141,7 +164,8 @@ final class RegionActions {
         String appliedUser = b == null || b.user == null ? currentUser : b.user;
         TargetSpec appliedTarget = TargetRegistry.byId(b == null ? null : b.target);
         String[] sim = b == null || b.simNum == null || b.simNum.isEmpty() ? liveSim()
-                : new String[]{b.simNum, b.simIso, b.simAlpha};
+                : new String[]{b.simNum, b.simIso, b.simAlpha, b.simDisplay,
+                        String.valueOf(b.simSource)};
         return new Restore(sub, tz, b == null ? 1 : b.autoTz, b == null ? 0L : b.at,
                 appliedUser == null || appliedUser.isEmpty() ? currentUser : appliedUser,
                 sim, appliedTarget);
@@ -207,20 +231,17 @@ final class RegionActions {
                 if (hasAid) {
                     // Only the actual restore needs root; it is rare (AID was explicitly
                     // rewritten for this space), not part of every region reset.
-                    aid = RootShell.run(com.walter.claudewilson.model.Command.su()
-                            .raw(com.walter.claudewilson.model.RootScript.restoreSsaid(
-                                    userId, target.packageName()))
-                            .build());
+                    aid = RootShell.runRoot(
+                            com.walter.claudewilson.model.RootScript.restoreSsaid(
+                                    userId, target.packageName()));
                     aidFailed = RootShell.failed(aid);
                 } else {
                     aid = "aid-skip";
                 }
                 if (hasFwmu) {
-                    fwmu = RootShell.run(com.walter.claudewilson.model.Command.su()
-                            .raw("setprop fw.max_users \"\""
-                                    + " && rm -f /data/local/tmp/fwmu_bumped"
-                                    + " && echo fwmu-clean")
-                            .build());
+                    fwmu = RootShell.runRoot("setprop fw.max_users \"\""
+                            + " && rm -f /data/local/tmp/fwmu_bumped"
+                            + " && echo fwmu-clean");
                     fwmuFailed = RootShell.failed(fwmu);
                 } else {
                     fwmu = "fwmu-clean";
@@ -292,9 +313,20 @@ final class RegionActions {
             String mcc = best.getMccString();
             String mnc = best.getMncString();
             CharSequence name = best.getCarrierName();
+            CharSequence display = best.getDisplayName();
+            int source = CarrierCommands.nameSourceUserInput();
+            try {
+                java.lang.reflect.Method m = android.telephony.SubscriptionInfo.class
+                        .getMethod("getNameSource");
+                source = (Integer) m.invoke(best);
+            } catch (Throwable ignored) {
+                // Hidden API: the display name is still usable, the source falls back to user.
+            }
             return new String[]{mcc == null || mnc == null ? "" : mcc + mnc,
                     best.getCountryIso() == null ? "" : best.getCountryIso(),
-                    name == null ? "" : name.toString()};
+                    name == null ? "" : name.toString(),
+                    display == null ? "" : display.toString(),
+                    String.valueOf(source)};
         } catch (Throwable t) {
             return null;
         }

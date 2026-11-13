@@ -6,6 +6,20 @@ import java.lang.reflect.Method;
 
 /** Existing Binder commands for Bridge; no Activity or application context. */
 final class CarrierCommands {
+    /**
+     * SubscriptionManager.NAME_SOURCE_USER_INPUT is hidden and its numeric value moved between
+     * releases (2 on the Lineage 22 test device, 3 on AOSP 15). Resolve it at runtime instead of
+     * baking in a value; the fallback is the value observed on the target device.
+     */
+    static int nameSourceUserInput() {
+        try {
+            return android.telephony.SubscriptionManager.class
+                    .getField("NAME_SOURCE_USER_INPUT").getInt(null);
+        } catch (Throwable t) {
+            return 2;
+        }
+    }
+
     private CarrierCommands() {}
 
     static Object binderSvc(String name, String stubClass) throws Exception {
@@ -33,6 +47,60 @@ final class CarrierCommands {
             case "ccclear": {
                 callOverride(svc, Integer.parseInt(a[1]), null);
                 System.out.println("cc cleared sub=" + a[1]);
+                break;
+            }
+            case "subname": {
+                // The SIM manager renders SubscriptionInfo.displayName, not gsm.sim.operator.alpha
+                // and not the carrier-config override. Without this write it keeps showing the
+                // name the card (or an earlier simulation) put in the subscription database.
+                Object sub = binderSvc("isub",
+                        "com.android.internal.telephony.ISub$Stub");
+                int subId = Integer.parseInt(a[1]);
+                String name = a[2];
+                int requested = a.length > 3 ? Integer.parseInt(a[3]) : -1;
+                Method method = null;
+                for (Method m : sub.getClass().getDeclaredMethods()) {
+                    Class<?>[] pt = m.getParameterTypes();
+                    if (m.getName().equals("setDisplayNameUsingSrc")
+                            && pt.length == 3 && pt[0] == String.class) {
+                        method = m;
+                        break;
+                    }
+                }
+                if (method == null) {
+                    System.out.println("SKIP:subname api-absent");
+                    break;
+                }
+                // The hidden name-source enum moved between releases; try the requested value
+                // first, then the resolved constant and both historical values.
+                java.util.LinkedHashSet<Integer> sources = new java.util.LinkedHashSet<Integer>();
+                if (requested > 0) sources.add(requested);
+                sources.add(nameSourceUserInput());
+                sources.add(2);
+                sources.add(3);
+                int updated = 0;
+                int used = -1;
+                String failure = null;
+                for (int source : sources) {
+                    try {
+                        Object result = method.invoke(sub, name, subId, source);
+                        int rows = result instanceof Integer ? (Integer) result : 1;
+                        if (rows > 0) {
+                            updated = rows;
+                            used = source;
+                            break;
+                        }
+                    } catch (Throwable t) {
+                        Throwable cause = t.getCause() == null ? t : t.getCause();
+                        failure = cause.getClass().getSimpleName()
+                                + (cause.getMessage() == null ? "" : ": " + cause.getMessage());
+                    }
+                }
+                System.out.println(used > 0
+                        ? "subname set sub=" + subId + " name=" + name
+                                + " src=" + used + " rows=" + updated
+                        : "SKIP:subname no-update"
+                                + (failure == null ? "" : " " + failure));
                 break;
             }
             case "ccget": {

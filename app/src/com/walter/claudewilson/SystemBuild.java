@@ -196,6 +196,9 @@ final class SystemBuild {
             sh.append(' ').append(key);
         }
         sh.append("; do echo \"$k=$(getprop $k)\" >> $BAK; done; }\n");
+        // The control app reads this file to answer "what was the real device". A root umask of
+        // 077 would make it owner-only and that answer unreadable to the app's own uid.
+        sh.append("chmod 644 $BAK 2>/dev/null || true\n");
     }
 
     /**

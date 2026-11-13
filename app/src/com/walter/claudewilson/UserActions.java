@@ -66,9 +66,8 @@ final class UserActions {
         if (target == null || !target.localIdentityWrites()) {
             return "echo refused: target has no local identity support";
         }
-        return guard(userId, com.walter.claudewilson.model.Command.su()
-                .raw(com.walter.claudewilson.model.RootScript.randomizeSsaid(
-                        userId, target.packageName()))
-                .build());
+        return guard(userId, RootShell.wrapRoot(
+                com.walter.claudewilson.model.RootScript.randomizeSsaid(
+                        userId, target.packageName())));
     }
 }

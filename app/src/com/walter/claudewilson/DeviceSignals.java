@@ -21,6 +21,15 @@ final class DeviceSignals {
     private static final long REFRESH_COALESCE_NS = 200_000_000L;   // 200ms
 
     private static volatile Map<String, String> props = Collections.emptyMap();
+    /**
+     * Pre-persona build properties, captured by the root apply before its first write.
+     *
+     * <p>{@code Build.*} is fixed when zygote starts, so after a model override the app's own
+     * {@code Build} can describe the simulated device rather than the one it is running on. The
+     * backup is the only surviving copy of the real identity; an empty map means no persona has
+     * been written (or the file is unreadable), and callers fall back to the current properties.
+     */
+    private static volatile Map<String, String> originals = Collections.emptyMap();
     private static volatile long refreshedAt;
     private static final Object LOCK = new Object();
 
@@ -54,6 +63,7 @@ final class DeviceSignals {
             if (!parsed.isEmpty()) {
                 props = parsed;
             }
+            originals = parseBackup(readAll(SystemBuild.BACKUP));
             refreshedAt = now;
         }
     }
@@ -70,6 +80,17 @@ final class DeviceSignals {
             return null;
         }
         return single(key);
+    }
+
+    /**
+     * The value this property had before the first persona write, else its current value.
+     *
+     * <p>Use this for "this device" identity: a simulated build is visible in the property area
+     * and in {@code Build}, so neither can answer what the hardware was.
+     */
+    static String originalProp(String key) {
+        String value = originals.get(key);
+        return value == null || value.isEmpty() ? getprop(key) : value;
     }
 
     static String execOut(String cmd) {
@@ -89,6 +110,18 @@ final class DeviceSignals {
     static String readFile(String path) {
         try (BufferedReader r = new BufferedReader(new FileReader(path))) {
             return r.readLine();
+        } catch (Throwable t) { return null; }
+    }
+
+    /** Whole file, or null when it is absent/unreadable. Used for the small props snapshot. */
+    private static String readAll(String path) {
+        try (BufferedReader r = new BufferedReader(new FileReader(path))) {
+            StringBuilder out = new StringBuilder();
+            String line;
+            while ((line = r.readLine()) != null) {
+                out.append(line).append('\n');
+            }
+            return out.toString();
         } catch (Throwable t) { return null; }
     }
 
@@ -144,6 +177,22 @@ final class DeviceSignals {
                 continue;
             }
             values.put(line.substring(1, separator), line.substring(separator + 4, end));
+        }
+        return values;
+    }
+
+    /** Parses the {@code key=value} lines written by {@link SystemBuild}'s pre-write snapshot. */
+    private static Map<String, String> parseBackup(String text) {
+        Map<String, String> values = new LinkedHashMap<String, String>();
+        if (text == null) {
+            return values;
+        }
+        for (String line : text.split("\n")) {
+            int separator = line.indexOf('=');
+            if (separator <= 0) {
+                continue;
+            }
+            values.put(line.substring(0, separator), line.substring(separator + 1).trim());
         }
         return values;
     }
