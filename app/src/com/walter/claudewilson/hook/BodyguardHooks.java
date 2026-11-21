@@ -9,6 +9,7 @@ import android.system.OsConstants;
 
 import com.walter.claudewilson.model.BodyguardEventCodec;
 import com.walter.claudewilson.model.BodyguardPolicy;
+import com.walter.claudewilson.model.IpGuardPolicy;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -37,6 +38,10 @@ final class BodyguardHooks {
 
     private static final ThreadLocal<Boolean> IN_GUARD = new ThreadLocal<Boolean>();
     private static final ThreadLocal<Boolean> IN_EXIT_FILTER = new ThreadLocal<Boolean>();
+    private static volatile long ipCheckLastMs;
+    private static volatile boolean ipCachedLocked;
+    private static volatile boolean ipCachedExpectTun;
+    private static volatile boolean ipCachedTunAlive = true;
 
     private static final String[][] TRIPWIRE_APIS = {
             {"android.telephony.TelephonyManager", "getImei"},
@@ -66,6 +71,11 @@ final class BodyguardHooks {
             return;
         }
         final boolean killMode = BodyguardPolicy.MODE_BLOCK_KILL.equals(config.bodyguardMode);
+        if (killMode && isExternalLockActive(config.targetId)) {
+            installBootLockGate(loader);
+            status = "locked:" + config.targetId;
+            return;
+        }
         StringBuilder trace = new StringBuilder();
 
         installTelemetryGate(loader, config, killMode, trace);
@@ -610,9 +620,10 @@ final class BodyguardHooks {
 
     private static void installEgressHostGate(ClassLoader loader, HookConfig config,
                                               boolean killMode, StringBuilder trace) {
-        // Only arm when the target has a populated host baseline so an unaudited future target
-        // cannot be bricked by an empty allowlist.
-        if (config.bgAllowHosts == null || config.bgAllowHosts.isEmpty()) {
+        // Arm when either the target has a populated host baseline (Gate 7) or IP drop protection
+        // (Gate 8) is active; Gate 7 allowlist enforcement still checks non-empty bgAllowHosts.
+        boolean hasHostAllow = config.bgAllowHosts != null && !config.bgAllowHosts.isEmpty();
+        if (!hasHostAllow && !config.bgIpKillOnDrop) {
             return;
         }
         XC_MethodHook dnsHook = new XC_MethodHook() {
@@ -709,7 +720,33 @@ final class BodyguardHooks {
                                         String rawHost, XC_MethodHook.MethodHookParam param,
                                         Object blockResult, Throwable blockThrowable) {
         String host = BodyguardEventCodec.normalizeHost(rawHost);
-        if (BodyguardEventCodec.isHostAllowed(host, config.bgAllowHosts, config.bgAllowCustom)) {
+        // Gate 8 (IP_FLIP): zero-window check for external daemon lock or dropped VPN tunnel
+        // before any outbound non-local request can leave the process.
+        if (!BodyguardEventCodec.isLocalOrNonEgressHost(host)) {
+            refreshIpGuardCache(config.targetId);
+            if (ipCachedLocked && killMode) {
+                if (blockThrowable != null) {
+                    param.setThrowable(blockThrowable);
+                } else {
+                    param.setResult(blockResult);
+                }
+                Process.killProcess(Process.myPid());
+                return;
+            }
+            if (config.bgIpKillOnDrop && ipCachedExpectTun && !ipCachedTunAlive) {
+                IN_GUARD.set(Boolean.TRUE);
+                try {
+                    emitAndMaybeKill(loader, config, killMode,
+                            BodyguardPolicy.GATE_IP_FLIP, "net:vpn-down", "net",
+                            param, blockResult, blockThrowable);
+                } finally {
+                    IN_GUARD.remove();
+                }
+                return;
+            }
+        }
+        if (config.bgAllowHosts == null || config.bgAllowHosts.isEmpty()
+                || BodyguardEventCodec.isHostAllowed(host, config.bgAllowHosts, config.bgAllowCustom)) {
             return;
         }
         IN_GUARD.set(Boolean.TRUE);
@@ -721,6 +758,129 @@ final class BodyguardHooks {
                     param, blockResult, blockThrowable);
         } finally {
             IN_GUARD.remove();
+        }
+    }
+
+    /** True when the external lock file is strictly newer than any unlock file. */
+    private static boolean isExternalLockActive(String targetId) {
+        if (targetId == null || targetId.isEmpty()) {
+            return false;
+        }
+        try {
+            File lf = new File(IpGuardPolicy.LOCK_DIR, targetId + ".lock");
+            File uf = new File(IpGuardPolicy.LOCK_DIR, targetId + ".unlock");
+            long lt = lf.isFile() ? lf.lastModified() : 0L;
+            long ut = uf.isFile() ? uf.lastModified() : 0L;
+            return BodyguardPolicy.isLockEffective(0L, lt, ut);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * Enforces an active Bodyguard lock inside the target process at Application.attach so a
+     * locked target cannot start even when system_server is not enabled in Vector/LSPosed scope.
+     */
+    private static void installBootLockGate(final ClassLoader loader) {
+        final java.util.concurrent.atomic.AtomicBoolean killed =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        XC_MethodHook gate = new XC_MethodHook(XC_MethodHook.PRIORITY_HIGHEST) {
+            @Override protected void beforeHookedMethod(MethodHookParam param) {
+                if (killed.compareAndSet(false, true)) {
+                    Process.killProcess(Process.myPid());
+                }
+            }
+        };
+        try {
+            Class<?> appCls = XposedHelpers.findClassIfExists("android.app.Application", loader);
+            if (appCls != null) {
+                XposedBridge.hookAllMethods(appCls, "attach", gate);
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            Class<?> instCls = XposedHelpers.findClassIfExists("android.app.Instrumentation", loader);
+            if (instCls != null) {
+                XposedBridge.hookAllMethods(instCls, "callApplicationOnCreate", gate);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Refreshes lock-file and tunnel-interface state at most every 250ms using pure filesystem reads. */
+    private static void refreshIpGuardCache(String targetId) {
+        long now = System.currentTimeMillis();
+        if ((now - ipCheckLastMs) < 250L) {
+            return;
+        }
+        ipCheckLastMs = now;
+        try {
+            if (targetId != null && !targetId.isEmpty()) {
+                File lf = new File(IpGuardPolicy.LOCK_DIR, targetId + ".lock");
+                File uf = new File(IpGuardPolicy.LOCK_DIR, targetId + ".unlock");
+                long lt = lf.isFile() ? lf.lastModified() : 0L;
+                long ut = uf.isFile() ? uf.lastModified() : 0L;
+                ipCachedLocked = BodyguardPolicy.isLockEffective(0L, lt, ut);
+            } else {
+                ipCachedLocked = false;
+            }
+        } catch (Throwable ignored) {
+            ipCachedLocked = false;
+        }
+        boolean expectTun = false;
+        try {
+            File conf = new File(IpGuardPolicy.CONF_PATH);
+            if (conf.isFile() && conf.canRead()) {
+                java.io.FileInputStream in = new java.io.FileInputStream(conf);
+                try {
+                    byte[] buf = new byte[1024];
+                    int n = in.read(buf);
+                    if (n > 0) {
+                        String text = new String(buf, 0, n, java.nio.charset.StandardCharsets.UTF_8);
+                        expectTun = text.contains("EXPECT_TUN=1");
+                    }
+                } finally {
+                    in.close();
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        ipCachedExpectTun = expectTun;
+        if (!expectTun) {
+            ipCachedTunAlive = true;
+            return;
+        }
+        boolean tunUp = false;
+        try {
+            String[] ifaces = new File("/sys/class/net").list();
+            if (ifaces != null) {
+                for (String name : ifaces) {
+                    if (IpGuardPolicy.isTunnelInterfaceName(name)) {
+                        File op = new File("/sys/class/net/" + name + "/operstate");
+                        String st = readSmallText(op);
+                        if (!"down".equalsIgnoreCase(st)) {
+                            tunUp = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+            tunUp = true;
+        }
+        ipCachedTunAlive = tunUp;
+    }
+
+    private static String readSmallText(File file) {
+        if (file == null || !file.isFile() || !file.canRead()) {
+            return "";
+        }
+        try (java.io.FileInputStream in = new java.io.FileInputStream(file)) {
+            byte[] buf = new byte[64];
+            int n = in.read(buf);
+            return n > 0 ? new String(buf, 0, n, java.nio.charset.StandardCharsets.UTF_8).trim() : "";
+        } catch (Throwable ignored) {
+            return "";
         }
     }
 
@@ -736,6 +896,7 @@ final class BodyguardHooks {
             BodyguardEventCodec.isTrustedDynamicLoaderCaller("com.google.android.gms.chimera");
             BodyguardEventCodec.abbreviateCaller("a.b.C", "m");
             BodyguardEventCodec.isHostAllowed("api.anthropic.com", null, null);
+            IpGuardPolicy.isTunnelInterfaceName("tun0");
             Process.myPid();
         } catch (Throwable ignored) {
         }

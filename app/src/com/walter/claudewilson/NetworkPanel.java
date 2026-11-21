@@ -202,17 +202,6 @@ final class NetworkPanel extends UiSection {
             cardHost.addView(sub);
         }
 
-        // IP Flip Alert Row (only when exit IP changed)
-        if (r != null && !r.ipFlip.isEmpty()) {
-            TextView ft = txt(Lang.t("IP 翻转 · ", "IP flip · ") + Privacy.mask(r.ipFlip),
-                    9, AMBER);
-            ft.setTypeface(Typeface.MONOSPACE);
-            ft.setSingleLine(true);
-            ft.setEllipsize(TextUtils.TruncateAt.END);
-            ft.setPadding(0, dp(this, 4), 0, 0);
-            cardHost.addView(ft);
-        }
-
         if (!lastError.isEmpty()) {
             TextView errTv = txt(lastError, 9.5f, RED);
             errTv.setTypeface(Typeface.MONOSPACE);

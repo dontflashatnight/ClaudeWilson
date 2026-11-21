@@ -7,6 +7,7 @@ import com.walter.claudewilson.model.AttestationFacts;
 import com.walter.claudewilson.model.AuditedBaselines;
 import com.walter.claudewilson.model.BodyguardEventCodec;
 import com.walter.claudewilson.model.BodyguardPolicy;
+import com.walter.claudewilson.model.IpGuardPolicy;
 import com.walter.claudewilson.model.BuildValues;
 import com.walter.claudewilson.model.CheckConstraint;
 import com.walter.claudewilson.model.CheckItem;
@@ -276,6 +277,7 @@ public final class SelfTest {
         personaMatchEngineDetectsLeaksTaintAndDrift();
         bodyguardPolicyAndDiagnosticClassifierWork();
         bodyguardEventCodecBoundsAndClassifies();
+        ipGuardPolicyEvaluatesAndBuildsScripts();
         personasCatalogAssetIsValidAndSelfConsistent();
         personaEditRulesAndGeoCitiesWork();
         preflightVerdictPrioritizesBlockersAndWarnings();
@@ -2715,8 +2717,9 @@ public final class SelfTest {
                 BodyguardPolicy.filter(entries, "ALL", "IMEI").size() == 2,
                 "query filter");
         Map<String, Integer> counts = BodyguardPolicy.gateCounts(entries);
-        check("Gate counts covers all 7 gates",
-                counts.size() == 7
+        check("Gate counts covers all 8 gates",
+                counts.size() == 8
+                        && Integer.valueOf(0).equals(counts.get(BodyguardPolicy.GATE_IP_FLIP))
                         && Integer.valueOf(1).equals(counts.get(BodyguardPolicy.GATE_TELEMETRY_KEY))
                         && Integer.valueOf(1).equals(counts.get(BodyguardPolicy.GATE_SYS_PROP))
                         && Integer.valueOf(1).equals(counts.get(BodyguardPolicy.GATE_TRIPWIRE_API))
@@ -2925,7 +2928,8 @@ public final class SelfTest {
                 Collections.singletonList("host:custom-cdn.example.net"));
         check("EGRESS_HOST allowlist matches exact/subdomains, rejects lookalikes & unknown trackers",
                 BodyguardPolicy.ALL_GATES.contains(BodyguardPolicy.GATE_EGRESS_HOST)
-                        && BodyguardPolicy.ALL_GATES.size() == 7
+                        && BodyguardPolicy.ALL_GATES.contains(BodyguardPolicy.GATE_IP_FLIP)
+                        && BodyguardPolicy.ALL_GATES.size() == 8
                         && BodyguardEventCodec.isHostAllowed("api.anthropic.com", hostAllow, customHostAllow)
                         && BodyguardEventCodec.isHostAllowed("API.CLAUDE.AI:443.", hostAllow, customHostAllow)
                         && BodyguardEventCodec.isHostAllowed("o1158394.ingest.us.sentry.io", hostAllow, customHostAllow)
@@ -2941,6 +2945,173 @@ public final class SelfTest {
                         && "evil.tracker.io".equals(BodyguardEventCodec.extractHttpUrlHost("wss://u@evil.tracker.io/stream?x=1"))
                         && BodyguardEventCodec.extractHttpUrlHost("file:///data/local/tmp/a").isEmpty()
                         && BodyguardEventCodec.extractHttpUrlHost("jar:file:///system/a.jar!/b").isEmpty());
+    }
+
+    private static void ipGuardPolicyEvaluatesAndBuildsScripts() {
+        IpGuardPolicy.Config def = IpGuardPolicy.Config.defaults();
+        check("IpGuardPolicy defaults match approved strict configuration",
+                def.killOnDrop
+                        && def.killOnRestricted
+                        && IpGuardPolicy.DRIFT_KILL.equals(def.driftPolicy)
+                        && def.pollEveryMin
+                        && def.needsCountryCheck()
+                        && def.anyEnabled());
+
+        java.util.Set<String> restricted = new java.util.LinkedHashSet<String>(
+                Arrays.asList("CN", "HK", "MO", "RU"));
+
+        IpGuardPolicy.Verdict vpnDrop = IpGuardPolicy.evaluate(
+                BodyguardPolicy.MODE_BLOCK_KILL, def, "US", "CN", true, false, "", restricted);
+        check("Proxy drop triggers KILLED net:vpn-down in BLOCK_KILL",
+                vpnDrop.isKill() && "net:vpn-down".equals(vpnDrop.signalKey), vpnDrop.signalKey);
+
+        IpGuardPolicy.Verdict softRouter = IpGuardPolicy.evaluate(
+                BodyguardPolicy.MODE_BLOCK_KILL, def, "US", "US", false, false, "", restricted);
+        check("Soft-router / overseas direct (expectProxy=false) does not false-kill when US matches",
+                softRouter.isAllow(), softRouter.action + ":" + softRouter.signalKey);
+
+        IpGuardPolicy.Verdict directBypass = IpGuardPolicy.evaluate(
+                BodyguardPolicy.MODE_BLOCK_KILL, def, "US", "US", true, true,
+                "api.anthropic.com", restricted);
+        check("Direct split-tunnel bypass kills immediately",
+                directBypass.isKill()
+                        && "egress:direct:api.anthropic.com".equals(directBypass.signalKey),
+                directBypass.signalKey);
+
+        IpGuardPolicy.Verdict restFlip = IpGuardPolicy.evaluate(
+                BodyguardPolicy.MODE_BLOCK_KILL, def, "US", "HK", true, true, "", restricted);
+        check("Restricted region flip kills with egress:US->HK",
+                restFlip.isKill()
+                        && "egress:US->HK".equals(restFlip.signalKey)
+                        && "HK".equals(IpGuardPolicy.parseTargetIsoFromSignal(restFlip.signalKey)),
+                restFlip.signalKey);
+
+        IpGuardPolicy.Verdict driftKill = IpGuardPolicy.evaluate(
+                BodyguardPolicy.MODE_BLOCK_KILL, def, "US", "JP", true, true, "", restricted);
+        check("Non-restricted country drift kills under default DRIFT_KILL",
+                driftKill.isKill()
+                        && "egress:US->JP".equals(driftKill.signalKey)
+                        && "US".equals(IpGuardPolicy.parseExpectedIsoFromSignal(driftKill.signalKey))
+                        && "JP".equals(IpGuardPolicy.parseTargetIsoFromSignal(driftKill.signalKey)),
+                driftKill.signalKey);
+
+        IpGuardPolicy.Config warnCfg = new IpGuardPolicy.Config(
+                true, true, IpGuardPolicy.DRIFT_WARN, false);
+        IpGuardPolicy.Verdict driftWarn = IpGuardPolicy.evaluate(
+                BodyguardPolicy.MODE_BLOCK_KILL, warnCfg, "US", "JP", true, true, "", restricted);
+        check("Country drift warns without killing when configured to DRIFT_WARN",
+                driftWarn.isWarn() && "egress:US->JP".equals(driftWarn.signalKey),
+                driftWarn.action);
+
+        IpGuardPolicy.Verdict sameCountry = IpGuardPolicy.evaluate(
+                BodyguardPolicy.MODE_BLOCK_KILL, def, "US", "US", true, true, "", restricted);
+        check("Same-country IP rotation (US->US) is always allowed",
+                sameCountry.isAllow(), sameCountry.action);
+
+        IpGuardPolicy.Verdict targetSameIp = IpGuardPolicy.evaluateForTarget(
+                BodyguardPolicy.MODE_BLOCK_KILL, def, "US",
+                "1.1.1.1", "US", "1.1.1.1", "US", true, true, "", restricted);
+        check("Target process unchanged IP is allowed cleanly",
+                targetSameIp.isAllow(), targetSameIp.action);
+
+        IpGuardPolicy.Verdict targetSameCcFlip = IpGuardPolicy.evaluateForTarget(
+                BodyguardPolicy.MODE_BLOCK_KILL, def, "US",
+                "1.1.1.1", "US", "2.2.2.2", "US", true, true, "", restricted);
+        check("Target process same-country IP flip triggers circuit-breaker KILL in BLOCK_KILL mode",
+                targetSameCcFlip.isKill()
+                        && "ip:flip:1.1.1.1->2.2.2.2".equals(targetSameCcFlip.signalKey)
+                        && "1.1.1.1".equals(IpGuardPolicy.parsePrevIpFromFlipSignal(targetSameCcFlip.signalKey))
+                        && IpGuardPolicy.isIpFlipSignal(targetSameCcFlip.signalKey),
+                targetSameCcFlip.action + ":" + targetSameCcFlip.signalKey);
+
+        IpGuardPolicy.Verdict targetSameCcObserve = IpGuardPolicy.evaluateForTarget(
+                BodyguardPolicy.MODE_OBSERVE, def, "US",
+                "1.1.1.1", "US", "2.2.2.2", "US", true, true, "", restricted);
+        check("Target process same-country IP flip emits OBSERVED alert in OBSERVE mode",
+                targetSameCcObserve.isWarn()
+                        && "ip:flip:1.1.1.1->2.2.2.2".equals(targetSameCcObserve.signalKey),
+                targetSameCcObserve.action + ":" + targetSameCcObserve.signalKey);
+
+        IpGuardPolicy.Verdict targetCountryFlip = IpGuardPolicy.evaluateForTarget(
+                BodyguardPolicy.MODE_BLOCK_KILL, def, "US",
+                "1.1.1.1", "US", "3.3.3.3", "JP", true, true, "", restricted);
+        check("Target process country flip kills against target's last country",
+                targetCountryFlip.isKill()
+                        && "egress:US->JP".equals(targetCountryFlip.signalKey),
+                targetCountryFlip.signalKey);
+
+        IpGuardPolicy.Verdict offMode = IpGuardPolicy.evaluate(
+                BodyguardPolicy.MODE_OFF, def, "US", "HK", true, false, "api.anthropic.com", restricted);
+        check("Bodyguard MODE_OFF never blocks IP flips",
+                offMode.isAllow(), offMode.action);
+
+        check("Tunnel interface classifier recognizes modern VPN/WG/Tailscale devices",
+                IpGuardPolicy.isTunnelInterfaceName("tun0")
+                        && IpGuardPolicy.isTunnelInterfaceName("wg0")
+                        && IpGuardPolicy.isTunnelInterfaceName("tailscale0")
+                        && !IpGuardPolicy.isTunnelInterfaceName("wlan0")
+                        && !IpGuardPolicy.isTunnelInterfaceName("rmnet_data0"));
+
+        String syncCmd = IpGuardPolicy.shellSyncCommand(
+                BodyguardPolicy.MODE_BLOCK_KILL, def,
+                "com.walter.claudewilson", "claude", "com.anthropic.claude", "Claude",
+                "US", restricted);
+        check("IP Guard sync script writes conf and launches persistent Bridge guard daemon",
+                syncCmd.contains("ip-guard.conf")
+                        && syncCmd.contains("com.walter.claudewilson.Bridge guard")
+                        && syncCmd.contains("APK_PATH=$APK")
+                        && syncCmd.contains("EXPECT_TUN=$EXP_TUN")
+                        && syncCmd.contains("POLL_MIN=1")
+                        && syncCmd.contains("RESTRICTED_CSV=CN,HK,MO,RU")
+                        && syncCmd.contains("ip-guard.pid"));
+
+        String stopCmd = IpGuardPolicy.shellStopCommand();
+        check("IP Guard stop command cleans Bridge guard daemon, children, and iptables chain",
+                stopCmd.contains("ip-guard.pid")
+                        && stopCmd.contains("Bridge guard")
+                        && stopCmd.contains("wm_set_resumed_activity")
+                        && stopCmd.contains("cw_bg_drop")
+                        && stopCmd.contains("-X cw_bg_drop"));
+
+        check("Event logcat parser extracts resumed package from OneUI and AOSP formats",
+                "com.follow.clash".equals(IpGuardPolicy.parseResumedPackageFromEventLine(
+                        "11-22 00:17:34.303 32117 32339 I wm_set_resumed_activity: [0,com.follow.clash/.MainActivity,resumeTopActivity]"))
+                        && "com.v2ray.ang".equals(IpGuardPolicy.parseResumedPackageFromEventLine(
+                        "11-22 00:17:34.303 1000 1001 I am_focused_activity: [0,12345,com.v2ray.ang/.ui.MainActivity]"))
+                        && "".equals(IpGuardPolicy.parseResumedPackageFromEventLine("unrelated log line")));
+
+        check("Process start parser extracts base package from am_proc_start lines",
+                "com.anthropic.claude".equals(IpGuardPolicy.parseStartedPackageFromProcStartLine(
+                        "11-22 01:38:41.544 32117 32367 I am_proc_start: [0,15111,10391,com.anthropic.claude,next-top-activity,{com.anthropic.claude/com.anthropic.claude.mainactivity.MainActivity}]"))
+                        && "com.tencent.mm".equals(IpGuardPolicy.parseStartedPackageFromProcStartLine(
+                        "11-22 01:38:42.245 32117 32367 I am_proc_start: [0,15301,10372,com.tencent.mm:appbrand1,service,{...}]"))
+                        && "".equals(IpGuardPolicy.parseStartedPackageFromProcStartLine("unrelated")));
+
+        check("Connectivity parser extracts active VpnService owner package",
+                "com.follow.clash".equals(IpGuardPolicy.parseVpnPackageFromConnectivity(
+                        "NetworkAgentInfo{ni{VPN CONNECTED extra: VPN:com.follow.clash}}"))
+                        && "".equals(IpGuardPolicy.parseVpnPackageFromConnectivity(
+                        "NetworkAgentInfo{ni{WIFI CONNECTED extra: }}")));
+
+        check("Proxy app classifier detects dynamic VPN host and known proxy apps only",
+                IpGuardPolicy.isKnownProxyPackage("com.custom.myvpn", "com.custom.myvpn")
+                        && IpGuardPolicy.isKnownProxyPackage("com.follow.clash", "")
+                        && IpGuardPolicy.isKnownProxyPackage("io.nekohasekai.sfa", "")
+                        && IpGuardPolicy.isKnownProxyPackage("com.v2ray.ang", "")
+                        && !IpGuardPolicy.isKnownProxyPackage("com.anthropic.claude", "com.follow.clash")
+                        && !IpGuardPolicy.isKnownProxyPackage("com.sec.android.app.launcher", "com.follow.clash"));
+
+        check("Netlink classifier separates tunnel drops, route/Wi-Fi/SIM changes, and loopback noise",
+                IpGuardPolicy.classifyNetlinkLine("Deleted 42: tun0: <POINTOPOINT> state DOWN")
+                        == IpGuardPolicy.NETLINK_TUN_DROP
+                        && IpGuardPolicy.classifyNetlinkLine("default via 192.168.1.1 dev wlan0 proto dhcp")
+                        == IpGuardPolicy.NETLINK_ROUTE_CHANGE
+                        && IpGuardPolicy.classifyNetlinkLine("default via 10.0.0.1 dev rmnet_data0")
+                        == IpGuardPolicy.NETLINK_ROUTE_CHANGE
+                        && IpGuardPolicy.classifyNetlinkLine("1: lo: <LOOPBACK,UP> state UNKNOWN")
+                        == IpGuardPolicy.NETLINK_IGNORE
+                        && IpGuardPolicy.classifyNetlinkLine("fe80::/64 dev wlan0 proto kernel")
+                        == IpGuardPolicy.NETLINK_IGNORE);
     }
 
     private static void personasCatalogAssetIsValidAndSelfConsistent() {

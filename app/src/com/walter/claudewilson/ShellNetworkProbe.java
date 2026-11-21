@@ -11,14 +11,26 @@ final class ShellNetworkProbe implements Runnable {
     private static final int TASK_DNS = 2;
     private static final int TASK_V6 = 3;
     private static final int TASK_UDP = 4;
+    private static final int TASK_QUICK_IPINFO = 5;
+    private static final int TASK_QUICK_IPAPI = 6;
 
     private final int task;
+    private final Object raceLock;
+    private final String[] raceWinner;
+    private final int[] raceDone;
     volatile String line = "";
     volatile String val1 = "";
     volatile String val2 = "";
 
     private ShellNetworkProbe(int task) {
+        this(task, null, null, null);
+    }
+
+    private ShellNetworkProbe(int task, Object raceLock, String[] raceWinner, int[] raceDone) {
         this.task = task;
+        this.raceLock = raceLock;
+        this.raceWinner = raceWinner;
+        this.raceDone = raceDone;
     }
 
     // All endpoints are neutral whoami/geoip services. Whitelist is by host
@@ -197,6 +209,12 @@ final class ShellNetworkProbe implements Runnable {
             case TASK_UDP:
                 runUdp();
                 break;
+            case TASK_QUICK_IPINFO:
+                runQuickIpinfo();
+                break;
+            case TASK_QUICK_IPAPI:
+                runQuickIpapi();
+                break;
             default:
                 break;
         }
@@ -354,6 +372,90 @@ final class ShellNetworkProbe implements Runnable {
         }
         System.out.println("UDP ip=" + safeToken(u) + " cc=" + safeToken(ucc)
                 + (via.isEmpty() ? "" : " via=" + via));
+    }
+
+    private void publishRaceResult(String ip, String cc) {
+        if (raceLock == null || raceWinner == null || raceDone == null) {
+            return;
+        }
+        String cleanIp = ip == null ? "" : ip.trim();
+        String cleanCc = cc == null ? "" : cc.trim().toUpperCase(java.util.Locale.ROOT);
+        synchronized (raceLock) {
+            if (cleanCc.length() == 2 && raceWinner[1].isEmpty()) {
+                raceWinner[0] = cleanIp;
+                raceWinner[1] = cleanCc;
+            } else if (!cleanIp.isEmpty() && raceWinner[0].isEmpty()) {
+                raceWinner[0] = cleanIp;
+            }
+            raceDone[0]++;
+            raceLock.notifyAll();
+        }
+    }
+
+    private void runQuickIpinfo() {
+        String ip = "";
+        String cc = "";
+        try {
+            String j = httpGet("https://ipinfo.io/json", 2000, 2200);
+            ip = jfield(j, "ip");
+            cc = jfield(j, "country");
+        } catch (Throwable ignored) {
+        }
+        publishRaceResult(ip, cc);
+    }
+
+    private void runQuickIpapi() {
+        String ip = "";
+        String cc = "";
+        try {
+            String j = httpGet("http://ip-api.com/json/?fields=status,query,countryCode",
+                    2000, 2200);
+            if ("success".equals(jfield(j, "status"))) {
+                ip = jfield(j, "query");
+                cc = jfield(j, "countryCode");
+            }
+        } catch (Throwable ignored) {
+        }
+        publishRaceResult(ip, cc);
+    }
+
+    /**
+     * Concurrent dual-source egress race (ipinfo.io vs ip-api.com): returns {@code [ip, cc]} as
+     * soon as the first valid 2-letter country code arrives (typically 150-300ms).
+     */
+    static String[] egressQuickRace(long maxWaitMs) {
+        final Object lock = new Object();
+        final String[] winner = new String[]{"", ""};
+        final int[] done = new int[]{0};
+        Thread t1 = new Thread(new ShellNetworkProbe(TASK_QUICK_IPINFO, lock, winner, done),
+                "np-q1");
+        Thread t2 = new Thread(new ShellNetworkProbe(TASK_QUICK_IPAPI, lock, winner, done),
+                "np-q2");
+        t1.setDaemon(true);
+        t2.setDaemon(true);
+        t1.start();
+        t2.start();
+        long deadline = System.currentTimeMillis() + Math.max(500L, maxWaitMs);
+        synchronized (lock) {
+            while (winner[1].isEmpty() && done[0] < 2) {
+                long rem = deadline - System.currentTimeMillis();
+                if (rem <= 0L) {
+                    break;
+                }
+                try {
+                    lock.wait(rem);
+                } catch (InterruptedException ignored) {
+                    break;
+                }
+            }
+            return new String[]{safeToken(winner[0]), safeToken(winner[1])};
+        }
+    }
+
+    /** Fast single-shot public IP + country code check for CLI and Unlock verify. */
+    static void egressQuick() {
+        String[] res = egressQuickRace(2600L);
+        System.out.println("EGRESS ip=" + res[0] + " cc=" + res[1]);
     }
 
     private static void joinQuiet(Thread t, long timeoutMs) {

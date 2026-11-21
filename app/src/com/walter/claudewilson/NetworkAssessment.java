@@ -33,8 +33,6 @@ final class NetworkAssessment {
         /** True when custom Private DNS (mode=hostname) is bypassing tunnel DNS interception. */
         final boolean privateDnsBypass;
         final String privateDnsSpec;
-        /** Non-empty when egress IP flipped compared to previous scan ("old -> new"). */
-        final String ipFlip;
         /** -1 unread/neutral, 0 leaked/bad, 1 clean/aligned. */
         final int dnsState, v6State, udpState, routeState;
         final String dnsLabel, dnsDetail;
@@ -46,7 +44,7 @@ final class NetworkAssessment {
                String egIp, String egCc, String egCity, String egTz, String egOrg,
                int egState, boolean egDatacenter, boolean egRestricted,
                boolean tproxyDetected, boolean globalProxySet,
-               boolean privateDnsBypass, String privateDnsSpec, String ipFlip,
+               boolean privateDnsBypass, String privateDnsSpec,
                int dnsState, String dnsLabel, String dnsDetail,
                int v6State, String v6Label, String v6Detail,
                int udpState, String udpLabel, String udpDetail,
@@ -66,7 +64,6 @@ final class NetworkAssessment {
             this.globalProxySet = globalProxySet;
             this.privateDnsBypass = privateDnsBypass;
             this.privateDnsSpec = privateDnsSpec;
-            this.ipFlip = ipFlip;
             this.dnsState = dnsState;
             this.dnsLabel = dnsLabel;
             this.dnsDetail = dnsDetail;
@@ -109,23 +106,6 @@ final class NetworkAssessment {
         boolean matches = hasCc && hasRegion && egCc.equalsIgnoreCase(exp);
         boolean egRestricted = hasCc && SimPolicy.isRestrictedIso(tables, egCc, targetId);
         boolean dcAsn = NetworkRules.isDatacenterOrg(egOrg, proxyFlag, hostingFlag);
-
-        String ipFlip = "";
-        if (!egIp.isEmpty()) {
-            String hist = p.getString("net_iphist", "");
-            String last = hist.isEmpty() ? "" : hist.split(",")[0];
-            if (!last.isEmpty() && !last.equals(egIp)) {
-                ipFlip = last + " → " + egIp;
-                s.append("⚠ ").append(Lang.t("IP 翻转 ", "IP flip ", "IP変化 "))
-                        .append(ipFlip).append('\n');
-            }
-            List<String> hl = new ArrayList<String>(
-                    hist.isEmpty() ? new ArrayList<String>() : Arrays.asList(hist.split(",")));
-            hl.remove(egIp);
-            hl.add(0, egIp);
-            if (hl.size() > 8) hl = hl.subList(0, 8);
-            p.edit().putString("net_iphist", android.text.TextUtils.join(",", hl)).apply();
-        }
 
         String lapp = cleanNull(lk.get("app"));
         String lastVpn = cleanNull(lk.get("vpn"));
@@ -311,7 +291,7 @@ final class NetworkAssessment {
                 egIp, egCc, egCity, egTz, egOrg,
                 !hasCc || !hasRegion ? -1 : matches ? 1 : 0,
                 dcAsn, egRestricted, tproxyDetected, globalProxySet,
-                privateDnsBypass, pdnsSpec, ipFlip,
+                privateDnsBypass, pdnsSpec,
                 dnsState, dnsLabel, dnsDetail,
                 v6State, v6Label, v6Detail,
                 udpState, udpLabel, udpDetail,

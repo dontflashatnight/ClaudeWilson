@@ -667,12 +667,60 @@ final class Dashboard extends UiSection {
         }
         final TargetSpec target = Targets.current();
         final String u = uid();
+        final String activeIso = regionApplied ? currentActiveRegionIso() : "";
         new Thread(() -> {
             int ingested = BodyguardExitReader.harvest(activity, target, u, true);
-            if (ingested > 0) {
-                ScreenUpdates.post(Dashboard::requestRender);
+            boolean reconciled = reconcileStaleBodyguardLock(target, u, activeIso);
+            if (ingested > 0 || reconciled) {
+                ScreenUpdates.post(screen -> {
+                    screen.requestRender();
+                    if (screen.dataClean != null) screen.dataClean.refreshAsync();
+                });
             }
         }, "bg-resume-sync").start();
+    }
+
+    /**
+     * Reconciles stale Bodyguard locks whose root cause has already been fixed (e.g. a
+     * {@code config:missing} lock left behind before the user activated a region, or a country
+     * drift lock matching the active region), ensuring the UI Lock Banner and {@code .lock} file
+     * never stay out of sync with reality. Historical incident records are read-only audit logs
+     * and are never deleted or hidden here.
+     */
+    private boolean reconcileStaleBodyguardLock(TargetSpec target, String user, String activeIso) {
+        if (target == null || !BodyguardStore.isLocked(Dashboard.this, target.id())) {
+            return false;
+        }
+        String isoUp = com.walter.claudewilson.model.IpGuardPolicy.normalizeIso(activeIso);
+        if (isoUp.isEmpty()) {
+            return false;
+        }
+        String effectiveCause = BodyguardStore.lockReason(Dashboard.this, target.id());
+        if (effectiveCause.isEmpty()) {
+            List<LedgerDb.Incident> history =
+                    LedgerDb.get(Dashboard.this).loadIncidents(target.id(), user, false);
+            for (LedgerDb.Incident inc : history) {
+                if ("KILLED".equalsIgnoreCase(inc.actionTaken)
+                        || "BLOCKED".equalsIgnoreCase(inc.actionTaken)) {
+                    effectiveCause = inc.signalKey;
+                    break;
+                }
+            }
+        }
+        boolean lockResolved = "config:missing".equals(effectiveCause)
+                || "config:corrupt".equals(effectiveCause)
+                || effectiveCause.isEmpty()
+                || isoUp.equalsIgnoreCase(
+                        com.walter.claudewilson.model.IpGuardPolicy
+                                .parseTargetIsoFromSignal(effectiveCause));
+        if (lockResolved) {
+            BodyguardStore.setLocked(Dashboard.this, target.id(), false);
+            if (RootShell.rootReady()) {
+                new RootActions(Dashboard.this).syncBodyguardLock(target, false);
+            }
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -685,12 +733,25 @@ final class Dashboard extends UiSection {
         }
         upgradeCheckedThisSession = true;
         final String activeBgMode = BodyguardStore.mode(activity, uid());
+        final com.walter.claudewilson.model.IpGuardPolicy.Config activeIpCfg =
+                BodyguardStore.ipGuardConfig(activity, uid());
+        final TargetSpec activeTarget = Targets.current();
+        final String activeUser = uid();
+        final String activeIso = regionApplied ? currentActiveRegionIso() : "";
         final boolean ipv6Spoof = isIpv6SpoofEnabled();
         new Thread(() -> {
             RootActions ra = new RootActions(activity);
             ra.syncBodyguardGuardMode(activeBgMode);
             if (!ipv6Spoof) {
                 ra.syncIpv6Enforcement(false);
+            }
+            boolean reconciled = reconcileStaleBodyguardLock(activeTarget, activeUser, activeIso);
+            if (RootShell.rootReady()) {
+                ra.syncIpGuardDaemon(activeTarget, activeBgMode, activeIpCfg, activeIso,
+                        com.walter.claudewilson.platform.TablesLoader.load(getApplicationContext()));
+            }
+            if (reconciled) {
+                ScreenUpdates.post(Dashboard::requestRender);
             }
         }, "bg-guard-sync").start();
         String currentStamp;
@@ -868,12 +929,18 @@ final class Dashboard extends UiSection {
                 final TargetSpec target = Targets.current();
                 final boolean locked = BodyguardStore.isLocked(Dashboard.this, target.id());
                 final String mode = BodyguardStore.mode(Dashboard.this, uid());
+                final com.walter.claudewilson.model.IpGuardPolicy.Config ipCfg =
+                        BodyguardStore.ipGuardConfig(Dashboard.this, uid());
+                final String expIso = currentActiveRegionIso();
                 if (RootShell.shellReady()) {
                     new Thread(() -> {
                         RootActions ra = new RootActions(Dashboard.this);
                         ra.syncBodyguardGuardMode(mode);
                         if (RootShell.rootReady()) {
                             ra.syncBodyguardLock(target, locked);
+                            ra.syncIpGuardDaemon(target, mode, ipCfg, expIso,
+                                    com.walter.claudewilson.platform.TablesLoader.load(
+                                            getApplicationContext()));
                         }
                     }, "bg-lock-sync").start();
                 }
@@ -894,7 +961,112 @@ final class Dashboard extends UiSection {
                     });
                 }, "scrub-residue").start();
             }
+
+            @Override public String activeRegionIso() {
+                return currentActiveRegionIso();
+            }
+
+            @Override public void alignRegionByIso(String iso) {
+                if (iso != null && !iso.trim().isEmpty()) {
+                    selectRegionByIso(iso.trim());
+                }
+            }
+
+            @Override public void verifyAndUnlockBodyguard(
+                    final Runnable onUnlocked,
+                    final java.util.function.Consumer<String> onStillUnsafe) {
+                final TargetSpec target = Targets.current();
+                final String u = uid();
+                final String lockReason = BodyguardStore.lockReason(Dashboard.this, target.id());
+                String activeIso = currentActiveRegionIso();
+                final String expIso = !activeIso.isEmpty()
+                        ? activeIso
+                        : com.walter.claudewilson.model.IpGuardPolicy.parseExpectedIsoFromSignal(lockReason);
+                final boolean requireProxy = "net:vpn-down".equals(lockReason)
+                        || (lockReason != null && lockReason.startsWith("egress:direct"));
+                final com.walter.claudewilson.model.IpGuardPolicy.Config ipCfg =
+                        BodyguardStore.ipGuardConfig(Dashboard.this, u);
+                final String mode = BodyguardStore.mode(Dashboard.this, u);
+                new Thread(() -> {
+                    com.walter.claudewilson.model.Tables tables =
+                            com.walter.claudewilson.platform.TablesLoader.load(
+                                    getApplicationContext());
+                    RootActions ra = new RootActions(Dashboard.this);
+                    RootActions.IpVerifyResult res = ra.verifyIpGuardRecovery(
+                            target, expIso, ipCfg, tables, requireProxy);
+                    if (res.safe) {
+                        String[] pinned = RootActions.readLastTargetIp(target);
+                        final String baseIp = !pinned[0].isEmpty()
+                                ? pinned[0]
+                                : com.walter.claudewilson.model.IpGuardPolicy
+                                        .parsePrevIpFromFlipSignal(lockReason);
+                        final String baseIso = !pinned[1].isEmpty() ? pinned[1] : expIso;
+                        boolean ipChanged = !baseIp.isEmpty()
+                                && !res.liveIp.isEmpty()
+                                && !baseIp.equals(res.liveIp);
+                        if (ipChanged) {
+                            ScreenUpdates.post(screen -> IpGuardSheet.showBaselineSwitchConfirm(
+                                    screen, baseIp, baseIso, res.liveIp, res.liveIso,
+                                    () -> new Thread(() -> {
+                                        BodyguardStore.setLocked(Dashboard.this, target.id(), false);
+                                        if (RootShell.rootReady()) {
+                                            RootActions ra2 = new RootActions(Dashboard.this);
+                                            ra2.updateLastTargetIp(target, res.liveIp, res.liveIso);
+                                            ra2.syncBodyguardLock(target, false);
+                                            ra2.syncIpGuardDaemon(target, mode, ipCfg, expIso, tables);
+                                        }
+                                        ScreenUpdates.post(s -> {
+                                            Toast.makeText(s, Lang.t("已设为新基线并解锁",
+                                                    "New baseline saved · Unlocked"),
+                                                    Toast.LENGTH_SHORT).show();
+                                            if (onUnlocked != null) onUnlocked.run();
+                                        });
+                                    }, "bg-adopt-baseline").start(),
+                                    () -> {
+                                        if (onStillUnsafe != null) onStillUnsafe.accept("");
+                                    }));
+                            return;
+                        }
+                        BodyguardStore.setLocked(Dashboard.this, target.id(), false);
+                        if (RootShell.rootReady()) {
+                            if (baseIp.isEmpty() && !res.liveIp.isEmpty() && !res.liveIso.isEmpty()) {
+                                ra.updateLastTargetIp(target, res.liveIp, res.liveIso);
+                            }
+                            ra.syncBodyguardLock(target, false);
+                            ra.syncIpGuardDaemon(target, mode, ipCfg, expIso, tables);
+                        }
+                        ScreenUpdates.post(screen -> {
+                            String okMsg = !res.liveIso.isEmpty()
+                                    ? Lang.t(IpGuardSheet.regionDisplay(res.liveIso) + " 已恢复，已解锁",
+                                            res.liveIso + " verified · Unlocked")
+                                    : Lang.t("网络已恢复，已解锁", "Network verified · Unlocked");
+                            Toast.makeText(screen, okMsg, Toast.LENGTH_SHORT).show();
+                            if (onUnlocked != null) onUnlocked.run();
+                        });
+                    } else {
+                        final String failMsg;
+                        if (!res.proxyUp && requireProxy) {
+                            failMsg = Lang.t("代理还没连上", "Proxy still off", "プロキシ未接続");
+                        } else if (!res.liveIso.isEmpty()) {
+                            failMsg = Lang.t("当前还是 " + IpGuardSheet.regionDisplay(res.liveIso),
+                                    "Still in " + res.liveIso,
+                                    "現在も " + res.liveIso);
+                        } else {
+                            failMsg = Lang.t("网络仍未就绪", "Network still unsafe", "ネットワーク未復旧");
+                        }
+                        ScreenUpdates.post(screen -> {
+                            if (onStillUnsafe != null) onStillUnsafe.accept(failMsg);
+                        });
+                    }
+                }, "bg-verify-unlock").start();
+            }
         }).render(riskModel);
+    }
+
+    private String currentActiveRegionIso() {
+        return regionIdx >= 0 && regionIdx < Regions.ALL.size()
+                ? Regions.ALL.get(regionIdx).iso.toUpperCase(Locale.ROOT)
+                : "";
     }
 
     private void setRiskValue(String id, String value) {
@@ -2215,6 +2387,21 @@ final class Dashboard extends UiSection {
                 // Telephony commonly rewrites the active slot just after the shell returns. Start
                 // a bounded read/write convergence window now that the desired region is visible.
                 telephony.request(true);
+                final TargetSpec curTarget = Targets.current();
+                final String appliedIsoUp = r.iso.toUpperCase(Locale.ROOT);
+                reconcileStaleBodyguardLock(curTarget, user, appliedIsoUp);
+                if (RootShell.rootReady()) {
+                    RootActions ra = new RootActions(Dashboard.this);
+                    RootShell.run("rm -f " + com.walter.claudewilson.model.IpGuardPolicy
+                            .lastTargetIpPath(curTarget.id()) + " 2>/dev/null || true", 32);
+                    ra.syncIpGuardDaemon(
+                            curTarget,
+                            BodyguardStore.mode(Dashboard.this, user),
+                            BodyguardStore.ipGuardConfig(Dashboard.this, user),
+                            appliedIsoUp,
+                            com.walter.claudewilson.platform.TablesLoader.load(
+                                    getApplicationContext()));
+                }
                 // Publish the rotated payload before triggering drainPending -> fast scan so the
                 // fast scan reads the newly written payload JSON instead of racing with it.
                 ScreenUpdates.post(screen -> {
@@ -2340,6 +2527,25 @@ final class Dashboard extends UiSection {
             // injection layer can move must stop reporting themselves as ticked.
             new PersonaState(this).clearInjected(userId);
             if (personaPanel != null) personaPanel.clearPublishedConfig();
+            final TargetSpec revTarget = Targets.current();
+            if (BodyguardStore.isLocked(this, revTarget.id())
+                    && com.walter.claudewilson.model.IpGuardPolicy.isIpFlipSignal(
+                            BodyguardStore.lockReason(this, revTarget.id()))) {
+                BodyguardStore.setLocked(this, revTarget.id(), false);
+            }
+            if (RootShell.rootReady()) {
+                RootActions ra = new RootActions(this);
+                ra.syncBodyguardLock(revTarget, BodyguardStore.isLocked(this, revTarget.id()));
+                RootShell.run("rm -f " + com.walter.claudewilson.model.IpGuardPolicy
+                        .lastTargetIpPath(revTarget.id()) + " 2>/dev/null || true", 32);
+                ra.syncIpGuardDaemon(
+                        revTarget,
+                        com.walter.claudewilson.model.BodyguardPolicy.MODE_OFF,
+                        BodyguardStore.ipGuardConfig(this, userId),
+                        "",
+                        com.walter.claudewilson.platform.TablesLoader.load(
+                                getApplicationContext()));
+            }
             String backup = applyPrefs().getString("auto_backup", null);
             if (backup != null && RootShell.rootReady()) {
                 String restored = new TargetDataEdit().restorePath(this, Targets.current(),

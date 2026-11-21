@@ -265,6 +265,7 @@ final class RootActions {
         }
         String dir = CONFIG_DIR + "/lock";
         String lockFile = dir + "/" + target.id() + ".lock";
+        String lockReasonFile = com.walter.claudewilson.model.IpGuardPolicy.lockReasonPath(target.id());
         String unlockFile = dir + "/" + target.id() + ".unlock";
         String now = String.valueOf(System.currentTimeMillis());
         String script;
@@ -274,17 +275,156 @@ final class RootActions {
                     + " && rm -f " + unlockFile
                     + " && printf '%s' '" + now + "' > " + lockFile
                     + " && chmod 644 " + lockFile
-                    + " && am force-stop " + target.packageName()
+                    + " && " + com.walter.claudewilson.model.IpGuardPolicy.shellBlockUidCommand(target.packageName())
+                    + " ; am force-stop " + target.packageName()
                     + " 2>/dev/null || true";
         } else {
             script = "mkdir -p " + dir
                     + " && chmod 755 " + dir
-                    + " && rm -f " + lockFile
+                    + " && rm -f " + lockFile + " " + lockReasonFile
                     + " && printf '%s' '" + now + "' > " + unlockFile
                     + " && chmod 644 " + unlockFile
+                    + " && " + com.walter.claudewilson.model.IpGuardPolicy.shellUnblockUidCommand(target.packageName())
                     + " 2>/dev/null || true";
         }
         RootShell.run(script, 64);
+    }
+
+    /** Reads the pinned first-use baseline IP + ISO ({@code [ip, iso]}) directly from disk. */
+    static String[] readLastTargetIp(TargetSpec target) {
+        if (target == null) {
+            return new String[]{"", ""};
+        }
+        java.io.File f = new java.io.File(
+                com.walter.claudewilson.model.IpGuardPolicy.lastTargetIpPath(target.id()));
+        if (!f.isFile() || !f.canRead()) {
+            return new String[]{"", ""};
+        }
+        try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+            byte[] buf = new byte[128];
+            int n = in.read(buf);
+            if (n <= 0) {
+                return new String[]{"", ""};
+            }
+            String raw = new String(buf, 0, n, java.nio.charset.StandardCharsets.UTF_8).trim();
+            int bar = raw.indexOf('|');
+            if (bar < 0) {
+                return new String[]{raw, ""};
+            }
+            return new String[]{
+                    raw.substring(0, bar).trim(),
+                    com.walter.claudewilson.model.IpGuardPolicy.normalizeIso(raw.substring(bar + 1))
+            };
+        } catch (Throwable ignored) {
+            return new String[]{"", ""};
+        }
+    }
+
+    /** Records an explicitly verified IP as the target's clean baseline for the next session. */
+    void updateLastTargetIp(TargetSpec target, String liveIp, String liveIso) {
+        if (target == null || !RootShell.rootReady()
+                || liveIp == null || liveIp.isEmpty()
+                || liveIso == null || liveIso.isEmpty()) {
+            return;
+        }
+        String ip = liveIp.trim();
+        String iso = com.walter.claudewilson.model.IpGuardPolicy.normalizeIso(liveIso);
+        if (!ip.matches("[0-9a-fA-F.:]+") || iso.isEmpty()) {
+            return;
+        }
+        String f = com.walter.claudewilson.model.IpGuardPolicy.lastTargetIpPath(target.id());
+        RootShell.run("mkdir -p " + CONFIG_DIR + "/lock && printf '%s|%s' '" + ip + "' '" + iso
+                + "' > " + f + " && chmod 644 " + f, 32);
+    }
+
+    /**
+     * Synchronizes the root netlink + optional periodic IP Guard watchdog daemon for {@code target}.
+     * Stops cleanly and clears any UID iptables block rules when Bodyguard is OFF or no region is active.
+     */
+    void syncIpGuardDaemon(TargetSpec target, String guardMode,
+                           com.walter.claudewilson.model.IpGuardPolicy.Config cfg,
+                           String expectedIso,
+                           com.walter.claudewilson.model.Tables tables) {
+        if (!RootShell.rootReady()) {
+            return;
+        }
+        String selfPkg = context.getPackageName();
+        if (target == null || !ShellQuote.packageName(target.packageName())
+                || !ShellQuote.packageName(selfPkg)) {
+            RootShell.run(com.walter.claudewilson.model.IpGuardPolicy.shellStopCommand(), 128, 6000L);
+            return;
+        }
+        java.util.Set<String> restricted = new java.util.LinkedHashSet<String>();
+        if (tables != null) {
+            for (String iso : tables.restrictedRegions().keySet()) {
+                if (com.walter.claudewilson.model.SimPolicy.isRestrictedIso(tables, iso, target.id())) {
+                    restricted.add(iso.toUpperCase(java.util.Locale.ROOT));
+                }
+            }
+        }
+        String script = com.walter.claudewilson.model.IpGuardPolicy.shellSyncCommand(
+                guardMode, cfg, selfPkg, target.id(), target.packageName(),
+                target.displayName(), expectedIso, restricted);
+        RootShell.run(script, 256, 8000L);
+    }
+
+    static final class IpVerifyResult {
+        final boolean safe;
+        final boolean proxyUp;
+        final String liveIp;
+        final String liveIso;
+        final String failureKind;
+
+        IpVerifyResult(boolean safe, boolean proxyUp, String liveIp, String liveIso,
+                       String failureKind) {
+            this.safe = safe;
+            this.proxyUp = proxyUp;
+            this.liveIp = liveIp == null ? "" : liveIp;
+            this.liveIso = liveIso == null ? "" : liveIso;
+            this.failureKind = failureKind == null ? "" : failureKind;
+        }
+    }
+
+    /** Runs a quick shell-side check of proxy + egress country before unlocking an IP-locked target. */
+    IpVerifyResult verifyIpGuardRecovery(TargetSpec target, String expectedIso,
+                                         com.walter.claudewilson.model.IpGuardPolicy.Config cfg,
+                                         com.walter.claudewilson.model.Tables tables,
+                                         boolean requireProxy) {
+        if (!RootShell.shellReady()) {
+            return new IpVerifyResult(true, true, "", "", "");
+        }
+        String selfPkg = context.getPackageName();
+        String out = RootShell.run(
+                com.walter.claudewilson.model.IpGuardPolicy.shellQuickCheckCommand(selfPkg),
+                512, 8000L);
+        boolean vpnUp = out != null && (out.contains("vpn=1") || out.contains("tproxy=1"));
+        String liveIp = "";
+        String liveIso = "";
+        if (out != null) {
+            java.util.regex.Matcher mi = java.util.regex.Pattern
+                    .compile("\\bip=([0-9a-fA-F.:]+)\\b").matcher(out);
+            if (mi.find()) {
+                liveIp = mi.group(1);
+            }
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("\\bcc=([A-Za-z]{2})\\b").matcher(out);
+            if (m.find()) {
+                liveIso = m.group(1).toUpperCase(java.util.Locale.ROOT);
+            }
+        }
+        java.util.Set<String> restricted = new java.util.LinkedHashSet<String>();
+        if (tables != null && target != null) {
+            for (String iso : tables.restrictedRegions().keySet()) {
+                if (com.walter.claudewilson.model.SimPolicy.isRestrictedIso(tables, iso, target.id())) {
+                    restricted.add(iso.toUpperCase(java.util.Locale.ROOT));
+                }
+            }
+        }
+        com.walter.claudewilson.model.IpGuardPolicy.Verdict v =
+                com.walter.claudewilson.model.IpGuardPolicy.evaluate(
+                        com.walter.claudewilson.model.BodyguardPolicy.MODE_BLOCK_KILL,
+                        cfg, expectedIso, liveIso, requireProxy, vpnUp, "", restricted);
+        return new IpVerifyResult(!v.isKill(), vpnUp, liveIp, liveIso, v.kind);
     }
 
     /**

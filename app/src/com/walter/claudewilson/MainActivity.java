@@ -13,12 +13,22 @@ public final class MainActivity extends Activity {
     private Dashboard dashboard;
     private RootShell.Subscription rootSubscription;
     private android.content.BroadcastReceiver radio;
+    private android.content.BroadcastReceiver bodyguardReceiver;
+    private android.os.FileObserver lockDirObserver;
     private android.net.ConnectivityManager.NetworkCallback networkCallback;
     private final android.os.Handler refreshHandler =
             new android.os.Handler(android.os.Looper.getMainLooper());
     private boolean firstResume = true;
     private final Runnable delayedTargetRefresh = () -> {
-        if (dashboard != null) dashboard.startScan(true);
+        if (dashboard != null) {
+            dashboard.syncBodyguardOnResume();
+            dashboard.startScan(true);
+        }
+    };
+    private final Runnable debouncedBodyguardSync = () -> {
+        if (dashboard != null) {
+            dashboard.syncBodyguardOnResume();
+        }
     };
 
     @Override protected void onCreate(Bundle saved) {
@@ -27,6 +37,7 @@ public final class MainActivity extends Activity {
         dashboard = new Dashboard(this);
         dashboard.show();
         watchRadio();
+        watchBodyguardPush();
         watchNetworks();
         rootSubscription = RootShell.observe(
                 granted -> ScreenUpdates.post(screen -> screen.onRootPermission(granted)),
@@ -77,6 +88,55 @@ public final class MainActivity extends Activity {
             registerReceiver(radio, filter, android.content.Context.RECEIVER_EXPORTED);
         } else {
             registerReceiver(radio, filter);
+        }
+    }
+
+    /**
+     * Listens for live Bodyguard state pushes from {@link IpGuardDaemon} (directed root broadcast)
+     * plus kernel inotify writes under {@link com.walter.claudewilson.model.IpGuardPolicy#LOCK_DIR}
+     * so Lock Banner and incident history repaint immediately without manual pull-to-refresh.
+     */
+    private void watchBodyguardPush() {
+        bodyguardReceiver = new android.content.BroadcastReceiver() {
+            @Override public void onReceive(android.content.Context context,
+                                            android.content.Intent intent) {
+                if (intent == null
+                        || !IpGuardDaemon.ACTION_BODYGUARD_CHANGED.equals(intent.getAction())) {
+                    return;
+                }
+                refreshHandler.removeCallbacks(debouncedBodyguardSync);
+                refreshHandler.post(debouncedBodyguardSync);
+            }
+        };
+        android.content.IntentFilter bgFilter =
+                new android.content.IntentFilter(IpGuardDaemon.ACTION_BODYGUARD_CHANGED);
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(bodyguardReceiver, bgFilter, android.content.Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(bodyguardReceiver, bgFilter);
+        }
+        try {
+            java.io.File lockDir = new java.io.File(
+                    com.walter.claudewilson.model.IpGuardPolicy.LOCK_DIR);
+            if (lockDir.isDirectory()) {
+                int mask = android.os.FileObserver.CLOSE_WRITE
+                        | android.os.FileObserver.MOVED_TO
+                        | android.os.FileObserver.DELETE;
+                lockDirObserver = new android.os.FileObserver(lockDir, mask) {
+                    @Override public void onEvent(int event, String path) {
+                        if (path == null) {
+                            return;
+                        }
+                        if (path.endsWith(".lock") || path.endsWith(".unlock")
+                                || path.endsWith(".netevent")) {
+                            refreshHandler.removeCallbacks(debouncedBodyguardSync);
+                            refreshHandler.postDelayed(debouncedBodyguardSync, 100L);
+                        }
+                    }
+                };
+                lockDirObserver.startWatching();
+            }
+        } catch (Throwable ignored) {
         }
     }
 
@@ -186,6 +246,15 @@ public final class MainActivity extends Activity {
             try { unregisterReceiver(radio); } catch (Throwable ignored) {}
             radio = null;
         }
+        if (bodyguardReceiver != null) {
+            try { unregisterReceiver(bodyguardReceiver); } catch (Throwable ignored) {}
+            bodyguardReceiver = null;
+        }
+        if (lockDirObserver != null) {
+            try { lockDirObserver.stopWatching(); } catch (Throwable ignored) {}
+            lockDirObserver = null;
+        }
+        refreshHandler.removeCallbacks(debouncedBodyguardSync);
         if (rootSubscription != null) rootSubscription.close();
         if (dashboard != null) dashboard.close();
         super.onDestroy();

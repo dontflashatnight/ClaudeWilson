@@ -9,7 +9,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Pure model for the Target View Bodyguard policy, 7 monitoring gates, and searchable
+ * Pure model for the Target View Bodyguard policy, 8 monitoring gates, and searchable
  * audited-baseline catalog.
  */
 public final class BodyguardPolicy {
@@ -18,6 +18,7 @@ public final class BodyguardPolicy {
     public static final String MODE_OBSERVE = "OBSERVE";
     public static final String MODE_BLOCK_KILL = "BLOCK_KILL";
 
+    public static final String GATE_IP_FLIP = "IP_FLIP";
     public static final String GATE_TELEMETRY_KEY = "TELEMETRY_KEY";
     public static final String GATE_SYS_PROP = "SYS_PROP";
     public static final String GATE_SETTINGS_KEY = "SETTINGS_KEY";
@@ -34,6 +35,7 @@ public final class BodyguardPolicy {
     public static final String STATUS_CUSTOM = "CUSTOM";
 
     public static final List<String> ALL_GATES = Collections.unmodifiableList(Arrays.asList(
+            GATE_IP_FLIP,
             GATE_TELEMETRY_KEY,
             GATE_SYS_PROP,
             GATE_SETTINGS_KEY,

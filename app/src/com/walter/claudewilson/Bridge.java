@@ -15,6 +15,10 @@ public final class Bridge {
                 rc = 1;
             } else if ("net".equals(args[0])) {
                 ShellNetworkProbe.netProbe();
+            } else if ("egress".equals(args[0])) {
+                ShellNetworkProbe.egressQuick();
+            } else if ("guard".equals(args[0])) {
+                IpGuardDaemon.runMain();
             } else if ("hw".equals(args[0])) {
                 String[] t = Regions.hwTag();
                 System.out.println("PRODUCT=" + android.os.Build.PRODUCT
@@ -43,6 +47,11 @@ public final class Bridge {
         // internals that leave a non-daemon worker behind, and DestroyJavaVM then
         // waits on it forever. halt the VM so the shell always sees the exit.
         System.exit(rc);
+    }
+
+    /** Internal fast egress probe entry for {@link IpGuardDaemon} (keeps ShellNetworkProbe owned by Bridge). */
+    static String[] probeEgressFast() {
+        return ShellNetworkProbe.egressQuickRace(2600L);
     }
 
     /**

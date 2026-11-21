@@ -74,6 +74,7 @@ final class HookConfig {
     final Set<String> bgAllowPaths;
     final Set<String> bgAllowHosts;
     final Set<String> bgAllowCustom;
+    final boolean bgIpKillOnDrop;
     final Set<String> hiddenIfaces;
     final Set<String> companionBrowsers;
     final String appVisMode;
@@ -161,6 +162,7 @@ final class HookConfig {
         bgAllowPaths = stringSet(bg != null ? bg.optJSONArray("allowPaths") : null);
         bgAllowHosts = stringSet(bg != null ? bg.optJSONArray("allowHosts") : null);
         bgAllowCustom = stringSet(bg != null ? bg.optJSONArray("allowCustom") : null);
+        bgIpKillOnDrop = bg == null || bg.optBoolean("ipKillOnDrop", true);
         hiddenIfaces = stringSet(o.optJSONArray("hiddenIfaces"));
         companionBrowsers = stringSet(o.optJSONArray("companionBrowsers"));
         appVisMode = com.walter.claudewilson.model.AppVisibilityPolicy.normalizeMode(

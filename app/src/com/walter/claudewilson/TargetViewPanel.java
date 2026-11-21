@@ -20,9 +20,13 @@ import com.walter.claudewilson.model.BodyguardPolicy;
 import com.walter.claudewilson.model.CheckItem;
 import com.walter.claudewilson.model.DiagnosticArchiveParser;
 import com.walter.claudewilson.model.DiagnosticClassifier;
+import com.walter.claudewilson.model.IpGuardPolicy;
 import com.walter.claudewilson.model.PersonaMatchEngine;
 import com.walter.claudewilson.model.RiskModel;
+import com.walter.claudewilson.model.SimPolicy;
+import com.walter.claudewilson.model.Tables;
 import com.walter.claudewilson.model.TargetSpec;
+import com.walter.claudewilson.platform.TablesLoader;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -60,6 +64,10 @@ final class TargetViewPanel extends UiSection {
         void applyRegion();
         void onBodyguardChanged();
         void scrubTargetResidue();
+        String activeRegionIso();
+        void alignRegionByIso(String iso);
+        void verifyAndUnlockBodyguard(Runnable onUnlocked,
+                                      java.util.function.Consumer<String> onStillUnsafe);
     }
 
     private static final String TAB_BODYGUARD = "bodyguard";
@@ -82,8 +90,13 @@ final class TargetViewPanel extends UiSection {
     private static volatile boolean ledgerUnobservedOpen = false;
     private static volatile boolean ledgerHttpOpen = false;
     private static volatile boolean ledgerDiagOpen = false;
+    private static final int MAX_COLLAPSED_INCIDENTS = 3;
+
     private static volatile String diagDim = DiagnosticClassifier.DIM_STEALTH;
     private static volatile String diagFilter = "ALL";
+    private static volatile boolean unlockChecking = false;
+    private static volatile boolean incidentsExpanded = false;
+    private static volatile String unlockFailHint = "";
     /** True only when a legacy hookcheck file was actually observed inside the target directory. */
     static volatile boolean legacyResidueDetected = false;
     private static final Set<String> REVEALED_IDS = new LinkedHashSet<String>();
@@ -170,11 +183,10 @@ final class TargetViewPanel extends UiSection {
         stripLp.bottomMargin = dp(this, 12);
         strip.setLayoutParams(stripLp);
 
-        // Live Bodyguard dot color
+        // Live Bodyguard dot color (live lock/mode state only; never polluted by read-only history)
         String mode = BodyguardStore.mode(this, userId);
         boolean locked = BodyguardStore.isLocked(this, target.id());
-        List<LedgerDb.Incident> openInc = LedgerDb.get(this).loadIncidents(target.id(), userId, true);
-        int bgDotColor = (locked || !openInc.isEmpty()) ? RED
+        int bgDotColor = locked ? RED
                 : BodyguardPolicy.MODE_BLOCK_KILL.equals(mode) ? GREEN
                 : BodyguardPolicy.MODE_OBSERVE.equals(mode) ? AMBER : MUTE;
 
@@ -262,28 +274,94 @@ final class TargetViewPanel extends UiSection {
                 BodyguardStore.baselineWithCustom(this, target.id());
         final List<BodyguardPolicy.SignalEntry> custom =
                 BodyguardStore.customWhitelist(this, target.id(), "");
+        final Set<String> whitelistedKeys = new LinkedHashSet<String>();
+        for (BodyguardPolicy.SignalEntry ce : custom) {
+            whitelistedKeys.add(ce.key);
+        }
+        // Full read-only incident history (never hidden or deleted when lock state clears)
         final List<LedgerDb.Incident> incidents =
-                LedgerDb.get(this).loadIncidents(target.id(), userId, true);
+                LedgerDb.get(this).loadIncidents(target.id(), userId, false);
 
         // 1. Lock Banner (only when locked after a BLOCK_KILL incident)
         if (locked) {
+            final String lockReason = BodyguardStore.lockReason(this, target.id());
+            final boolean ipLock = IpGuardPolicy.isIpFlipSignal(lockReason);
+
             LinearLayout banner = new LinearLayout(this);
             banner.setOrientation(LinearLayout.HORIZONTAL);
             banner.setGravity(Gravity.CENTER_VERTICAL);
-            banner.setPadding(dp(this, 11), dp(this, 8), dp(this, 11), dp(this, 8));
+            banner.setPadding(dp(this, 11), dp(this, 9), dp(this, 11), dp(this, 9));
             banner.setBackground(roundBox(0x22E55353, RED, 11));
             LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(-1, -2);
             blp.bottomMargin = dp(this, 10);
             banner.setLayoutParams(blp);
 
-            TextView msg = txt(Lang.t("已阻断 · 进程已锁定", "Blocked · Locked", "遮断済・ロック"),
-                    11, RED);
-            msg.setTypeface(Typeface.DEFAULT_BOLD);
-            msg.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
-            banner.addView(msg);
+            LinearLayout textCol = new LinearLayout(this);
+            textCol.setOrientation(LinearLayout.VERTICAL);
+            textCol.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
 
-            TextView unlock = primaryChip(Lang.t("解锁", "Unlock", "解除"), RED, FG);
+            TextView msg = txt(formatLockTitle(lockReason, target.displayName()), 11, 0xFFFCA5A5);
+            msg.setTypeface(Typeface.DEFAULT_BOLD);
+            textCol.addView(msg);
+
+            String subTxt = formatLockSub(lockReason, unlockFailHint);
+            if (!subTxt.isEmpty()) {
+                TextView sub = txt(subTxt, 9.5f, 0xD9FCA5A5);
+                sub.setPadding(0, dp(this, 2), 0, 0);
+                textCol.addView(sub);
+            }
+            banner.addView(textCol);
+
+            if (ipLock && unlockFailHint != null && !unlockFailHint.isEmpty()) {
+                TextView forceBtn = pillText(
+                        Lang.t("仍要解锁", "Force", "強制解除"),
+                        9.5f, 0xFFFCA5A5, 0x00000000, 0x8CE55353);
+                bindPress(forceBtn);
+                forceBtn.setOnClickListener(v -> {
+                    unlockChecking = false;
+                    unlockFailHint = "";
+                    BodyguardStore.setLocked(this, target.id(), false);
+                    Toast.makeText(this, Lang.t("已手动解锁", "Unlocked manually"),
+                            Toast.LENGTH_SHORT).show();
+                    if (actions != null) actions.onBodyguardChanged();
+                    rebuild(false);
+                });
+                LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(-2, -2);
+                flp.leftMargin = dp(this, 6);
+                forceBtn.setLayoutParams(flp);
+                banner.addView(forceBtn);
+            }
+
+            String primaryLbl = ipLock
+                    ? (unlockChecking
+                        ? Lang.t("检查中…", "Checking…", "確認中…")
+                        : Lang.t("检查并解锁", "Check & Unlock", "確認して解除"))
+                    : Lang.t("解锁", "Unlock", "解除");
+            TextView unlock = primaryChip(primaryLbl, RED, FG);
+            LinearLayout.LayoutParams ulp = new LinearLayout.LayoutParams(-2, -2);
+            ulp.leftMargin = dp(this, 6);
+            unlock.setLayoutParams(ulp);
+            unlock.setAlpha(unlockChecking ? 0.65f : 1f);
             unlock.setOnClickListener(v -> {
+                if (unlockChecking) {
+                    return;
+                }
+                if (ipLock && actions != null) {
+                    unlockChecking = true;
+                    unlockFailHint = "";
+                    rebuild(false);
+                    actions.verifyAndUnlockBodyguard(() -> {
+                        unlockChecking = false;
+                        unlockFailHint = "";
+                        rebuild(false);
+                    }, failMsg -> {
+                        unlockChecking = false;
+                        unlockFailHint = failMsg == null ? "" : failMsg;
+                        rebuild(false);
+                    });
+                    return;
+                }
+                unlockFailHint = "";
                 BodyguardStore.setLocked(this, target.id(), false);
                 Toast.makeText(this, Lang.t("已解锁目标启动", "Target unlocked"),
                         Toast.LENGTH_SHORT).show();
@@ -292,6 +370,9 @@ final class TargetViewPanel extends UiSection {
             });
             banner.addView(unlock);
             host.addView(banner);
+        } else {
+            unlockChecking = false;
+            unlockFailHint = "";
         }
 
         // 2. 3-Column Inner Metric Tiles (CARD2, radius 12dp — matching Persona/Network/DataClean)
@@ -319,15 +400,15 @@ final class TargetViewPanel extends UiSection {
                 }));
         metrics.addView(metricCard(
                 String.valueOf(BodyguardPolicy.ALL_GATES.size()),
-                Lang.t("监控闸口", "Gates", "ゲート"),
+                Lang.t("防护项", "Guards", "保護項目"),
                 FG, "", true, gatesOpen, 0, dp(this, 6), () -> {
                     subView = gatesOpen ? null : SUB_GATES;
                     rebuild(false);
                 }));
         metrics.addView(metricCard(
                 String.valueOf(incidents.size()),
-                Lang.t("拦截记录", "Blocked", "遮断数"),
-                incidents.isEmpty() ? GREEN : RED, "", subView != null, false,
+                Lang.t("拦截记录", "History", "履歴"),
+                locked ? RED : (incidents.isEmpty() ? GREEN : FG), "", subView != null, false,
                 0, 0,
                 subView != null ? () -> {
                     subView = null;
@@ -335,7 +416,14 @@ final class TargetViewPanel extends UiSection {
                 } : null));
         host.addView(metrics);
 
-        // 3. Inline Drawer (Baseline / Gates) or Live Incident Cards (grouped by signal+caller)
+        // 2b. Standalone IP Protection Card (grouped with metric tiles, clearly separate from
+        // the global Bodyguard mode bar at the bottom; hidden while the 8-gate drawer is open
+        // where IP Protection already appears at row 1).
+        if (!gatesOpen) {
+            host.addView(buildIpGuardCard(mode));
+        }
+
+        // 3. Inline Drawer (Baseline / Gates) or Read-Only Incident History (grouped by signal+caller)
         if (baseOpen) {
             renderBaselineInspector(host);
         } else if (gatesOpen) {
@@ -352,36 +440,53 @@ final class TargetViewPanel extends UiSection {
                 }
                 bucket.add(inc);
             }
+            final String activeIso = actions != null
+                    ? IpGuardPolicy.normalizeIso(actions.activeRegionIso()) : "";
             LinearLayout incWrap = new LinearLayout(this);
             incWrap.setOrientation(LinearLayout.VERTICAL);
             LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(-1, -2);
             ilp.topMargin = dp(this, 8);
             incWrap.setLayoutParams(ilp);
+            int totalGroups = grouped.size();
+            int limit = incidentsExpanded ? totalGroups : Math.min(MAX_COLLAPSED_INCIDENTS, totalGroups);
+            int shown = 0;
             for (java.util.List<LedgerDb.Incident> bucket : grouped.values()) {
-                incWrap.addView(incidentCard(bucket));
+                if (shown >= limit) {
+                    break;
+                }
+                incWrap.addView(incidentCard(bucket, activeIso, whitelistedKeys));
+                shown++;
+            }
+            if (totalGroups > MAX_COLLAPSED_INCIDENTS) {
+                String toggleTxt = incidentsExpanded
+                        ? Lang.t("收起 ▴", "Collapse ▴", "折りたたむ ▴")
+                        : Lang.t("展开全部 (" + totalGroups + ") ▾",
+                                "Show all (" + totalGroups + ") ▾",
+                                "すべて表示 (" + totalGroups + ") ▾");
+                TextView toggleBtn = txt(toggleTxt, 10, DIM);
+                toggleBtn.setGravity(Gravity.CENTER);
+                toggleBtn.setPadding(dp(this, 10), dp(this, 5), dp(this, 10), dp(this, 3));
+                LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, -2);
+                toggleBtn.setLayoutParams(tlp);
+                bindPress(toggleBtn);
+                toggleBtn.setOnClickListener(v -> {
+                    incidentsExpanded = !incidentsExpanded;
+                    rebuild(false);
+                });
+                incWrap.addView(toggleBtn);
             }
             host.addView(incWrap);
         }
 
-        // 4. Clean Action Footer: Optional Clear + Mode Switcher
-        host.addView(cardDivider(10, 9));
+        // 4. Dedicated Global Bodyguard Mode Footer (unambiguously scoped to Bodyguard overall)
+        host.addView(cardDivider(11, 10));
         LinearLayout footer = new LinearLayout(this);
         footer.setOrientation(LinearLayout.HORIZONTAL);
         footer.setGravity(Gravity.CENTER_VERTICAL);
 
-        if (!incidents.isEmpty()) {
-            TextView clearInc = txt(Lang.t("清空记录", "Clear", "消去"), 9.5f, MUTE);
-            clearInc.setPadding(0, dp(this, 2), dp(this, 8), dp(this, 2));
-            bindPress(clearInc);
-            clearInc.setOnClickListener(v -> {
-                LedgerDb db = LedgerDb.get(this);
-                for (LedgerDb.Incident inc : incidents) {
-                    db.resolveIncident(inc.id, "IGNORED");
-                }
-                rebuild(false);
-            });
-            footer.addView(clearInc);
-        }
+        TextView modeLbl = txt(Lang.t("保镖模式", "Guard mode", "ガード設定"), 10.5f, DIM);
+        modeLbl.setTypeface(Typeface.DEFAULT_BOLD);
+        footer.addView(modeLbl);
 
         View spacer = new View(this);
         spacer.setLayoutParams(new LinearLayout.LayoutParams(0, 1, 1f));
@@ -392,10 +497,74 @@ final class TargetViewPanel extends UiSection {
         seg.setPadding(dp(this, 2), dp(this, 2), dp(this, 2), dp(this, 2));
         seg.setBackground(roundBox(BG, STROKE, 10));
         seg.addView(modeSegBtn(BodyguardPolicy.MODE_OFF, Lang.t("关", "Off", "切"), mode));
-        seg.addView(modeSegBtn(BodyguardPolicy.MODE_OBSERVE, Lang.t("观察", "Obs", "監"), mode));
-        seg.addView(modeSegBtn(BodyguardPolicy.MODE_BLOCK_KILL, Lang.t("熔断", "Kill", "断"), mode));
+        seg.addView(modeSegBtn(BodyguardPolicy.MODE_OBSERVE, Lang.t("提醒", "Alert", "通知"), mode));
+        seg.addView(modeSegBtn(BodyguardPolicy.MODE_BLOCK_KILL, Lang.t("拦截", "Block", "遮断"), mode));
         footer.addView(seg);
         host.addView(footer);
+    }
+
+    private View buildIpGuardCard(String mode) {
+        final boolean armed = !BodyguardPolicy.MODE_OFF.equals(mode);
+        final String expIso = actions != null
+                ? IpGuardPolicy.normalizeIso(actions.activeRegionIso()) : "";
+        final boolean ipLocked = BodyguardStore.isLocked(this, target.id())
+                && IpGuardPolicy.isIpFlipSignal(BodyguardStore.lockReason(this, target.id()));
+        final IpGuardPolicy.Config cfg = BodyguardStore.ipGuardConfig(this, userId);
+
+        String stText;
+        int dotColor;
+        int stColor;
+        int stFill;
+        int stStroke;
+        if (!armed || !cfg.anyEnabled()) {
+            stText = Lang.t("关", "Off", "切");
+            dotColor = MUTE; stColor = DIM; stFill = CARD; stStroke = STROKE;
+        } else if (ipLocked) {
+            stText = Lang.t("已拦住", "Blocked", "遮断");
+            dotColor = RED; stColor = 0xFFFCA5A5; stFill = 0x22E55353; stStroke = RED;
+        } else if (!RootShell.rootReady() || BodyguardPolicy.MODE_OBSERVE.equals(mode)) {
+            stText = (expIso.isEmpty() ? "" : expIso + " · ") + Lang.t("提醒", "Alert", "通知");
+            dotColor = AMBER; stColor = AMBER; stFill = 0x1AE5A93B; stStroke = 0x66E5A93B;
+        } else if (expIso.isEmpty()) {
+            stText = Lang.t("待选地区", "No region", "地域未選択");
+            dotColor = DIM; stColor = DIM; stFill = CARD; stStroke = STROKE;
+        } else {
+            stText = expIso + " · " + Lang.t("保护中", "Active", "保護中");
+            dotColor = GREEN; stColor = GREEN; stFill = 0x1634D399; stStroke = 0x5934D399;
+        }
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(this, 11), dp(this, 9), dp(this, 11), dp(this, 9));
+        row.setBackground(roundBox(CARD2, STROKE, 12));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(this, 6);
+        row.setLayoutParams(lp);
+
+        View dot = new View(this);
+        GradientDrawable dbg = new GradientDrawable();
+        dbg.setShape(GradientDrawable.OVAL);
+        dbg.setColor(dotColor);
+        dot.setBackground(dbg);
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(this, 6), dp(this, 6));
+        dlp.rightMargin = dp(this, 8);
+        dot.setLayoutParams(dlp);
+        row.addView(dot);
+
+        TextView title = txt(Lang.t("IP 保护", "IP Protection", "IP 保護"), 11, FG);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+        row.addView(title);
+
+        row.addView(pillText(stText, 9, stColor, stFill, stStroke));
+
+        TextView chev = txt(" ›", 13, SAND);
+        row.addView(chev);
+
+        bindPress(row);
+        row.setOnClickListener(v -> openIpGuardSheet());
+        return row;
     }
 
     private View modeSegBtn(final String targetMode, String label, String currentMode) {
@@ -463,7 +632,9 @@ final class TargetViewPanel extends UiSection {
         return tile;
     }
 
-    private View incidentCard(final java.util.List<LedgerDb.Incident> bucket) {
+    private View incidentCard(final java.util.List<LedgerDb.Incident> bucket,
+                              final String activeIso,
+                              final Set<String> whitelistedKeys) {
         final LedgerDb.Incident inc = bucket.get(0);
         final int count = bucket.size();
         LinearLayout card = new LinearLayout(this);
@@ -477,8 +648,11 @@ final class TargetViewPanel extends UiSection {
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
         top.setGravity(Gravity.CENTER_VERTICAL);
-        TextView key = txt(inc.signalKey, 10.5f, FG);
-        key.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        final boolean isIpFlip = BodyguardPolicy.GATE_IP_FLIP.equals(inc.gateType)
+                || IpGuardPolicy.isIpFlipSignal(inc.signalKey);
+        TextView key = txt(isIpFlip ? formatIpIncidentTitle(inc.signalKey) : inc.signalKey,
+                10.5f, FG);
+        key.setTypeface(isIpFlip ? Typeface.DEFAULT_BOLD : Typeface.MONOSPACE, Typeface.BOLD);
         key.setSingleLine(true);
         key.setEllipsize(TextUtils.TruncateAt.MIDDLE);
         key.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
@@ -487,7 +661,7 @@ final class TargetViewPanel extends UiSection {
         boolean killed = "KILLED".equalsIgnoreCase(inc.actionTaken)
                 || "BLOCKED".equalsIgnoreCase(inc.actionTaken);
         TextView badge = pillText(
-                killed ? Lang.t("已阻断", "Blocked", "遮断") : Lang.t("已记录", "Logged", "記録"),
+                killed ? Lang.t("已拦住", "Blocked", "遮断") : Lang.t("提醒", "Alert", "通知"),
                 9, killed ? RED : AMBER, killed ? 0x22E55353 : 0x22E5A93B,
                 killed ? RED : AMBER);
         LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(-2, -2);
@@ -501,55 +675,84 @@ final class TargetViewPanel extends UiSection {
         bot.setGravity(Gravity.CENTER_VERTICAL);
         bot.setPadding(0, dp(this, 6), 0, 0);
         String meta = formatTime(inc.occurredAt)
-                + (inc.callerFrame.isEmpty() ? "" : " · " + inc.callerFrame)
+                + (isIpFlip ? formatIpIncidentDetail(inc.signalKey)
+                        : (inc.callerFrame.isEmpty() ? "" : " · " + inc.callerFrame))
                 + (count > 1 ? " ×" + count : "");
         TextView metaTv = txt(meta, 9, MUTE);
-        metaTv.setTypeface(Typeface.MONOSPACE);
+        metaTv.setTypeface(isIpFlip ? Typeface.DEFAULT : Typeface.MONOSPACE);
         metaTv.setSingleLine(true);
         metaTv.setEllipsize(TextUtils.TruncateAt.END);
         metaTv.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
         bot.addView(metaTv);
 
-        boolean isNoPersona = BodyguardPolicy.GATE_NO_PERSONA.equals(inc.gateType);
-        TextView allowBtn = pillText(
-                isNoPersona ? Lang.t("激活地区", "Apply", "地域適用")
-                        : Lang.t("加白", "Allow", "許可"),
-                9.5f, isNoPersona ? CYAN : FG, CARD, isNoPersona ? CYAN : STROKE);
-        bindPress(allowBtn);
-        allowBtn.setOnClickListener(v -> {
-            if (isNoPersona) {
-                if (actions != null) actions.applyRegion();
-                return;
+        boolean isNoPersona = BodyguardPolicy.GATE_NO_PERSONA.equals(inc.gateType)
+                || "config:missing".equals(inc.signalKey)
+                || "config:corrupt".equals(inc.signalKey);
+        if (isIpFlip) {
+            final String driftIso = IpGuardPolicy.parseTargetIsoFromSignal(inc.signalKey);
+            Tables tables = TablesLoader.load(getApplicationContext());
+            boolean canAlign = !driftIso.isEmpty()
+                    && !driftIso.equalsIgnoreCase(activeIso)
+                    && !SimPolicy.isRestrictedIso(tables, driftIso, target.id());
+            if (canAlign) {
+                TextView alignBtn = pillText(
+                        Lang.t("地区改为 ", "Switch to ", "地域変更 ") + driftIso,
+                        9.5f, CYAN, CARD, CYAN);
+                bindPress(alignBtn);
+                alignBtn.setOnClickListener(v -> {
+                    BodyguardStore.setLocked(this, target.id(), false);
+                    if (actions != null) {
+                        actions.onBodyguardChanged();
+                        actions.alignRegionByIso(driftIso);
+                    }
+                    rebuild(false);
+                });
+                LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-2, -2);
+                alp.leftMargin = dp(this, 6);
+                alignBtn.setLayoutParams(alp);
+                bot.addView(alignBtn);
             }
-            BodyguardStore.addWhitelist(this, target.id(), inc.gateType, inc.signalKey);
-            LedgerDb db = LedgerDb.get(this);
-            for (LedgerDb.Incident item : bucket) {
-                db.resolveIncident(item.id, "ALLOWED");
+        } else if (isNoPersona) {
+            if (activeIso.isEmpty()) {
+                TextView applyBtn = pillText(
+                        Lang.t("激活地区", "Apply", "地域適用"),
+                        9.5f, CYAN, CARD, CYAN);
+                bindPress(applyBtn);
+                applyBtn.setOnClickListener(v -> {
+                    if (actions != null) actions.applyRegion();
+                });
+                LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-2, -2);
+                alp.leftMargin = dp(this, 6);
+                applyBtn.setLayoutParams(alp);
+                bot.addView(applyBtn);
             }
-            if (db.loadIncidents(target.id(), userId, true).isEmpty()) {
-                BodyguardStore.setLocked(this, target.id(), false);
-            }
-            if (actions != null) actions.onBodyguardChanged();
-            Toast.makeText(this, Lang.t("已加白 · 可在基线中撤销", "Whitelisted"),
-                    Toast.LENGTH_SHORT).show();
-            rebuild(false);
-        });
-        LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-2, -2);
-        alp.leftMargin = dp(this, 6);
-        allowBtn.setLayoutParams(alp);
-        bot.addView(allowBtn);
-
-        TextView ignBtn = txt(Lang.t("忽略", "Ignore", "無視"), 9.5f, MUTE);
-        ignBtn.setPadding(dp(this, 8), dp(this, 3), dp(this, 2), dp(this, 3));
-        bindPress(ignBtn);
-        ignBtn.setOnClickListener(v -> {
-            LedgerDb db = LedgerDb.get(this);
-            for (LedgerDb.Incident item : bucket) {
-                db.resolveIncident(item.id, "IGNORED");
-            }
-            rebuild(false);
-        });
-        bot.addView(ignBtn);
+        } else if (whitelistedKeys.contains(inc.signalKey)) {
+            TextView allowedTag = txt(Lang.t("已加白", "Allowed", "許可済"), 9.5f, 0xB334D399);
+            LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-2, -2);
+            alp.leftMargin = dp(this, 8);
+            allowedTag.setLayoutParams(alp);
+            bot.addView(allowedTag);
+        } else {
+            TextView allowBtn = pillText(
+                    Lang.t("加白", "Allow", "許可"),
+                    9.5f, FG, CARD, STROKE);
+            bindPress(allowBtn);
+            allowBtn.setOnClickListener(v -> {
+                BodyguardStore.addWhitelist(this, target.id(), inc.gateType, inc.signalKey);
+                if (BodyguardStore.isLocked(this, target.id())
+                        && inc.signalKey.equals(BodyguardStore.lockReason(this, target.id()))) {
+                    BodyguardStore.setLocked(this, target.id(), false);
+                }
+                if (actions != null) actions.onBodyguardChanged();
+                Toast.makeText(this, Lang.t("已加白 · 可在基线中撤销", "Whitelisted"),
+                        Toast.LENGTH_SHORT).show();
+                rebuild(false);
+            });
+            LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-2, -2);
+            alp.leftMargin = dp(this, 6);
+            allowBtn.setLayoutParams(alp);
+            bot.addView(allowBtn);
+        }
 
         card.addView(bot);
         return card;
@@ -763,7 +966,7 @@ final class TargetViewPanel extends UiSection {
         final Map<String, Integer> counts = BodyguardPolicy.gateCounts(base.entries);
 
         LinearLayout drawer = drawerBox(
-                Lang.t("监控闸口", "Gates", "ゲート") + " · " + BodyguardPolicy.ALL_GATES.size(),
+                Lang.t("防护项", "Guards", "保護項目") + " · " + BodyguardPolicy.ALL_GATES.size(),
                 () -> {
                     subView = null;
                     rebuild(false);
@@ -771,11 +974,13 @@ final class TargetViewPanel extends UiSection {
 
         for (int i = 0; i < BodyguardPolicy.ALL_GATES.size(); i++) {
             final String gate = BodyguardPolicy.ALL_GATES.get(i);
+            final boolean isIpGate = BodyguardPolicy.GATE_IP_FLIP.equals(gate);
             int cnt = counts.containsKey(gate) ? counts.get(gate).intValue() : 0;
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setPadding(dp(this, 10), dp(this, 8), dp(this, 10), dp(this, 8));
-            card.setBackground(roundBox(CARD2, STROKE, 10));
+            card.setBackground(roundBox(isIpGate ? 0xFF132428 : CARD2,
+                    isIpGate ? 0xFF2B454B : STROKE, 10));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
             if (i == 0) lp.topMargin = dp(this, 6);
             if (i < BodyguardPolicy.ALL_GATES.size() - 1) lp.bottomMargin = dp(this, 5);
@@ -789,26 +994,62 @@ final class TargetViewPanel extends UiSection {
             name.setTypeface(Typeface.DEFAULT_BOLD);
             top.addView(name);
 
-            TextView code = txt(" " + gate, 8.5f, MUTE);
+            TextView code = txt(isIpGate ? "" : " " + gate, 8.5f, MUTE);
             code.setTypeface(Typeface.MONOSPACE);
             code.setSingleLine(true);
             code.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
             top.addView(code);
 
-            TextView countTv = txt(String.valueOf(cnt), 10, CYAN);
-            countTv.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-            top.addView(countTv);
+            if (isIpGate) {
+                String expIso = actions != null ? IpGuardPolicy.normalizeIso(actions.activeRegionIso()) : "";
+                boolean ipLocked = BodyguardStore.isLocked(this, target.id())
+                        && IpGuardPolicy.isIpFlipSignal(BodyguardStore.lockReason(this, target.id()));
+                IpGuardPolicy.Config cfg = BodyguardStore.ipGuardConfig(this, userId);
+                String stText;
+                int stColor;
+                int stFill;
+                int stStroke;
+                if (!armed || !cfg.anyEnabled()) {
+                    stText = Lang.t("关", "Off", "切");
+                    stColor = DIM; stFill = CARD; stStroke = STROKE;
+                } else if (ipLocked) {
+                    stText = Lang.t("已拦住", "Blocked", "遮断");
+                    stColor = 0xFFFCA5A5; stFill = 0x22E55353; stStroke = RED;
+                } else if (!RootShell.rootReady() || BodyguardPolicy.MODE_OBSERVE.equals(mode)) {
+                    stText = (expIso.isEmpty() ? "" : expIso + " · ") + Lang.t("提醒", "Alert", "通知");
+                    stColor = AMBER; stFill = 0x1AE5A93B; stStroke = 0x66E5A93B;
+                } else {
+                    stText = (expIso.isEmpty() ? Lang.t("待选地区", "Idle", "待機")
+                            : expIso + " · " + Lang.t("保护中", "Active", "保護中"));
+                    stColor = expIso.isEmpty() ? DIM : GREEN;
+                    stFill = expIso.isEmpty() ? CARD : 0x1634D399;
+                    stStroke = expIso.isEmpty() ? STROKE : 0x5934D399;
+                }
+                top.addView(pillText(stText, 9, stColor, stFill, stStroke));
+                TextView chev = txt(" ›", 12, SAND);
+                top.addView(chev);
+            } else {
+                TextView countTv = txt(String.valueOf(cnt), 10, CYAN);
+                countTv.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+                top.addView(countTv);
+            }
             card.addView(top);
 
-            TextView sub = txt(gateScope(gate), 9, DIM);
-            sub.setTypeface(Typeface.MONOSPACE);
-            sub.setSingleLine(true);
-            sub.setEllipsize(TextUtils.TruncateAt.END);
-            sub.setPadding(0, dp(this, 2), 0, 0);
-            card.addView(sub);
+            if (!isIpGate) {
+                TextView sub = txt(gateScope(gate), 9, DIM);
+                sub.setTypeface(Typeface.MONOSPACE);
+                sub.setSingleLine(true);
+                sub.setEllipsize(TextUtils.TruncateAt.END);
+                sub.setPadding(0, dp(this, 2), 0, 0);
+                card.addView(sub);
+            }
 
             bindPress(card);
             card.setOnClickListener(v -> {
+                if (isIpGate) {
+                    openIpGuardSheet();
+                    return;
+                }
                 baselineFilter = gate;
                 baselineQuery = "";
                 expandedSignal = null;
@@ -818,6 +1059,103 @@ final class TargetViewPanel extends UiSection {
             drawer.addView(card);
         }
         host.addView(drawer);
+    }
+
+    private void openIpGuardSheet() {
+        String expIso = actions != null ? actions.activeRegionIso() : "";
+        String[] base = RootActions.readLastTargetIp(target);
+        IpGuardPolicy.Config cur = BodyguardStore.ipGuardConfig(this, userId);
+        IpGuardSheet.show(this, expIso, base[0], RootShell.rootReady(), cur, next -> {
+            BodyguardStore.setIpGuardConfig(this, userId, next);
+            if (actions != null) {
+                actions.onBodyguardChanged();
+            }
+            rebuild(false);
+        });
+    }
+
+    private String formatLockTitle(String reason, String targetName) {
+        if ("net:vpn-down".equals(reason)) {
+            return Lang.t("代理断开了 · 已禁止 " + targetName + " 联网",
+                    "Proxy dropped · " + targetName + " blocked",
+                    "プロキシ切断・" + targetName + " の通信を遮断");
+        }
+        if (reason != null && reason.startsWith("egress:direct")) {
+            return Lang.t("走了本地直连 · 已禁止 " + targetName + " 联网",
+                    "Direct bypass · " + targetName + " blocked",
+                    "直接通信検出・" + targetName + " の通信を遮断");
+        }
+        if (reason != null && reason.startsWith("ip:flip:")) {
+            return Lang.t("IP 已变动 · 已禁止 " + targetName + " 联网",
+                    "IP changed · " + targetName + " blocked",
+                    "IP 変化・" + targetName + " の通信を遮断");
+        }
+        String iso = IpGuardPolicy.parseTargetIsoFromSignal(reason);
+        if (!iso.isEmpty()) {
+            return Lang.t("IP 变到 " + IpGuardSheet.regionDisplay(iso) + " · 已禁止联网",
+                    "IP in " + iso + " · " + targetName + " blocked",
+                    "IP が " + iso + " に変化・通信遮断");
+        }
+        return Lang.t("已拦住 · 进程已锁定", "Blocked · Locked", "遮断済・ロック");
+    }
+
+    private String formatLockSub(String reason, String failHint) {
+        if (failHint != null && !failHint.isEmpty()) {
+            return failHint;
+        }
+        if ("net:vpn-down".equals(reason)) {
+            return Lang.t("恢复代理后点右侧解锁", "Restore proxy, then unlock", "プロキシ復旧後に解除");
+        }
+        if (reason != null && reason.startsWith("egress:direct:")) {
+            return reason.substring("egress:direct:".length())
+                    + Lang.t(" 未走代理", " bypassed proxy", " が直接通信");
+        }
+        if (reason != null && reason.startsWith("ip:flip:")) {
+            return Privacy.mask(reason.substring("ip:flip:".length()).replace("->", " → "));
+        }
+        if (IpGuardPolicy.isIpFlipSignal(reason)) {
+            return Lang.t("切回节点后点右侧解锁", "Switch node, then unlock", "ノード切替後に解除");
+        }
+        return "";
+    }
+
+    private String formatIpIncidentTitle(String signalKey) {
+        if ("net:vpn-down".equals(signalKey)) {
+            return Lang.t("代理断开", "Proxy dropped", "プロキシ切断");
+        }
+        if (signalKey != null && signalKey.startsWith("egress:direct")) {
+            return Lang.t("走了本地直连", "Used local network", "直接通信を検出");
+        }
+        if (signalKey != null && signalKey.startsWith("ip:flip:")) {
+            return Lang.t("IP 变动", "IP changed", "IP 変化");
+        }
+        String iso = IpGuardPolicy.parseTargetIsoFromSignal(signalKey);
+        if (!iso.isEmpty()) {
+            return Lang.t("IP 变到 " + IpGuardSheet.regionDisplay(iso),
+                    "IP changed to " + iso,
+                    "IP が " + iso + " に変化");
+        }
+        return signalKey;
+    }
+
+    private String formatIpIncidentDetail(String signalKey) {
+        if ("net:vpn-down".equals(signalKey)) {
+            return Lang.t(" · 检测到无代理", " · No active proxy", " ・プロキシなし");
+        }
+        if (signalKey != null && signalKey.startsWith("egress:direct:")) {
+            return " · " + signalKey.substring("egress:direct:".length());
+        }
+        if (signalKey != null && signalKey.startsWith("ip:flip:")) {
+            String pair = signalKey.substring("ip:flip:".length()).replace("->", " → ");
+            return " · " + Privacy.mask(pair);
+        }
+        String expIso = actions != null ? IpGuardPolicy.normalizeIso(actions.activeRegionIso()) : "";
+        if (!expIso.isEmpty()) {
+            return Lang.t(" · 目标 " + IpGuardSheet.regionDisplay(expIso),
+                    " · Expected " + expIso,
+                    " ・対象 " + expIso);
+        }
+        return "";
     }
 
     // =========================================================================
@@ -2031,28 +2369,34 @@ final class TargetViewPanel extends UiSection {
     }
 
     private static String gateTitle(String gate) {
+        if (BodyguardPolicy.GATE_IP_FLIP.equals(gate)) {
+            return Lang.t("IP 保护", "IP Protection", "IP 保護");
+        }
         if (BodyguardPolicy.GATE_TELEMETRY_KEY.equals(gate)) {
-            return Lang.t("遥测键", "Telemetry", "計測キー");
+            return Lang.t("遥测字段", "Telemetry", "計測キー");
         }
         if (BodyguardPolicy.GATE_SYS_PROP.equals(gate)) {
             return Lang.t("系统属性", "SysProps", "システム属性");
         }
         if (BodyguardPolicy.GATE_SETTINGS_KEY.equals(gate)) {
-            return "Settings";
+            return Lang.t("系统设置", "Settings", "システム設定");
         }
         if (BodyguardPolicy.GATE_TRIPWIRE_API.equals(gate)) {
-            return Lang.t("高危 API", "Tripwire API", "高危険 API");
+            return Lang.t("敏感接口", "Device APIs", "高危険 API");
         }
         if (BodyguardPolicy.GATE_DYNAMIC_CODE.equals(gate)) {
-            return Lang.t("动态代码", "Dynamic Code", "動的コード");
+            return Lang.t("动态加载", "Code Load", "動的コード");
         }
         if (BodyguardPolicy.GATE_EGRESS_HOST.equals(gate)) {
-            return Lang.t("外发域名", "Egress Hosts", "外部通信先");
+            return Lang.t("外发域名", "Domains", "外部通信先");
         }
-        return Lang.t("敏感路径", "Sensitive Paths", "機密パス");
+        return Lang.t("敏感文件", "Sys Files", "機密パス");
     }
 
     private static String gateScope(String gate) {
+        if (BodyguardPolicy.GATE_IP_FLIP.equals(gate)) {
+            return "Proxy drop / Restricted / Country flip";
+        }
         if (BodyguardPolicy.GATE_TELEMETRY_KEY.equals(gate)) {
             return "Firelog event_metadata";
         }

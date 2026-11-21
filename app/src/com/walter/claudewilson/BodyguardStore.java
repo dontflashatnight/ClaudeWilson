@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import com.walter.claudewilson.model.BodyguardPolicy;
+import com.walter.claudewilson.model.IpGuardPolicy;
 import com.walter.claudewilson.platform.Diag;
 
 import org.json.JSONArray;
@@ -31,6 +32,11 @@ final class BodyguardStore {
     private static final String MODE_PREFIX = "mode.";
     private static final String WHITELIST_PREFIX = "whitelist.";
     private static final String LOCKED_PREFIX = "locked.";
+    private static final String LOCK_REASON_PREFIX = "lock_reason.";
+    private static final String IP_DROP_PREFIX = "ip_drop.";
+    private static final String IP_REST_PREFIX = "ip_rest.";
+    private static final String IP_DRIFT_PREFIX = "ip_drift.";
+    private static final String IP_POLL_PREFIX = "ip_poll.";
 
     private static volatile Map<String, BodyguardPolicy.TargetBaseline> cachedBaselines;
     private static final java.util.concurrent.ConcurrentHashMap<String, String> PAYLOAD_CACHE =
@@ -67,7 +73,50 @@ final class BodyguardStore {
         if (targetId == null || targetId.isEmpty()) {
             return;
         }
-        prefs(ctx).edit().putBoolean(LOCKED_PREFIX + targetId, locked).apply();
+        SharedPreferences.Editor ed = prefs(ctx).edit().putBoolean(LOCKED_PREFIX + targetId, locked);
+        if (!locked) {
+            ed.remove(LOCK_REASON_PREFIX + targetId);
+        }
+        ed.apply();
+    }
+
+    static String lockReason(Context ctx, String targetId) {
+        if (targetId == null || targetId.isEmpty()) {
+            return "";
+        }
+        return prefs(ctx).getString(LOCK_REASON_PREFIX + targetId, "");
+    }
+
+    static void setLockReason(Context ctx, String targetId, String signalKey) {
+        if (targetId == null || targetId.isEmpty()) {
+            return;
+        }
+        String clean = signalKey == null ? "" : signalKey.trim();
+        prefs(ctx).edit().putString(LOCK_REASON_PREFIX + targetId, clean).apply();
+    }
+
+    /** Returns per-space IP Protection settings, defaulting to user-approved strict defaults. */
+    static IpGuardPolicy.Config ipGuardConfig(Context ctx, String userId) {
+        String u = userId == null || userId.isEmpty() ? "0" : userId;
+        SharedPreferences p = prefs(ctx);
+        boolean killOnDrop = p.getBoolean(IP_DROP_PREFIX + u, IpGuardPolicy.DEFAULT_KILL_ON_DROP);
+        boolean killOnRest = p.getBoolean(IP_REST_PREFIX + u, IpGuardPolicy.DEFAULT_KILL_ON_RESTRICTED);
+        String drift = IpGuardPolicy.normalizeDriftPolicy(
+                p.getString(IP_DRIFT_PREFIX + u, IpGuardPolicy.DEFAULT_DRIFT_POLICY));
+        boolean pollMin = p.getBoolean(IP_POLL_PREFIX + u, IpGuardPolicy.DEFAULT_POLL_EVERY_MIN);
+        return new IpGuardPolicy.Config(killOnDrop, killOnRest, drift, pollMin);
+    }
+
+    static void setIpGuardConfig(Context ctx, String userId, IpGuardPolicy.Config cfg) {
+        String u = userId == null || userId.isEmpty() ? "0" : userId;
+        IpGuardPolicy.Config c = cfg == null ? IpGuardPolicy.Config.defaults() : cfg;
+        prefs(ctx).edit()
+                .putBoolean(IP_DROP_PREFIX + u, c.killOnDrop)
+                .putBoolean(IP_REST_PREFIX + u, c.killOnRestricted)
+                .putString(IP_DRIFT_PREFIX + u, c.driftPolicy)
+                .putBoolean(IP_POLL_PREFIX + u, c.pollEveryMin)
+                .apply();
+        PAYLOAD_CACHE.clear();
     }
 
     /** Adds a user-whitelisted signal for {@code targetId} (reversible via {@link #removeWhitelist}). */
@@ -199,6 +248,7 @@ final class BodyguardStore {
             obj.put("allowPaths", paths);
             obj.put("allowHosts", hosts);
             obj.put("allowCustom", custom);
+            obj.put("ipKillOnDrop", ipGuardConfig(ctx, userId).killOnDrop);
             String json = obj.toString();
             PAYLOAD_CACHE.put(key, json);
             return json;

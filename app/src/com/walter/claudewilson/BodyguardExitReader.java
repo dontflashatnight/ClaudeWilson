@@ -54,23 +54,48 @@ final class BodyguardExitReader {
         if (!ShellQuote.packageName(selfPkg)) {
             return 0;
         }
+        String evFile = com.walter.claudewilson.model.IpGuardPolicy.netEventPath(spec.id());
+        String lockFile = com.walter.claudewilson.model.IpGuardPolicy.LOCK_DIR + "/" + spec.id() + ".lock";
+        String unlockFile = com.walter.claudewilson.model.IpGuardPolicy.LOCK_DIR + "/" + spec.id() + ".unlock";
         String cmd = "APK=$(pm path " + selfPkg + " | cut -d: -f2); "
                 + "[ -n \"$APK\" ] && app_process -Djava.class.path=$APK /system/bin "
                 + "com.walter.claudewilson.Bridge exitinfo " + spec.packageName() + " " + u
-                + " 2>/dev/null || true";
+                + " 2>/dev/null || true; "
+                + "[ -f " + evFile + " ] && cat " + evFile + " 2>/dev/null || true; "
+                + "LT=0; UT=0; "
+                + "[ -f " + lockFile + " ] && LT=$(cat " + lockFile + " 2>/dev/null); "
+                + "[ -f " + unlockFile + " ] && UT=$(cat " + unlockFile + " 2>/dev/null); "
+                + "echo \"CWLOCK $LT $UT\"";
         String out = RootShell.run(cmd, 8192, 6000L);
-        if (out == null || out.isEmpty() || !out.contains("CWBG1|")) {
+        if (out == null || out.isEmpty()) {
             return 0;
         }
         int ingested = 0;
+        long lockTs = 0L;
+        long unlockTs = 0L;
+        boolean sawLockLine = false;
+        boolean lockedNowByEvent = false;
+        final boolean killMode = com.walter.claudewilson.model.BodyguardPolicy.MODE_BLOCK_KILL
+                .equals(BodyguardStore.mode(context, u));
         LedgerDb db = LedgerDb.get(context);
         java.util.List<LedgerDb.Incident> before = db.loadIncidents(spec.id(), u, false);
         java.util.Set<String> seen = new java.util.HashSet<String>();
         for (LedgerDb.Incident inc : before) {
             seen.add(inc.occurredAt + "|" + inc.signalKey);
         }
+        String latestKillKey = "";
+        long latestKillTs = 0L;
         for (String line : out.split("\\n")) {
             String trimmed = line.trim();
+            if (trimmed.startsWith("CWLOCK ")) {
+                sawLockLine = true;
+                String[] parts = trimmed.split("\\s+");
+                if (parts.length >= 3) {
+                    try { lockTs = Long.parseLong(parts[1]); } catch (NumberFormatException ignored) {}
+                    try { unlockTs = Long.parseLong(parts[2]); } catch (NumberFormatException ignored) {}
+                }
+                continue;
+            }
             if (trimmed.isEmpty() || !trimmed.contains("CWBG1|")) {
                 continue;
             }
@@ -92,16 +117,37 @@ final class BodyguardExitReader {
             boolean isNew = !seen.contains(dedup);
             db.recordIncident(spec.id(), u, ts, ev.version, ev.gate,
                     ev.signalKey, ev.callerShort, ev.action);
+            if ("KILLED".equalsIgnoreCase(ev.action) && ts >= latestKillTs) {
+                latestKillTs = ts;
+                latestKillKey = ev.signalKey;
+            }
             if (isNew) {
                 seen.add(dedup);
                 ingested++;
-                if ("KILLED".equalsIgnoreCase(ev.action)) {
+                if (killMode && "KILLED".equalsIgnoreCase(ev.action)) {
+                    lockedNowByEvent = true;
                     BodyguardStore.setLocked(context, spec.id(), true);
+                    BodyguardStore.setLockReason(context, spec.id(), ev.signalKey);
                     new RootActions(context).syncBodyguardLock(spec, true);
                 }
                 Diag.info("bodyguard", "harvested " + spec.id() + " " + ev.action
                         + " " + ev.gate + " " + ev.signalKey);
             }
+        }
+        boolean diskLocked = com.walter.claudewilson.model.BodyguardPolicy.isLockEffective(
+                0L, lockTs, unlockTs);
+        if (killMode && diskLocked && !BodyguardStore.isLocked(context, spec.id())) {
+            BodyguardStore.setLocked(context, spec.id(), true);
+            if (!latestKillKey.isEmpty()) {
+                BodyguardStore.setLockReason(context, spec.id(), latestKillKey);
+            }
+            ingested++;
+        } else if (sawLockLine && !lockedNowByEvent && (!killMode || !diskLocked)
+                && BodyguardStore.isLocked(context, spec.id())) {
+            // Keep UI lock banner strictly aligned with real on-disk lock enforcement so the
+            // banner can never claim "process locked" when the target app is actually launchable.
+            BodyguardStore.setLocked(context, spec.id(), false);
+            ingested++;
         }
         return ingested;
     }
