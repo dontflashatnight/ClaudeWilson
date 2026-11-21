@@ -4,6 +4,17 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to create or refresh release for (e.g. v1.0.22)"
+        required: true
+        type: string
+      notes:
+        description: "Optional custom release notes (leave empty to read from tag annotation or commit log)"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -13,15 +24,87 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Publish APK
+        with:
+          fetch-depth: 0
+
+      - name: Publish or Update Release
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_NOTES: ${{ inputs.notes }}
         run: |
-          APK=$(ls dist/ClaudeWilson-*.apk | head -n 1)
+          set -euo pipefail
+
+          TAG="${INPUT_TAG:-${GITHUB_REF_NAME}}"
+          if ! git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Error: tag '${TAG}' does not exist." >&2
+            exit 1
+          fi
+
+          VER="${TAG#v}"
+          APK="dist/ClaudeWilson-${VER}.apk"
           SHA_FILE="${APK}.sha256"
-          SHA=$(awk '{print $1}' "${SHA_FILE}")
-          gh release create "${GITHUB_REF_NAME}" \
-            "${APK}" \
-            "${SHA_FILE}" \
-            --title "ClaudeWilson ${GITHUB_REF_NAME}" \
-            --notes "SHA-256: ${SHA}"
+
+          if [ -f "${SHA_FILE}" ]; then
+            SHA=$(awk '{print $1}' "${SHA_FILE}")
+          elif git cat-file -e "${TAG}:${SHA_FILE}" 2>/dev/null; then
+            SHA=$(git show "${TAG}:${SHA_FILE}" | awk '{print $1}')
+          else
+            FALLBACK_APK=$(ls dist/ClaudeWilson-*.apk 2>/dev/null | head -n 1 || true)
+            if [ -n "${FALLBACK_APK}" ] && [ -f "${FALLBACK_APK}.sha256" ]; then
+              APK="${FALLBACK_APK}"
+              SHA_FILE="${APK}.sha256"
+              SHA=$(awk '{print $1}' "${SHA_FILE}")
+            else
+              SHA=""
+            fi
+          fi
+
+          CHANGELOG=""
+          if [ -n "${INPUT_NOTES}" ]; then
+            CHANGELOG="${INPUT_NOTES}"
+          else
+            TAG_TYPE=$(git cat-file -t "refs/tags/${TAG}")
+            if [ "${TAG_TYPE}" = "tag" ]; then
+              RAW_TAG_MSG=$(git tag -l --format='%(contents)' "${TAG}")
+              CHANGELOG=$(printf '%s\n' "${RAW_TAG_MSG}" | sed -e '/./,$!d' -e ':a' -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
+            fi
+            if [ -z "${CHANGELOG}" ]; then
+              PREV_TAG=$(git tag --list "v*" --sort=-v:refname | awk -v cur="${TAG}" 'found {print; exit} $0 == cur {found=1}')
+              if [ -n "${PREV_TAG}" ]; then
+                COMMITS=$(git log "${PREV_TAG}..${TAG}" --pretty=format:"- %s" --no-merges)
+              else
+                COMMITS=$(git log "${TAG}" -n 20 --pretty=format:"- %s" --no-merges)
+              fi
+              if [ -n "${COMMITS}" ]; then
+                CHANGELOG=$(printf '### Changes\n%s' "${COMMITS}")
+              fi
+            fi
+          fi
+
+          NOTES_FILE=$(mktemp)
+          {
+            if [ -n "${SHA}" ] && ! printf '%s\n' "${CHANGELOG}" | grep -q '^SHA-256:'; then
+              printf 'SHA-256: `%s`\n' "${SHA}"
+              [ -n "${CHANGELOG}" ] && printf '\n'
+            fi
+            if [ -n "${CHANGELOG}" ]; then
+              printf '%s\n' "${CHANGELOG}"
+            fi
+          } > "${NOTES_FILE}"
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release edit "${TAG}" \
+              --title "ClaudeWilson ${TAG}" \
+              --notes-file "${NOTES_FILE}"
+          else
+            if [ -f "${APK}" ] && [ -f "${SHA_FILE}" ]; then
+              gh release create "${TAG}" "${APK}" "${SHA_FILE}" \
+                --title "ClaudeWilson ${TAG}" \
+                --notes-file "${NOTES_FILE}"
+            else
+              gh release create "${TAG}" \
+                --title "ClaudeWilson ${TAG}" \
+                --notes-file "${NOTES_FILE}"
+            fi
+          fi
