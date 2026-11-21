@@ -4,9 +4,9 @@
 
 # ClaudeWilson
 
-**Claude / ChatGPT Android environment simulator**
+**Android 13–17 environment alignment & risk-observation workbench for Claude / ChatGPT**
 
-ClaudeWilson is a reversible environment observer and aligner. It puts the region, SIM, language, timezone, device model and network egress that a target app reads into one table. Values it can align get a write path; values it cannot align are labelled honestly.
+ClaudeWilson is an offline, reversible Android workbench: it gates launches upfront, aligns region, SIM, locale, timezone, GPS, device profile, and a default-OFF IPv6 watchdog in one pass, and cloaks modern proxy cores inside the target process — paired with a fail-closed Bodyguard and a read-only staging diagnostic ledger. Everything locally alignable reverts without reboot; server-side boundaries are labelled honestly.
 
 <p align="center">
   <a href="README.md">简体中文</a> ·
