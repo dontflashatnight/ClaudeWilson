@@ -1,0 +1,136 @@
+stages:
+  - prepare
+  - release
+
+variables:
+  GIT_DEPTH: "0"
+
+prepare_release:
+  stage: prepare
+  image: alpine:3.20
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  script:
+    - apk add --no-cache curl git
+    - |
+      set -eu
+      TAG="${CI_COMMIT_TAG}"
+      VER="${TAG#v}"
+      APK="dist/ClaudeWilson-${VER}.apk"
+      SHA_FILE="${APK}.sha256"
+
+      if [ ! -f "${APK}" ]; then
+        FALLBACK_APK=$(ls dist/ClaudeWilson-*.apk 2>/dev/null | head -n 1 || true)
+        if [ -n "${FALLBACK_APK}" ]; then
+          APK="${FALLBACK_APK}"
+          SHA_FILE="${APK}.sha256"
+        fi
+      fi
+
+      APK_NAME=$(basename "${APK}")
+      SHA_NAME=$(basename "${SHA_FILE}")
+      PKG_BASE="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/claudewilson/${VER}"
+      APK_URL=""
+      SHA_URL=""
+      SHA=""
+
+      if [ -f "${SHA_FILE}" ]; then
+        SHA=$(awk '{print $1}' "${SHA_FILE}")
+      elif [ -f "${APK}" ]; then
+        SHA=$(sha256sum "${APK}" | awk '{print $1}')
+        printf '%s  %s\n' "${SHA}" "${APK_NAME}" > "${SHA_FILE}"
+      fi
+
+      if [ -f "${APK}" ]; then
+        APK_URL="${PKG_BASE}/${APK_NAME}"
+        curl --fail --silent --show-error \
+          --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          --upload-file "${APK}" \
+          "${APK_URL}"
+      fi
+
+      if [ -f "${SHA_FILE}" ]; then
+        SHA_URL="${PKG_BASE}/${SHA_NAME}"
+        curl --fail --silent --show-error \
+          --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          --upload-file "${SHA_FILE}" \
+          "${SHA_URL}"
+      fi
+
+      CHANGELOG=""
+      TAG_TYPE=$(git cat-file -t "refs/tags/${TAG}" 2>/dev/null || echo "")
+      if [ "${TAG_TYPE}" = "tag" ]; then
+        RAW_TAG_MSG=$(git tag -l --format='%(contents)' "${TAG}")
+        CHANGELOG=$(printf '%s\n' "${RAW_TAG_MSG}" | sed -e '/./,$!d' -e ':a' -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
+      fi
+      if [ -z "${CHANGELOG}" ]; then
+        PREV_TAG=$(git tag --list "v*" --sort=-v:refname | awk -v cur="${TAG}" 'found {print; exit} $0 == cur {found=1}')
+        if [ -n "${PREV_TAG}" ]; then
+          COMMITS=$(git log "${PREV_TAG}..${TAG}" --pretty=format:"- %s" --no-merges)
+        else
+          COMMITS=$(git log "${TAG}" -n 20 --pretty=format:"- %s" --no-merges)
+        fi
+        if [ -n "${COMMITS}" ]; then
+          CHANGELOG=$(printf '### Changes\n%s' "${COMMITS}")
+        fi
+      fi
+
+      {
+        if [ -n "${SHA}" ] && ! printf '%s\n' "${CHANGELOG}" | grep -q '^SHA-256:'; then
+          printf 'SHA-256: `%s`\n' "${SHA}"
+          [ -n "${CHANGELOG}" ] && printf '\n'
+        fi
+        if [ -n "${CHANGELOG}" ]; then
+          printf '%s\n' "${CHANGELOG}"
+        fi
+      } > release_notes.md
+
+      {
+        printf 'APK_NAME=%s\n' "${APK_NAME}"
+        printf 'SHA_NAME=%s\n' "${SHA_NAME}"
+        printf 'APK_URL=%s\n' "${APK_URL}"
+        printf 'SHA_URL=%s\n' "${SHA_URL}"
+      } > release.env
+  artifacts:
+    expire_in: 1 hour
+    paths:
+      - release_notes.md
+    reports:
+      dotenv: release.env
+
+publish_release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs:
+    - job: prepare_release
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  script:
+    - |
+      set -eu
+      DESC=$(cat release_notes.md)
+      if release-cli get --tag-name "${CI_COMMIT_TAG}" >/dev/null 2>&1; then
+        release-cli update \
+          --name "ClaudeWilson ${CI_COMMIT_TAG}" \
+          --tag-name "${CI_COMMIT_TAG}" \
+          --description "${DESC}"
+      elif [ -n "${APK_URL:-}" ] && [ -n "${SHA_URL:-}" ]; then
+        release-cli create \
+          --name "ClaudeWilson ${CI_COMMIT_TAG}" \
+          --tag-name "${CI_COMMIT_TAG}" \
+          --description "${DESC}" \
+          --assets-link "{\"name\":\"${APK_NAME}\",\"url\":\"${APK_URL}\",\"link_type\":\"package\"}" \
+          --assets-link "{\"name\":\"${SHA_NAME}\",\"url\":\"${SHA_URL}\",\"link_type\":\"other\"}"
+      elif [ -n "${APK_URL:-}" ]; then
+        release-cli create \
+          --name "ClaudeWilson ${CI_COMMIT_TAG}" \
+          --tag-name "${CI_COMMIT_TAG}" \
+          --description "${DESC}" \
+          --assets-link "{\"name\":\"${APK_NAME}\",\"url\":\"${APK_URL}\",\"link_type\":\"package\"}"
+      else
+        release-cli create \
+          --name "ClaudeWilson ${CI_COMMIT_TAG}" \
+          --tag-name "${CI_COMMIT_TAG}" \
+          --description "${DESC}"
+      fi
