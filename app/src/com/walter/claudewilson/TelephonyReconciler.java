@@ -23,12 +23,18 @@ final class TelephonyReconciler {
         final String iso;
         final String carrier;
         final int sub;
+        final boolean preserveSim;
 
         Desired(String numeric, String iso, String carrier, int sub) {
+            this(numeric, iso, carrier, sub, false);
+        }
+
+        Desired(String numeric, String iso, String carrier, int sub, boolean preserveSim) {
             this.numeric = numeric;
             this.iso = iso;
             this.carrier = carrier;
             this.sub = sub;
+            this.preserveSim = preserveSim;
         }
     }
 
@@ -37,7 +43,7 @@ final class TelephonyReconciler {
     }
 
     /** Short settle window; later events restart it, so this is not a periodic poll. */
-    private static final long[] RETRY_MS = {700L, 1800L, 4000L, 8000L};
+    private static final long[] RETRY_MS = {900L, 2800L};
     private static final ScheduledExecutorService WORKER =
             Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "telephony-reconciler");
@@ -90,7 +96,35 @@ final class TelephonyReconciler {
             return;
         }
         if (d == null || d.numeric == null || d.numeric.isEmpty()
-                || d.iso == null || d.iso.isEmpty() || !RootShell.rootReady()) {
+                || d.iso == null || d.iso.isEmpty() || !RootShell.shellReady()) {
+            return;
+        }
+        if (d.preserveSim) {
+            if (!RootShell.rootReady()) {
+                return;
+            }
+            int slot = PersonaPanel.activeSlotOf(context);
+            DeviceSignals.refreshNow();
+            boolean netMatch = netMatches(d, slot) && roamingFalse(slot);
+            boolean wrote = false;
+            if (!netMatch) {
+                RootShell.runCapture(SystemBuild.operatorScript(
+                        d.numeric, d.iso, d.carrier == null ? "" : d.carrier));
+                wrote = true;
+                DeviceSignals.refreshNow();
+                changed.run();
+            }
+            if (netMatch && !verify && !wrote) {
+                return;
+            }
+            int next = attempt + 1;
+            if (next < RETRY_MS.length) {
+                try {
+                    WORKER.schedule(() -> reconcile(token, next, true),
+                            RETRY_MS[attempt], TimeUnit.MILLISECONDS);
+                } catch (RejectedExecutionException ignored) {
+                }
+            }
             return;
         }
         if (RootShell.preservesMobileData()) {
@@ -99,10 +133,38 @@ final class TelephonyReconciler {
             // hook instead. Reasserting the persona here re-breaks data after every apply.
             return;
         }
+        if (!RootShell.rootReady()) {
+            // Shell channel: non-persistent CarrierConfig overrides drop on phone restart or
+            // radio reset. Re-assert through Bridge cc when allowed; skip setprop/resetprop.
+            if (!RootShell.simCountryWritable() || d.sub < 0) {
+                return;
+            }
+            boolean match = same(d.iso, shellSimIso());
+            boolean wrote = false;
+            if (!match) {
+                String out = RootShell.runCapture(RootShell.simReassertScript(
+                        d.sub, d.iso, d.carrier == null ? "" : d.carrier));
+                RootShell.observeCarrierDenial(out);
+                wrote = true;
+                changed.run();
+            }
+            if (match && !verify && !wrote) {
+                return;
+            }
+            int next = attempt + 1;
+            if (next < RETRY_MS.length) {
+                try {
+                    WORKER.schedule(() -> reconcile(token, next, true),
+                            RETRY_MS[attempt], TimeUnit.MILLISECONDS);
+                } catch (RejectedExecutionException ignored) {
+                }
+            }
+            return;
+        }
         int slot = PersonaPanel.activeSlotOf(context);
         DeviceSignals.refreshNow();
         boolean simMatch = simMatches(d, slot);
-        boolean netMatch = netMatches(d, slot);
+        boolean netMatch = netMatches(d, slot) && roamingFalse(slot);
         boolean match = simMatch && netMatch;
         boolean wrote = false;
         if (!match) {
@@ -150,6 +212,23 @@ final class TelephonyReconciler {
                         DeviceSignals.getprop("gsm.operator.iso-country"), slot))
                 && same(d.carrier == null ? "" : d.carrier, PersonaPanel.slotValue(
                         DeviceSignals.getprop("gsm.operator.alpha"), slot));
+    }
+
+    private static boolean roamingFalse(int slot) {
+        String raw = PersonaPanel.slotValue(
+                DeviceSignals.getprop("gsm.operator.isroaming"), slot);
+        return raw == null || raw.isEmpty() || "false".equalsIgnoreCase(raw);
+    }
+
+    private String shellSimIso() {
+        try {
+            android.telephony.TelephonyManager tm =
+                    (android.telephony.TelephonyManager) context.getSystemService(
+                            Context.TELEPHONY_SERVICE);
+            return tm == null ? "" : tm.getSimCountryIso();
+        } catch (Throwable t) {
+            return "";
+        }
     }
 
     private static boolean same(String expected, String actual) {

@@ -149,6 +149,11 @@ final class EnvSession {
         e.commit();
     }
 
+    static String activeUser(Context context) {
+        migrate(context);
+        return prefs(context).getString("act_user", null);
+    }
+
     static String activeIso(Context context) {
         migrate(context);
         return prefs(context).getString("act_iso", null);
@@ -169,11 +174,32 @@ final class EnvSession {
         return prefs(context).getBoolean("act_applied", false);
     }
 
+    /** True only when the active session actually overwrote system SIM properties. */
+    static boolean simSpoofed(Context context) {
+        migrate(context);
+        return prefs(context).getBoolean("act_sim_spoofed", false);
+    }
+
+    static void setSimSpoofed(Context context, boolean spoofed) {
+        migrate(context);
+        prefs(context).edit().putBoolean("act_sim_spoofed", spoofed).commit();
+    }
+
     static void setActive(Context context, String iso, String zone, String locale,
                           boolean applied) {
+        setActive(context, null, iso, zone, locale, applied);
+    }
+
+    static void setActive(Context context, String user, String iso, String zone, String locale,
+                          boolean applied) {
         migrate(context);
-        prefs(context).edit().putString("act_iso", iso).putString("act_zone", zone)
-                .putString("act_locale", locale).putBoolean("act_applied", applied).commit();
+        SharedPreferences.Editor e = prefs(context).edit()
+                .putString("act_iso", iso).putString("act_zone", zone)
+                .putString("act_locale", locale).putBoolean("act_applied", applied);
+        if (user != null && !user.trim().isEmpty()) {
+            e.putString("act_user", user.trim());
+        }
+        e.commit();
     }
 
     static void setActiveZone(Context context, String zone) {
@@ -183,18 +209,28 @@ final class EnvSession {
 
     static void clearActive(Context context) {
         migrate(context);
-        prefs(context).edit().remove("act_iso").remove("act_zone").remove("act_locale")
-                .remove("act_applied").commit();
+        prefs(context).edit().remove("act_user").remove("act_iso").remove("act_zone")
+                .remove("act_locale").remove("act_applied").remove("act_sim_spoofed").commit();
     }
 
     /** Starts an apply and invalidates every older completion. */
     static long startApply(Context context, String iso, String zone, String locale) {
+        return startApply(context, null, iso, zone, locale);
+    }
+
+    static long startApply(Context context, String user, String iso, String zone, String locale) {
         migrate(context);
         SharedPreferences p = prefs(context);
         long token = p.getLong(TOKEN, 0L) + 1L;
-        p.edit().putLong(TOKEN, token).putString(PHASE, APPLYING)
+        SharedPreferences.Editor e = p.edit().putLong(TOKEN, token).putString(PHASE, APPLYING)
                 .putString("act_iso", iso).putString("act_zone", zone)
-                .putString("act_locale", locale).putBoolean("act_applied", false).commit();
+                .putString("act_locale", locale).putBoolean("act_applied", false);
+        if (user != null && !user.trim().isEmpty()) {
+            e.putString("act_user", user.trim());
+        } else {
+            e.remove("act_user");
+        }
+        e.commit();
         return token;
     }
 
@@ -232,8 +268,8 @@ final class EnvSession {
                     .remove("base_sim_num").remove("base_sim_iso").remove("base_sim_alpha")
                     .remove("base_sim_display").remove("base_sim_source")
                     .remove("base_sub").remove("base_target").remove("base_user")
-                    .remove("act_iso").remove("act_zone").remove("act_locale")
-                    .remove("act_applied");
+                    .remove("act_user").remove("act_iso").remove("act_zone").remove("act_locale")
+                    .remove("act_applied").remove("act_sim_spoofed");
         }
         editor.commit();
     }

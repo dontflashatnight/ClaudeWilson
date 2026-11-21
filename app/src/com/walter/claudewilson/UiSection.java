@@ -22,14 +22,13 @@ import android.widget.TextView;
 
 /** Shared visual primitives for the existing programmatic UI. */
 abstract class UiSection extends ContextWrapper {
-    // Palette: near-black ground, a slightly lifted surface, one accent for action/selection and
-    // three semantic colors that only ever mean pass / attention / failure.
-    static final int BG = 0xFF05070B, CARD = 0xFF0E1622, CARD2 = 0xFF16202E,
-            STROKE = 0xFF1E2A3B, FG = 0xFFE9EFF8, DIM = 0xFF93A1B5, MUTE = 0xFF5F6F85,
-            // Green/amber/red must read as the three verdicts at a glance. The previous green was
-            // close enough to the cyan accent to look like decoration rather than "all clear".
-            GREEN = 0xFF2FBF71, AMBER = 0xFFF5B301,
-            RED = 0xFFF04452, CYAN = 0xFF35E0C8;
+    // Icon-complementary palette: abyssal teal-black ground (#070D0E), deep ocean-slate surfaces,
+    // complementary teal-cyan accent (#2EC4B6) + seafoam aqua (#7DD3D8), and three semantic tones.
+    static final int BG = 0xFF070D0E, CARD = 0xFF0E1719, CARD2 = 0xFF142124,
+            STROKE = 0xFF1E3136, FG = 0xFFECF6F6, DIM = 0xFF85A4A9, MUTE = 0xFF526E73,
+            GREEN = 0xFF34D399, AMBER = 0xFFE5A93B,
+            RED = 0xFFE55353, ACCENT = 0xFF2EC4B6, SAND = 0xFF7DD3D8,
+            CYAN = ACCENT;
     LinearLayout root;
 
     UiSection(Context context) { super(context); }
@@ -52,33 +51,32 @@ abstract class UiSection extends ContextWrapper {
         base.setStroke(dp(c, 1), STROKE);
         GradientDrawable sheen = new GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0x12FFFFFF, 0x00FFFFFF});
+                new int[]{0x10E8FFFF, 0x00E8FFFF});
         sheen.setCornerRadius(dp(c, 16));
         return new LayerDrawable(new Drawable[]{base, sheen});
     }
 
     /**
-     * Action pill with a hard offset shadow: pressing sinks the face onto its own shadow, the one
-     * motion borrowed from the neubrutalist buttons in the reference library.
+     * Unified dark-luxury action pill: flat luminous accent fill with crisp edge and subtle
+     * scale-down press feedback, matching the rest of the dashboard's restrained pill system.
      */
     TextView primaryChip(String s, int faceColor, int textColor) {
-        TextView t = txt(s, 11, textColor);
+        TextView t = txt(s, 10.5f, textColor);
         t.setTypeface(Typeface.DEFAULT_BOLD);
         t.setGravity(Gravity.CENTER);
         t.setSingleLine(true);
-        final int lift = dp(this, 2);
-        t.setBackground(new HardPill(faceColor, shade(faceColor), dp(this, 18), lift));
-        t.setPadding(dp(this, 10), dp(this, 7), dp(this, 10) + lift, dp(this, 7) + lift);
+        t.setBackground(primaryPill(faceColor));
+        t.setPadding(dp(this, 13), dp(this, 6), dp(this, 13), dp(this, 6));
         t.setOnTouchListener((v, e) -> {
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
-                    v.animate().translationX(lift).translationY(lift)
-                            .setDuration(90).start();
+                    v.animate().scaleX(0.96f).scaleY(0.96f).setDuration(80).start();
                     break;
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
-                    v.animate().translationX(0).translationY(0)
-                            .setDuration(140).start();
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(130)
+                            .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                            .start();
                     break;
                 default:
                     break;
@@ -88,46 +86,13 @@ abstract class UiSection extends ContextWrapper {
         return t;
     }
 
-    /** The same pill as primaryChip, for an existing TextView whose state is changing. */
+    /** Flat rounded accent pill with a faint luminous stroke. */
     Drawable primaryPill(int faceColor) {
-        return new HardPill(faceColor, shade(faceColor), dp(this, 18), dp(this, 2));
-    }
-
-    /** Same hue, darker — the hard shadow colour. */
-    private static int shade(int color) {
-        int r = (int) ((color >> 16 & 0xFF) * 0.45f);
-        int g = (int) ((color >> 8 & 0xFF) * 0.45f);
-        int b = (int) ((color & 0xFF) * 0.45f);
-        return 0xFF000000 | r << 16 | g << 8 | b;
-    }
-
-    /** Rounded face drawn inside a bounds-sized shadow, offset by {@code lift} px. */
-    private static final class HardPill extends Drawable {
-        private final Paint face = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final RectF rect = new RectF();
-        private final float radius;
-        private final int lift;
-
-        HardPill(int faceColor, int shadowColor, float radius, int lift) {
-            face.setColor(faceColor);
-            shadow.setColor(shadowColor);
-            this.radius = radius;
-            this.lift = lift;
-        }
-
-        @Override public void draw(Canvas canvas) {
-            rect.set(getBounds());
-            rect.right -= lift;
-            rect.bottom -= lift;
-            canvas.drawRoundRect(rect, radius, radius, shadow);
-            rect.offset(-lift, -lift);
-            canvas.drawRoundRect(rect, radius, radius, face);
-        }
-
-        @Override public void setAlpha(int alpha) { face.setAlpha(alpha); }
-        @Override public void setColorFilter(ColorFilter cf) { face.setColorFilter(cf); }
-        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(faceColor);
+        g.setCornerRadius(dp(this, 14));
+        g.setStroke(dp(this, 1), 0x33FFFFFF);
+        return g;
     }
 
     TextView chip(String s, int color) {
@@ -160,8 +125,9 @@ abstract class UiSection extends ContextWrapper {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(0, dp(this, 26), 0, dp(this, 10));
         View rule = new View(this);
-        GradientDrawable bar = new GradientDrawable();
-        bar.setColor(CYAN);
+        GradientDrawable bar = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{ACCENT, SAND});
         bar.setCornerRadius(dp(this, 2));
         rule.setBackground(bar);
         LinearLayout.LayoutParams rlp =

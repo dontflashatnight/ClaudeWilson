@@ -174,6 +174,9 @@ public final class ChatGptChecklist {
         out.add(spec("target.build_parts", TARGET,
                 "target self-check Build manufacturer/device/product/hardware/model",
                 NO, "hook-payload", false, false, null));
+        out.add(spec("target.sdk", TARGET,
+                "target self-check sdk_int/release/sdk_prop",
+                NO, "hook-payload", false, false, null));
         out.add(spec("target.su", TARGET, "target self-check su_file/su_os/su_system",
                 NO, "hook-payload", false, false,
                 "file=hidden,os=hidden,system=hidden"));
@@ -182,6 +185,9 @@ public final class ChatGptChecklist {
                 "clean"));
         out.add(spec("target.network_addresses", TARGET,
                 "target self-check non-loopback interface addresses",
+                NO, "hook-payload", false, false, null));
+        out.add(spec("target.ipv6_spoof", TARGET,
+                "target self-check spoofed IPv6 address from hook",
                 NO, "hook-payload", false, false, null));
         out.add(spec("target.data.country_hint", TARGET,
                 "files/datastore/global_phone_country_codes.json",
@@ -403,9 +409,13 @@ public final class ChatGptChecklist {
             partsPreview = data.get("build_parts");
         }
         out.add(next(item("target.build_parts"), buildParts(hook), partsPreview, live));
+        out.add(hook(item("target.sdk"), ClaudeChecklist.targetSdk(hook), live));
         out.add(hook(item("target.su"), su(hook), live));
         out.add(networkView(item("target.network_view"), hook, live));
-        out.add(hook(item("target.network_addresses"), hook.get("iface_ips"), live));
+        out.add(hook(item("target.network_addresses"),
+                ClaudeChecklist.mergeNetAddresses(hook.get("iface_ips"), hook.get("link_addrs")),
+                live));
+        out.add(hook(item("target.ipv6_spoof"), hook.get("ipv6_spoof"), live));
         out.add(value(item("target.data.country_hint"), data.get("country_hint")));
 
         out.add(value(item("system.locale"), text(snapshot.prop("persist.sys.locale"))));

@@ -71,7 +71,6 @@ hu||47.0000|20.0000|
 is||65.0000|-18.0000|
 in||20.0000|77.0000|
 id||-5.0000|120.0000|
-iq||33.0000|44.0000|
 ie||53.0000|-8.0000|
 il||31.4700|35.1300|
 it||42.8333|12.8333|
@@ -167,7 +166,6 @@ tr||39.0000|35.0000|
 tm||40.0000|60.0000|
 tv||-8.0000|178.0000|
 ug||1.0000|32.0000|
-ua||49.0000|32.0000|
 ae||24.0000|54.0000|
 gb||54.0000|-2.0000|
 us||38.0000|-97.0000|
@@ -227,3 +225,234 @@ br|Belem|-1.4558|-48.4902|America/Belem
 br|Fortaleza|-3.7319|-38.5267|America/Fortaleza
 br|Rio Branco|-9.9754|-67.8243|America/Rio_Branco
 za|Johannesburg|-26.2041|28.0473|Africa/Johannesburg
+# --- auto-generated zone coordinates from IANA tzdb ---
+ar|Buenos Aires|-34.6|-58.45|America/Argentina/Buenos_Aires
+ar|Cordoba|-31.4|-64.1833|America/Argentina/Cordoba
+ar|Salta|-24.7833|-65.4167|America/Argentina/Salta
+ar|Jujuy|-24.1833|-65.3|America/Argentina/Jujuy
+ar|Tucuman|-26.8167|-65.2167|America/Argentina/Tucuman
+ar|Catamarca|-28.4667|-65.7833|America/Argentina/Catamarca
+ar|La Rioja|-29.4333|-66.85|America/Argentina/La_Rioja
+at|Vienna|48.2167|16.3333|Europe/Vienna
+bd|Dhaka|23.7167|90.4167|Asia/Dhaka
+be|Brussels|50.8333|4.3333|Europe/Brussels
+bh|Bahrain|26.3833|50.5833|Asia/Bahrain
+ch|Zurich|47.3833|8.5333|Europe/Zurich
+cl|Santiago|-33.45|-70.6667|America/Santiago
+cl|Coyhaique|-45.5667|-72.0667|America/Coyhaique
+cl|Punta Arenas|-53.15|-70.9167|America/Punta_Arenas
+cl|Easter|-27.15|-109.4333|Pacific/Easter
+co|Bogota|4.6|-74.0833|America/Bogota
+cz|Prague|50.0833|14.4333|Europe/Prague
+dk|Copenhagen|55.6667|12.5833|Europe/Copenhagen
+eg|Cairo|30.05|31.25|Africa/Cairo
+es|Madrid|40.4|-3.6833|Europe/Madrid
+es|Ceuta|35.8833|-5.3167|Africa/Ceuta
+es|Canary|28.1|-15.4|Atlantic/Canary
+fi|Helsinki|60.1667|24.9667|Europe/Helsinki
+gh|Accra|5.55|-0.2167|Africa/Accra
+gr|Athens|37.9667|23.7167|Europe/Athens
+hu|Budapest|47.5|19.0833|Europe/Budapest
+ie|Dublin|53.3333|-6.25|Europe/Dublin
+il|Jerusalem|31.7806|35.2239|Asia/Jerusalem
+it|Rome|41.9|12.4833|Europe/Rome
+jo|Amman|31.95|35.9333|Asia/Amman
+ke|Nairobi|-1.2833|36.8167|Africa/Nairobi
+kw|Kuwait|29.3333|47.9833|Asia/Kuwait
+lk|Colombo|6.9333|79.85|Asia/Colombo
+ma|Casablanca|33.65|-7.5833|Africa/Casablanca
+mx|Mexico City|19.4|-99.15|America/Mexico_City
+mx|Cancun|21.0833|-86.7667|America/Cancun
+mx|Merida|20.9667|-89.6167|America/Merida
+mx|Monterrey|25.6667|-100.3167|America/Monterrey
+mx|Matamoros|25.8333|-97.5|America/Matamoros
+mx|Chihuahua|28.6333|-106.0833|America/Chihuahua
+mx|Ciudad Juarez|31.7333|-106.4833|America/Ciudad_Juarez
+ng|Lagos|6.45|3.4|Africa/Lagos
+nl|Amsterdam|52.3667|4.9|Europe/Amsterdam
+no|Oslo|59.9167|10.75|Europe/Oslo
+np|Kathmandu|27.7167|85.3167|Asia/Kathmandu
+om|Muscat|23.6|58.5833|Asia/Muscat
+pe|Lima|-12.05|-77.05|America/Lima
+pk|Karachi|24.8667|67.05|Asia/Karachi
+pl|Warsaw|52.25|21.0|Europe/Warsaw
+pt|Lisbon|38.7167|-9.1333|Europe/Lisbon
+pt|Madeira|32.6333|-16.9|Atlantic/Madeira
+pt|Azores|37.7333|-25.6667|Atlantic/Azores
+qa|Qatar|25.2833|51.5333|Asia/Qatar
+ro|Bucharest|44.4333|26.1|Europe/Bucharest
+sa|Riyadh|24.6333|46.7167|Asia/Riyadh
+se|Stockholm|59.3333|18.05|Europe/Stockholm
+ad|Andorra|42.5|1.5167|Europe/Andorra
+ag|Antigua|17.05|-61.8|America/Antigua
+al|Tirane|41.3333|19.8333|Europe/Tirane
+am|Yerevan|40.1833|44.5|Asia/Yerevan
+ao|Luanda|-8.8|13.2333|Africa/Luanda
+az|Baku|40.3833|49.85|Asia/Baku
+ba|Sarajevo|43.8667|18.4167|Europe/Sarajevo
+bb|Barbados|13.1|-59.6167|America/Barbados
+bf|Ouagadougou|12.3667|-1.5167|Africa/Ouagadougou
+bg|Sofia|42.6833|23.3167|Europe/Sofia
+bi|Bujumbura|-3.3833|29.3667|Africa/Bujumbura
+bj|Porto-Novo|6.4833|2.6167|Africa/Porto-Novo
+bn|Brunei|4.9333|114.9167|Asia/Brunei
+bo|La Paz|-16.5|-68.15|America/La_Paz
+bs|Nassau|25.0833|-77.35|America/Nassau
+bt|Thimphu|27.4667|89.65|Asia/Thimphu
+bw|Gaborone|-24.65|25.9167|Africa/Gaborone
+bz|Belize|17.5|-88.2|America/Belize
+cg|Brazzaville|-4.2667|15.2833|Africa/Brazzaville
+ci|Abidjan|5.3167|-4.0333|Africa/Abidjan
+cm|Douala|4.05|9.7|Africa/Douala
+cr|Costa Rica|9.9333|-84.0833|America/Costa_Rica
+cv|Cape Verde|14.9167|-23.5167|Atlantic/Cape_Verde
+cy|Nicosia|35.1667|33.3667|Asia/Nicosia
+cy|Famagusta|35.1167|33.95|Asia/Famagusta
+dj|Djibouti|11.6|43.15|Africa/Djibouti
+dm|Dominica|15.3|-61.4|America/Dominica
+do|Santo Domingo|18.4667|-69.9|America/Santo_Domingo
+dz|Algiers|36.7833|3.05|Africa/Algiers
+ec|Guayaquil|-2.1667|-79.8333|America/Guayaquil
+ec|Galapagos|-0.9|-89.6|Pacific/Galapagos
+ee|Tallinn|59.4167|24.75|Europe/Tallinn
+fj|Fiji|-18.1333|178.4167|Pacific/Fiji
+fm|Chuuk|7.4167|151.7833|Pacific/Chuuk
+fm|Pohnpei|6.9667|158.2167|Pacific/Pohnpei
+fm|Kosrae|5.3167|162.9833|Pacific/Kosrae
+ga|Libreville|0.3833|9.45|Africa/Libreville
+gd|Grenada|12.05|-61.75|America/Grenada
+ge|Tbilisi|41.7167|44.8167|Asia/Tbilisi
+gm|Banjul|13.4667|-16.65|Africa/Banjul
+gn|Conakry|9.5167|-13.7167|Africa/Conakry
+gq|Malabo|3.75|8.7833|Africa/Malabo
+gt|Guatemala|14.6333|-90.5167|America/Guatemala
+gw|Bissau|11.85|-15.5833|Africa/Bissau
+gy|Guyana|6.8|-58.1667|America/Guyana
+hn|Tegucigalpa|14.1|-87.2167|America/Tegucigalpa
+hr|Zagreb|45.8|15.9667|Europe/Zagreb
+ht|Port-au-Prince|18.5333|-72.3333|America/Port-au-Prince
+is|Reykjavik|64.15|-21.85|Atlantic/Reykjavik
+jm|Jamaica|17.9681|-76.7933|America/Jamaica
+kg|Bishkek|42.9|74.6|Asia/Bishkek
+kh|Phnom Penh|11.55|104.9167|Asia/Phnom_Penh
+ki|Tarawa|1.4167|173.0|Pacific/Tarawa
+ki|Kanton|-2.7833|-171.7167|Pacific/Kanton
+ki|Kiritimati|1.8667|-157.3333|Pacific/Kiritimati
+kn|St Kitts|17.3|-62.7167|America/St_Kitts
+kz|Almaty|43.25|76.95|Asia/Almaty
+kz|Qyzylorda|44.8|65.4667|Asia/Qyzylorda
+kz|Qostanay|53.2|63.6167|Asia/Qostanay
+kz|Aqtobe|50.2833|57.1667|Asia/Aqtobe
+kz|Aqtau|44.5167|50.2667|Asia/Aqtau
+kz|Atyrau|47.1167|51.9333|Asia/Atyrau
+kz|Oral|51.2167|51.35|Asia/Oral
+la|Vientiane|17.9667|102.6|Asia/Vientiane
+lb|Beirut|33.8833|35.5|Asia/Beirut
+lc|St Lucia|14.0167|-61.0|America/St_Lucia
+li|Vaduz|47.15|9.5167|Europe/Vaduz
+lr|Monrovia|6.3|-10.7833|Africa/Monrovia
+ls|Maseru|-29.4667|27.5|Africa/Maseru
+lt|Vilnius|54.6833|25.3167|Europe/Vilnius
+lu|Luxembourg|49.6|6.15|Europe/Luxembourg
+lv|Riga|56.95|24.1|Europe/Riga
+mc|Monaco|43.7|7.3833|Europe/Monaco
+md|Chisinau|47.0|28.8333|Europe/Chisinau
+me|Podgorica|42.4333|19.2667|Europe/Podgorica
+mg|Antananarivo|-18.9167|47.5167|Indian/Antananarivo
+mh|Majuro|7.15|171.2|Pacific/Majuro
+mh|Kwajalein|9.0833|167.3333|Pacific/Kwajalein
+mk|Skopje|41.9833|21.4333|Europe/Skopje
+mp|Saipan|15.2|145.75|Pacific/Saipan
+mr|Nouakchott|18.1|-15.95|Africa/Nouakchott
+mt|Malta|35.9|14.5167|Europe/Malta
+mu|Mauritius|-20.1667|57.5|Indian/Mauritius
+mv|Maldives|4.1667|73.5|Indian/Maldives
+mw|Blantyre|-15.7833|35.0|Africa/Blantyre
+mz|Maputo|-25.9667|32.5833|Africa/Maputo
+na|Windhoek|-22.5667|17.1|Africa/Windhoek
+ne|Niamey|13.5167|2.1167|Africa/Niamey
+ni|Managua|12.15|-86.2833|America/Managua
+nr|Nauru|-0.5167|166.9167|Pacific/Nauru
+pa|Panama|8.9667|-79.5333|America/Panama
+pg|Port Moresby|-9.5|147.1667|Pacific/Port_Moresby
+pg|Bougainville|-6.2167|155.5667|Pacific/Bougainville
+ps|Gaza|31.5|34.4667|Asia/Gaza
+ps|Hebron|31.5333|35.095|Asia/Hebron
+pw|Palau|7.3333|134.4833|Pacific/Palau
+py|Asuncion|-25.2667|-57.6667|America/Asuncion
+rs|Belgrade|44.8333|20.5|Europe/Belgrade
+rw|Kigali|-1.95|30.0667|Africa/Kigali
+sb|Guadalcanal|-9.5333|160.2|Pacific/Guadalcanal
+sc|Mahe|-4.6667|55.4667|Indian/Mahe
+si|Ljubljana|46.05|14.5167|Europe/Ljubljana
+sk|Bratislava|48.15|17.1167|Europe/Bratislava
+sl|Freetown|8.5|-13.25|Africa/Freetown
+sm|San Marino|43.9167|12.4667|Europe/San_Marino
+sn|Dakar|14.6667|-17.4333|Africa/Dakar
+sr|Paramaribo|5.8333|-55.1667|America/Paramaribo
+st|Sao Tome|0.3333|6.7333|Africa/Sao_Tome
+sv|El Salvador|13.7|-89.2|America/El_Salvador
+sz|Mbabane|-26.3|31.1|Africa/Mbabane
+td|Ndjamena|12.1167|15.05|Africa/Ndjamena
+tg|Lome|6.1333|1.2167|Africa/Lome
+tj|Dushanbe|38.5833|68.8|Asia/Dushanbe
+tl|Dili|-8.55|125.5833|Asia/Dili
+tm|Ashgabat|37.95|58.3833|Asia/Ashgabat
+tn|Tunis|36.8|10.1833|Africa/Tunis
+to|Tongatapu|-21.1333|-175.2|Pacific/Tongatapu
+tt|Port of Spain|10.65|-61.5167|America/Port_of_Spain
+tv|Funafuti|-8.5167|179.2167|Pacific/Funafuti
+tz|Dar es Salaam|-6.8|39.2833|Africa/Dar_es_Salaam
+ug|Kampala|0.3167|32.4167|Africa/Kampala
+uy|Montevideo|-34.9092|-56.2125|America/Montevideo
+uz|Samarkand|39.6667|66.8|Asia/Samarkand
+uz|Tashkent|41.3333|69.3|Asia/Tashkent
+va|Vatican|41.9022|12.4531|Europe/Vatican
+vc|St Vincent|13.15|-61.2333|America/St_Vincent
+vu|Efate|-17.6667|168.4167|Pacific/Efate
+ws|Apia|-13.8333|-171.7333|Pacific/Apia
+zm|Lusaka|-15.4167|28.2833|Africa/Lusaka
+zw|Harare|-17.8333|31.05|Africa/Harare
+
+# Curated secondary metro hubs (first row per zone stays default capital/hub)
+jp|Osaka|34.6937|135.5023|Asia/Tokyo
+jp|Yokohama|35.4437|139.6380|Asia/Tokyo
+jp|Kyoto|35.0116|135.7681|Asia/Tokyo
+jp|Nagoya|35.1815|136.9066|Asia/Tokyo
+jp|Fukuoka|33.5902|130.4017|Asia/Tokyo
+jp|Sapporo|43.0618|141.3545|Asia/Tokyo
+us|San Francisco|37.7749|-122.4194|America/Los_Angeles
+us|Seattle|47.6062|-122.3321|America/Los_Angeles
+us|San Jose|37.3382|-121.8863|America/Los_Angeles
+us|Austin|30.2672|-97.7431|America/Chicago
+us|Dallas|32.7767|-96.7970|America/Chicago
+us|Boston|42.3601|-71.0589|America/New_York
+us|Miami|25.7617|-80.1918|America/New_York
+us|Washington DC|38.9072|-77.0369|America/New_York
+us|Atlanta|33.7490|-84.3880|America/New_York
+gb|Manchester|53.4808|-2.2426|Europe/London
+gb|Edinburgh|55.9533|-3.1883|Europe/London
+gb|Birmingham|52.4862|-1.8904|Europe/London
+de|Munich|48.1351|11.5820|Europe/Berlin
+de|Frankfurt|50.1109|8.6821|Europe/Berlin
+de|Hamburg|53.5511|9.9937|Europe/Berlin
+fr|Lyon|45.7640|4.8357|Europe/Paris
+fr|Marseille|43.2965|5.3698|Europe/Paris
+ca|Montreal|45.5017|-73.5673|America/Toronto
+ca|Calgary|51.0447|-114.0719|America/Edmonton
+ca|Ottawa|45.4215|-75.6972|America/Toronto
+kr|Busan|35.1796|129.0756|Asia/Seoul
+kr|Incheon|37.4563|126.7052|Asia/Seoul
+tw|Kaohsiung|22.6273|120.3014|Asia/Taipei
+tw|Taichung|24.1477|120.6736|Asia/Taipei
+nl|Rotterdam|51.9244|4.4777|Europe/Amsterdam
+nl|Utrecht|52.0907|5.1214|Europe/Amsterdam
+sg|Jurong|1.3329|103.7436|Asia/Singapore
+sg|Changi|1.3644|103.9915|Asia/Singapore
+au|Canberra|-35.2809|149.1300|Australia/Sydney
+au|Gold Coast|-28.0167|153.4000|Australia/Brisbane
+ch|Geneva|46.2044|6.1432|Europe/Zurich
+es|Barcelona|41.3874|2.1686|Europe/Madrid
+it|Milan|45.4642|9.1900|Europe/Rome
+se|Gothenburg|57.7089|11.9746|Europe/Stockholm
+ae|Abu Dhabi|24.4539|54.3773|Asia/Dubai

@@ -4,6 +4,7 @@
 The compile step deliberately puts no android.jar on the classpath. A stray platform import in
 model/ or rule/ therefore fails the build here instead of in review.
 """
+import json
 import os
 import re
 import secrets
@@ -49,10 +50,28 @@ def layering_problems():
     return problems
 
 
+def registry_problems():
+    """Verify every owner_files path in tools/target_watch/hook_coverage_registry.json exists."""
+    repo = APP.parent
+    reg_path = repo / "tools" / "target_watch" / "hook_coverage_registry.json"
+    if not reg_path.is_file():
+        return []
+    problems = []
+    try:
+        data = json.loads(reg_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return [f"hook_coverage_registry.json invalid JSON: {exc}"]
+    for sig, entry in data.get("signals", {}).items():
+        for rel in entry.get("owner_files", []):
+            if not (repo / rel).is_file():
+                problems.append(f"registry {sig}: missing owner file {rel}")
+    return problems
+
+
 def main():
-    problems = layering_problems()
+    problems = layering_problems() + registry_problems()
     if problems:
-        print("layering violations:", *problems, sep="\n  ")
+        print("layering/registry violations:", *problems, sep="\n  ")
         return 1
 
     sources = (sorted((PACKAGE / "model").rglob("*.java"))

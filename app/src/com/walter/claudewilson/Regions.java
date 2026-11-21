@@ -103,13 +103,13 @@ public final class Regions {
         "ca","cv","td","cl","co","km","cg","cr","hr","cy","cz","dk","dj",
         "dm","do","tl","ec","eg","sv","gq","ee","sz","fj","fi","fr","ga","gm",
         "ge","de","gh","gr","gd","gt","gn","gw","gy","ht","hn","hu","is","in",
-        "id","iq","ie","il","it","ci","jm","jp","jo","kz","ke","ki","kw","kg",
+        "id","ie","il","it","ci","jm","jp","jo","kz","ke","ki","kw","kg",
         "la","lv","lb","ls","lr","li","lt","lu","mg","mw","my","mv","mt","mp",
         "mh","mr","mu","mx","fm","md","mc","mn","me","ma","mz","na","nr","np",
         "nl","nz","ni","ne","ng","mk","no","om","pk","pw","ps","pa","pg","py",
         "pe","ph","pl","pt","qa","ro","rw","kn","lc","vc","ws","sm","st","sa",
         "sn","rs","sc","sl","sg","sk","si","sb","za","kr","es","lk","sr","se",
-        "ch","tw","tj","tz","th","tg","to","tt","tn","tr","tm","tv","ug","ua",
+        "ch","tw","tj","tz","th","tg","to","tt","tn","tr","tm","tv","ug",
         "ae","gb","us","uy","uz","vu","va","vn","zm","zw"
     };
 
@@ -310,11 +310,17 @@ public final class Regions {
 
     /** random zone+locale pick; the zone comes from the full IANA table for this country. */
     public static String[] pick(R r) {
+        return pick(r, RNG);
+    }
+
+    /** Seeded zone+locale pick bound to the space's persistent salt. */
+    public static String[] pick(R r, java.util.Random rng) {
+        java.util.Random rand = rng == null ? RNG : rng;
         String[] pool = tableZones(r.iso);
         String zone = pool != null && pool.length > 0
-                ? pool[RNG.nextInt(pool.length)]
-                : r.zones[RNG.nextInt(r.zones.length)];
-        return new String[]{zone, r.locales[RNG.nextInt(r.locales.length)]};
+                ? pool[rand.nextInt(pool.length)]
+                : r.zones[rand.nextInt(r.zones.length)];
+        return new String[]{zone, r.locales[rand.nextInt(r.locales.length)]};
     }
 
     /**

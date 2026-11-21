@@ -35,7 +35,13 @@ final class RootProcess {
                 holder[0] = process;
                 String out = readAll(process.getInputStream()).trim();
                 int rc = process.waitFor();
-                result[0] = out.isEmpty() ? "rc=" + rc : Output.bounded(out, max);
+                if (out.isEmpty()) {
+                    result[0] = "rc=" + rc;
+                } else if (rc != 0 && !out.contains("SU_RC=")) {
+                    result[0] = Output.bounded(out + "\nrc=" + rc, max);
+                } else {
+                    result[0] = Output.bounded(out, max);
+                }
             } catch (Throwable t) {
                 error[0] = t;
                 result[0] = "exc:" + t;

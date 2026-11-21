@@ -27,6 +27,34 @@ final class PhoneReloadWatcher {
         return running;
     }
 
+    /**
+     * Runs the phone reload synchronously on the caller's worker thread so a revert can verify
+     * {@code gsm.sim.operator.*} after the process has actually re-read the physical card.
+     */
+    static void runSync() {
+        synchronized (LOCK) {
+            if (RootShell.state() != RootShell.ST_READY || RootShell.rootReady()) {
+                return;
+            }
+            if (running) {
+                awaitQuiet(16000L);
+                DeviceSignals.refreshNow();
+                return;
+            }
+            running = true;
+        }
+        try {
+            String out = RootShell.run(script(), 512, 20000L);
+            Diag.info("phone-reload", out);
+        } finally {
+            running = false;
+            synchronized (LOCK) {
+                LOCK.notifyAll();
+            }
+        }
+        DeviceSignals.refreshNow();
+    }
+
     /** Starts a reload if none is in flight. No-op on the root channel or without root. */
     static void start() {
         synchronized (LOCK) {

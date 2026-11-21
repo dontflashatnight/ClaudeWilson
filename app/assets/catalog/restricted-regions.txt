@@ -1,0 +1,30 @@
+# catalog 2026-11-19
+# Restricted / unsupported countries and territories (ISO 3166-1 alpha-2).
+# Format: iso=scope|mccs|note
+#   scope: all (Claude & ChatGPT), claude, chatgpt, conservative (sanctioned/unlisted)
+# Sources: Anthropic Supported Regions Policy, OpenAI Supported Countries, OFAC sanctions.
+# A physical SIM matching any active entry here MUST be spoofed; a physical SIM outside
+# this list (with no restricted peer slot active) may keep its real SIM trio.
+cn=all|460,461|China Mainland
+hk=all|454|Hong Kong
+mo=all|455|Macao
+ru=all|250|Russia
+by=all|257|Belarus
+kp=all|467|North Korea
+ir=all|432|Iran
+sy=all|417|Syria
+cu=all|368|Cuba
+af=claude|412|Afghanistan
+ve=chatgpt|734|Venezuela
+cd=conservative|630|DR Congo
+cf=conservative|623|Central African Republic
+er=conservative|657|Eritrea
+et=conservative|636|Ethiopia
+iq=conservative|418|Iraq
+ly=conservative|606|Libya
+ml=conservative|610|Mali
+mm=conservative|414|Myanmar
+sd=conservative|634|Sudan
+so=conservative|637|Somalia
+ss=conservative|659|South Sudan
+ye=conservative|421|Yemen

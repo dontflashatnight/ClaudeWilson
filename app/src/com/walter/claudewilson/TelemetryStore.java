@@ -81,6 +81,7 @@ final class TelemetryStore {
             return;
         }
         Map<String, String> fields = new LinkedHashMap<>();
+        java.util.Set<String> unseen = new java.util.LinkedHashSet<>();
         SQLiteDatabase database = null;
         Cursor cursor = null;
         try {
@@ -93,8 +94,16 @@ final class TelemetryStore {
             while (cursor.moveToNext()) {
                 String name = cursor.isNull(0) ? null : cursor.getString(0);
                 String value = cursor.isNull(1) ? null : cursor.getString(1);
-                if (name != null && value != null && allowed(normalize(name))) {
-                    fields.put(normalize(name), value);
+                String norm = normalize(name);
+                if (norm == null || norm.isEmpty()) {
+                    continue;
+                }
+                if (allowed(norm)) {
+                    if (value != null) {
+                        fields.put(norm, value);
+                    }
+                } else if (validUnseenKey(norm)) {
+                    unseen.add(norm);
                 }
             }
         } catch (Throwable ignored) {
@@ -115,6 +124,9 @@ final class TelemetryStore {
         wal.delete();
         shm.delete();
         ingest(context, target, fields, "target-db");
+        if (!unseen.isEmpty()) {
+            recordUnseenKeys(context, target, unseen);
+        }
     }
 
     private static Map<String, String> printableFields(File file) {
@@ -208,6 +220,8 @@ final class TelemetryStore {
             }
         }
         write(context, target, current);
+        LedgerIngestor.ingestTelemetryFields(context, target, Dashboard.activeUserId(),
+                fields, source);
     }
 
     /** Parse the target-process JSONL journal written by the hook. */
@@ -216,6 +230,7 @@ final class TelemetryStore {
             return;
         }
         Map<String, String> fields = new LinkedHashMap<>();
+        java.util.Set<String> unseen = new java.util.LinkedHashSet<>();
         for (String line : text.split("\\n")) {
             String row = line.trim();
             if (row.isEmpty()) {
@@ -223,7 +238,15 @@ final class TelemetryStore {
             }
             try {
                 JSONObject object = new JSONObject(row);
-                if (!"meta".equals(object.optString("type"))) {
+                String type = object.optString("type", "");
+                if ("unseen_key".equals(type)) {
+                    String name = normalize(object.optString("name", ""));
+                    if (name != null && !allowed(name) && validUnseenKey(name)) {
+                        unseen.add(name);
+                    }
+                    continue;
+                }
+                if (!"meta".equals(type)) {
                     continue;
                 }
                 String name = normalize(object.optString("name", ""));
@@ -235,6 +258,102 @@ final class TelemetryStore {
             }
         }
         ingest(context, target, fields, "hook-journal");
+        if (!unseen.isEmpty()) {
+            recordUnseenKeys(context, target, unseen);
+        }
+    }
+
+    /** Returns passively discovered unseen Firelog metadata key names (never values). */
+    static synchronized java.util.List<String> unseenKeys(Context context, String target) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (context == null || target == null) {
+            return out;
+        }
+        File file = unseenFile(context, target);
+        if (!file.isFile()) {
+            return out;
+        }
+        try {
+            JSONObject root = new JSONObject(readText(file));
+            org.json.JSONArray arr = root.optJSONArray("keys");
+            if (arr != null) {
+                for (int i = 0; i < arr.length(); i++) {
+                    String key = normalize(arr.optString(i, ""));
+                    if (key != null && !allowed(key) && validUnseenKey(key) && !out.contains(key)) {
+                        out.add(key);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        java.util.Collections.sort(out);
+        return out;
+    }
+
+    static synchronized void recordUnseenKeys(Context context, String target,
+            java.util.Collection<String> keys) {
+        if (context == null || target == null || keys == null || keys.isEmpty()) {
+            return;
+        }
+        java.util.TreeSet<String> merged = new java.util.TreeSet<>(unseenKeys(context, target));
+        int before = merged.size();
+        for (String raw : keys) {
+            if (merged.size() >= 128) {
+                break;
+            }
+            String key = normalize(raw);
+            if (key != null && !allowed(key) && validUnseenKey(key)) {
+                merged.add(key);
+            }
+        }
+        if (merged.size() == before) {
+            return;
+        }
+        try {
+            File file = unseenFile(context, target);
+            File dir = file.getParentFile();
+            if (dir != null && !dir.isDirectory() && !dir.mkdirs()) {
+                return;
+            }
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (String key : merged) {
+                arr.put(key);
+            }
+            JSONObject root = new JSONObject();
+            root.put("version", VERSION);
+            root.put("keys", arr);
+            File temp = new File(file.getPath() + ".tmp");
+            try (FileOutputStream out = new FileOutputStream(temp)) {
+                out.write(root.toString().getBytes(StandardCharsets.UTF_8));
+                out.getFD().sync();
+            }
+            if (!temp.renameTo(file)) {
+                Files.copy(temp.toPath(), file.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                temp.delete();
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean validUnseenKey(String key) {
+        if (key == null || key.isEmpty() || key.length() > 64) {
+            return false;
+        }
+        for (int i = 0; i < key.length(); i++) {
+            char c = key.charAt(i);
+            boolean ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9')
+                    || c == '_' || c == '.' || c == ':' || c == '/' || c == '-';
+            if (!ok) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static File unseenFile(Context context, String target) {
+        return new File(dir(context, target), "unseen_keys.json");
     }
 
     static String latest(Map<String, Entry> entries, String key) {

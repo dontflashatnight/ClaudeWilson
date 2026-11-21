@@ -3,9 +3,11 @@ package com.walter.claudewilson;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import com.walter.claudewilson.model.SimPolicy;
 import com.walter.claudewilson.model.TargetRegistry;
 import com.walter.claudewilson.model.TargetSpec;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /** Region backup/restore and subscription reads, independent of screen widgets. */
@@ -43,32 +45,43 @@ final class RegionActions {
         if (sub != null && sub[4] != null && sub[4].matches("\\d+")) {
             source = Integer.parseInt(sub[4]);
         }
-        String targetLocale = appLocales(target == null ? null : target.packageName());
-        String browserLocale = appLocales(RootShell.browserPackage(context));
+        String targetLocale = appLocales(target == null ? null : target.packageName(), userId);
+        String browserLocale = appLocales(RootShell.browserPackage(context), userId);
         EnvSession.captureBaseline(context, num, iso, alpha, display, source, active,
                 target == null ? TargetRegistry.CLAUDE.id() : target.id(), userId,
                 targetLocale, browserLocale);
     }
 
     /** Per-app locale list, or "" when the app follows the system. */
-    private String appLocales(String pkg) {
+    private String appLocales(String pkg, String userId) {
         if (pkg == null || !com.walter.claudewilson.model.ShellQuote.packageName(pkg)) {
             return "";
         }
-        String out = RootShell.run("cmd locale get-app-locales " + pkg, 256);
+        String userOpt = userId != null
+                && com.walter.claudewilson.model.ShellQuote.numeric(userId)
+                && !"0".equals(userId) ? " --user " + userId : "";
+        String out = RootShell.run("cmd locale get-app-locales " + pkg + userOpt, 256);
         int open = out.indexOf('[');
         int close = out.lastIndexOf(']');
         return open >= 0 && close > open ? out.substring(open + 1, close).trim() : "";
     }
 
-    private String setAppLocales(String pkg, String locales) {
+    private String setAppLocales(String pkg, String locales, String userId) {
         if (pkg == null || !com.walter.claudewilson.model.ShellQuote.packageName(pkg)) {
             return "";
         }
-        String command = "cmd locale set-app-locales " + pkg
-                + (locales == null || locales.isEmpty()
-                        ? "" : " --locales " + com.walter.claudewilson.model.ShellQuote
-                                .quote(locales));
+        boolean nonZeroUser = userId != null
+                && com.walter.claudewilson.model.ShellQuote.numeric(userId)
+                && !"0".equals(userId);
+        String pmUserOpt = nonZeroUser ? "--user " + userId + " " : "";
+        String locUserOpt = nonZeroUser ? " --user " + userId : "";
+        String localeArg = (locales == null || locales.isEmpty())
+                ? " --locales empty"
+                : " --locales " + com.walter.claudewilson.model.ShellQuote.quote(locales);
+        String call = "cmd locale set-app-locales " + pkg + locUserOpt + localeArg;
+        String wrapped = RootShell.wrappedLocaleCall("locale-restore", call, RootShell.rootReady());
+        String command = "if pm path " + pmUserOpt + pkg + " >/dev/null 2>&1; then "
+                + wrapped + "; fi";
         return RootShell.run(command, 256);
     }
 
@@ -103,8 +116,7 @@ final class RegionActions {
     String[] subscriptionIdentity() {
         try {
             android.telephony.SubscriptionManager sm =
-                    (android.telephony.SubscriptionManager) context.getSystemService(
-                            Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+                    context.getSystemService(android.telephony.SubscriptionManager.class);
             List<android.telephony.SubscriptionInfo> subs =
                     sm == null ? null : sm.getActiveSubscriptionInfoList();
             if (subs == null || subs.isEmpty()) {
@@ -152,6 +164,123 @@ final class RegionActions {
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    /**
+     * Evaluates whether the live physical SIM is outside the persisted restricted-regions catalog
+     * and safe to preserve untouched (including dual-SIM peer-slot checks).
+     */
+    static SimPolicy.Decision evaluateRealSim(Context ctx, String targetId,
+                                              boolean preserveEnabled) {
+        String activeOp = "";
+        String activeIso = "";
+        String activeCarrier = "";
+        String activeDisplay = "";
+        List<String> allOps = new ArrayList<String>();
+        List<String> allIsos = new ArrayList<String>();
+        try {
+            android.telephony.SubscriptionManager sm =
+                    ctx.getSystemService(android.telephony.SubscriptionManager.class);
+            List<android.telephony.SubscriptionInfo> subs =
+                    sm == null ? null : sm.getActiveSubscriptionInfoList();
+            if (subs != null && !subs.isEmpty()) {
+                int wanted = android.telephony.SubscriptionManager.getDefaultDataSubscriptionId();
+                android.telephony.SubscriptionInfo chosen = subs.get(0);
+                for (android.telephony.SubscriptionInfo s : subs) {
+                    String mcc = s.getMccString();
+                    String mnc = s.getMncString();
+                    if (mcc != null && mnc != null && !mcc.isEmpty() && !mnc.isEmpty()) {
+                        allOps.add(mcc + mnc);
+                    }
+                    String iso = s.getCountryIso();
+                    if (iso != null && !iso.isEmpty()) {
+                        allIsos.add(iso);
+                    }
+                    if (s.getSubscriptionId() == wanted) {
+                        chosen = s;
+                    }
+                }
+                String mcc = chosen.getMccString();
+                String mnc = chosen.getMncString();
+                if (mcc != null && mnc != null && !mcc.isEmpty() && !mnc.isEmpty()) {
+                    activeOp = mcc + mnc;
+                }
+                activeIso = nn(chosen.getCountryIso());
+                CharSequence cName = chosen.getCarrierName();
+                CharSequence dName = chosen.getDisplayName();
+                activeCarrier = cleanLocalizedCarrier(cName == null ? "" : cName.toString());
+                activeDisplay = cleanLocalizedCarrier(dName == null ? "" : dName.toString());
+            }
+        } catch (Throwable ignored) {
+        }
+        // Inspect live per-slot SIM props as well so a restricted peer slot cannot slip through
+        // if SubscriptionManager is unreadable or briefly lags behind radio state.
+        String rawOps = nn(DeviceSignals.getprop("gsm.sim.operator.numeric"));
+        String rawIsos = nn(DeviceSignals.getprop("gsm.sim.operator.iso-country"));
+        for (String part : rawOps.split(",")) {
+            String t = part.trim();
+            if (!t.isEmpty() && !allOps.contains(t)) {
+                allOps.add(t);
+            }
+        }
+        for (String part : rawIsos.split(",")) {
+            String t = part.trim();
+            if (!t.isEmpty() && !allIsos.contains(t)) {
+                allIsos.add(t);
+            }
+        }
+        // Only override live SubscriptionInfo with EnvSession.Baseline when the active session
+        // actually wrote spoofed SIM properties. In preserve-SIM mode (including Multi-IMSI eSIMs
+        // that switch IMSI under the same subId), live SubscriptionInfo stays the source of truth.
+        EnvSession.Baseline base = EnvSession.baseline(ctx);
+        int currentSub = new RegionActions(ctx).activeSub();
+        if (EnvSession.simSpoofed(ctx) && base != null && base.sub >= 0 && base.sub == currentSub
+                && base.simNum != null && !base.simNum.isEmpty()) {
+            activeOp = base.simNum;
+            activeIso = nn(base.simIso);
+            activeCarrier = cleanLocalizedCarrier(nn(base.simAlpha));
+            activeDisplay = cleanLocalizedCarrier(nn(base.simDisplay));
+            if (!allOps.contains(base.simNum)) {
+                allOps.add(base.simNum);
+            }
+            if (!activeIso.isEmpty() && !allIsos.contains(activeIso)) {
+                allIsos.add(activeIso);
+            }
+        }
+        if (activeOp.isEmpty()) {
+            if (base != null && base.simNum != null && !base.simNum.isEmpty()) {
+                activeOp = base.simNum;
+                activeIso = nn(base.simIso);
+                activeCarrier = cleanLocalizedCarrier(nn(base.simAlpha));
+                activeDisplay = cleanLocalizedCarrier(nn(base.simDisplay));
+            } else {
+                int slot = PersonaPanel.activeSlotOf(ctx);
+                activeOp = nn(PersonaPanel.slotValue(rawOps, slot));
+                activeIso = nn(PersonaPanel.slotValue(rawIsos, slot));
+                activeCarrier = cleanLocalizedCarrier(nn(PersonaPanel.slotValue(
+                        DeviceSignals.getprop("gsm.sim.operator.alpha"), slot)));
+            }
+        }
+        return SimPolicy.evaluate(
+                com.walter.claudewilson.platform.TablesLoader.load(ctx),
+                targetId, preserveEnabled,
+                activeOp, activeIso, activeCarrier, activeDisplay,
+                allOps, allIsos);
+    }
+
+    /** Strips localized no-service placeholders before passing to pure-ASCII SimPolicy. */
+    private static String cleanLocalizedCarrier(String raw) {
+        String s = raw == null ? "" : raw.trim();
+        int bar = s.indexOf(" | ");
+        if (bar > 0) {
+            s = s.substring(0, bar).trim();
+        }
+        if ("没有服务".equals(s) || "无服务".equals(s) || "仅限紧急呼叫".equals(s)
+                || "僅限緊急通話".equals(s) || "無服務".equals(s)
+                || "圏外".equals(s) || "緊急通報のみ".equals(s)) {
+            return "";
+        }
+        return s;
     }
 
     private static String nn(String v) { return v == null ? "" : v; }
@@ -202,10 +331,13 @@ final class RegionActions {
             if (!com.walter.claudewilson.model.ShellQuote.numeric(userId)) {
                 return new Result("refused: invalid user id", false, false, false);
             }
+            String revertTargetPkg = target != null
+                    ? target.packageName() : Targets.current().packageName();
             com.walter.claudewilson.model.Outcome res =
                     RootShell.revert(sub, zone, auto, sim,
                             RootShell.browserPackage(context),
-                            Targets.current().packageName());
+                            revertTargetPkg,
+                            userId);
             boolean root = RootShell.rootReady();
             boolean aidFailed = false;
             boolean fwmuFailed = false;
@@ -216,9 +348,17 @@ final class RegionActions {
             EnvSession.Baseline baseline = EnvSession.baseline(context);
             if (baseline != null) {
                 String targetPkg = target == null ? null : target.packageName();
-                localeOut = setAppLocales(targetPkg, baseline.targetLocale)
-                        + setAppLocales(RootShell.browserPackage(context), baseline.browserLocale);
-                localeFailed = RootShell.failed(localeOut);
+                // Empty baseline locales were already cleared by RootShell.revert(); only restore
+                // non-empty user-configured per-app locales here.
+                String tOut = (baseline.targetLocale != null && !baseline.targetLocale.isEmpty())
+                        ? setAppLocales(targetPkg, baseline.targetLocale, userId) : "";
+                String bOut = (baseline.browserLocale != null && !baseline.browserLocale.isEmpty())
+                        ? setAppLocales(RootShell.browserPackage(context),
+                                baseline.browserLocale, userId) : "";
+                localeFailed = (!tOut.isEmpty() && RootShell.failed(tOut))
+                        || (!bOut.isEmpty() && RootShell.failed(bOut));
+                localeOut = tOut.isEmpty() ? bOut
+                        : bOut.isEmpty() ? tOut : tOut + "\n" + bOut;
             }
             if (root) {
                 // This probe is one shell process. The old revert started `su` unconditionally,
@@ -294,9 +434,9 @@ final class RegionActions {
     private String[] liveSim() {
         try {
             android.telephony.SubscriptionManager sm =
-                    android.telephony.SubscriptionManager.from(context);
+                    context.getSystemService(android.telephony.SubscriptionManager.class);
             java.util.List<android.telephony.SubscriptionInfo> l =
-                    sm.getActiveSubscriptionInfoList();
+                    sm == null ? null : sm.getActiveSubscriptionInfoList();
             if (l == null || l.isEmpty()) return null;
             // The enabled card is the one the device actually runs on: prefer the default data
             // subscription, and never skip the eSIM -- on this device the eSIM is the only card.
@@ -336,23 +476,54 @@ final class RegionActions {
     /** Physical SIM's home timezone; embedded subscriptions are skipped. */
     private String homeZoneFromSim() {
         try {
-            List<android.telephony.SubscriptionInfo> l =
-                    android.telephony.SubscriptionManager.from(context)
-                            .getAllSubscriptionInfoList();
+            android.telephony.SubscriptionManager sm =
+                    context.getSystemService(android.telephony.SubscriptionManager.class);
+            if (sm == null) return null;
+            List<android.telephony.SubscriptionInfo> l = allOrActiveSubscriptions(sm);
             if (l == null) return null;
-            android.telephony.SubscriptionInfo best = null;
+            int bestMcc = -1;
             int score = -1;
             for (android.telephony.SubscriptionInfo si : l) {
-                if (si.isEmbedded() || si.getMcc() <= 0) continue;
+                if (si.isEmbedded()) continue;
+                int mcc = parsePositiveInt(si.getMccString());
+                if (mcc <= 0) continue;
                 int s = si.getSubscriptionId()
                         + (si.getSimSlotIndex() >= 0 ? 100000 : 0);
-                if (s > score) { score = s; best = si; }
+                if (s > score) { score = s; bestMcc = mcc; }
             }
-            if (best == null) return null;
-            String iso = Regions.isoForMcc(best.getMcc());
+            if (bestMcc <= 0) return null;
+            String iso = Regions.isoForMcc(bestMcc);
             return iso == null ? null : Regions.primaryZone(iso);
         } catch (Throwable ignored) {}
         return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<android.telephony.SubscriptionInfo> allOrActiveSubscriptions(
+            android.telephony.SubscriptionManager sm) {
+        if (android.os.Build.VERSION.SDK_INT >= 34) {
+            try {
+                java.lang.reflect.Method m = android.telephony.SubscriptionManager.class
+                        .getMethod("getAllSubscriptionInfoList");
+                Object list = m.invoke(sm);
+                if (list instanceof List) {
+                    return (List<android.telephony.SubscriptionInfo>) list;
+                }
+            } catch (Throwable ignored) {
+                // Fall back to active subscriptions when getAllSubscriptionInfoList is unavailable.
+            }
+        }
+        return sm.getActiveSubscriptionInfoList();
+    }
+
+    private static int parsePositiveInt(String raw) {
+        if (raw == null || raw.isEmpty()) return -1;
+        try {
+            int val = Integer.parseInt(raw.trim());
+            return val > 0 ? val : -1;
+        } catch (NumberFormatException ignored) {
+            return -1;
+        }
     }
 
     /**
@@ -364,7 +535,8 @@ final class RegionActions {
     int activeSub() {
         try {
             android.telephony.SubscriptionManager sm =
-                    android.telephony.SubscriptionManager.from(context);
+                    context.getSystemService(android.telephony.SubscriptionManager.class);
+            if (sm == null) return -1;
             // The default data subscription is the one the target actually runs on. Taking
             // list.get(0) picked the disabled physical SIM on a device whose only enabled SIM
             // is the eSIM, so the carrier override landed on a slot that is switched off.

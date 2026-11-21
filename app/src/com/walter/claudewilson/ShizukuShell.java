@@ -5,10 +5,12 @@ import android.content.pm.PackageManager;
 import com.walter.claudewilson.model.Output;
 
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.InputStream;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 
 import rikka.shizuku.Shizuku;
-import rikka.shizuku.ShizukuRemoteProcess;
 
 /** Non-root privileged channel through the Shizuku server (uid 2000 or 0). */
 final class ShizukuShell {
@@ -17,6 +19,7 @@ final class ShizukuShell {
     static final int ST_READY = 2;
 
     private static final long TIMEOUT_MS = 20000L;
+    private static volatile Method cachedNewProcess;
 
     private ShizukuShell() {
     }
@@ -49,23 +52,63 @@ final class ShizukuShell {
         return run(sh, max, TIMEOUT_MS);
     }
 
+    private static Method resolveNewProcess() throws NoSuchMethodException {
+        Method method = cachedNewProcess;
+        if (method != null) {
+            return method;
+        }
+        try {
+            method = Shizuku.class.getDeclaredMethod(
+                    "newProcess", String[].class, String[].class, String.class);
+        } catch (NoSuchMethodException e) {
+            method = Shizuku.class.getMethod(
+                    "newProcess", String[].class, String[].class, String.class);
+        }
+        method.setAccessible(true);
+        cachedNewProcess = method;
+        return method;
+    }
+
     static String run(final String sh, final int max, long timeoutMs) {
         final String[] result = new String[1];
         final Process[] holder = new Process[1];
         Thread worker = new Thread(() -> {
+            Process process = null;
             try {
-                java.lang.reflect.Method method = Shizuku.class.getDeclaredMethod(
-                        "newProcess", String[].class, String[].class, String.class);
-                method.setAccessible(true);
-                ShizukuRemoteProcess remote = (ShizukuRemoteProcess) method.invoke(
-                        null, new String[]{"sh", "-c", sh}, null, null);
-                Process process = remote;
+                if (!Shizuku.pingBinder()) {
+                    result[0] = "exc:shizuku-no-binder";
+                    return;
+                }
+                Method method = resolveNewProcess();
+                Object created = method.invoke(
+                        null, new String[]{"sh", "-c", "exec 2>&1\n" + sh}, null, null);
+                if (!(created instanceof Process)) {
+                    result[0] = "exc:shizuku-null-process";
+                    return;
+                }
+                process = (Process) created;
                 holder[0] = process;
                 String out = readAll(process.getInputStream()).trim();
                 int rc = process.waitFor();
-                result[0] = out.isEmpty() ? "rc=" + rc : Output.bounded(out, max);
+                if (out.isEmpty()) {
+                    result[0] = "rc=" + rc;
+                } else if (rc != 0) {
+                    result[0] = Output.bounded(out + "\nrc=" + rc, max);
+                } else {
+                    result[0] = Output.bounded(out, max);
+                }
             } catch (Throwable t) {
-                result[0] = "exc:" + t;
+                Throwable cause = (t instanceof InvocationTargetException && t.getCause() != null)
+                        ? t.getCause() : t;
+                if (cause instanceof SecurityException) {
+                    result[0] = "exc:shizuku-security:" + safeMessage(cause);
+                } else if (cause instanceof IllegalStateException) {
+                    result[0] = "exc:shizuku-state:" + safeMessage(cause);
+                } else {
+                    result[0] = "exc:" + cause;
+                }
+            } finally {
+                closeProcessStreams(process);
             }
         }, "shizuku-run");
         worker.setDaemon(true);
@@ -85,8 +128,34 @@ final class ShizukuShell {
             } catch (Throwable ignored) {
                 // process already gone
             }
+            closeProcessStreams(process);
         }
         return "timeout: no answer in " + timeoutMs + "ms";
+    }
+
+    private static String safeMessage(Throwable t) {
+        String msg = t.getMessage();
+        return msg == null || msg.isEmpty() ? t.getClass().getSimpleName() : msg;
+    }
+
+    private static void closeProcessStreams(Process process) {
+        if (process == null) {
+            return;
+        }
+        closeQuietly(process.getInputStream());
+        closeQuietly(process.getErrorStream());
+        closeQuietly(process.getOutputStream());
+    }
+
+    private static void closeQuietly(Closeable c) {
+        if (c == null) {
+            return;
+        }
+        try {
+            c.close();
+        } catch (Throwable ignored) {
+            // already closed
+        }
     }
 
     private static String readAll(InputStream in) throws Exception {

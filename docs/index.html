@@ -1,0 +1,1351 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ClaudeWilson — Android Environment Workbench for Claude &amp; ChatGPT</title>
+  <link rel="icon" type="image/png" href="./icon.png" />
+  <meta name="description" content="Align region, SIM, timezone, GPS, IPv6 watchdog, modern proxy stealth, and 5-dimension staging diagnostics before opening Claude or ChatGPT on Android 13–17." />
+  <style>
+    :root {
+      --bg: #070c0f;
+      --bg-elev: #0c1418;
+      --app-bg-top: #0d191b;
+      --app-bg: #0b1114;
+      --card: #121d21;
+      --card-2: #162429;
+      --tile: #142025;
+      --stroke: #203137;
+      --stroke-hi: rgba(47, 224, 184, 0.38);
+      --fg: #edf4f6;
+      --dim: #8ea4ac;
+      --mute: #5d737c;
+      --accent: #2fe0b8;
+      --accent-soft: rgba(47, 224, 184, 0.12);
+      --red: #e8616b;
+      --red-soft: rgba(232, 97, 107, 0.13);
+      --amber: #f0b84b;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+      --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+      scroll-behavior: smooth;
+    }
+
+    body {
+      min-height: 100vh;
+      background:
+        radial-gradient(900px 520px at 78% 14%, rgba(47, 224, 184, 0.08), transparent 65%),
+        radial-gradient(700px 480px at 14% 72%, rgba(28, 130, 155, 0.07), transparent 65%),
+        var(--bg);
+      overflow-x: hidden;
+    }
+
+    .grid-bg {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(148, 198, 206, 0.028) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 198, 206, 0.028) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse 80% 70% at 50% 25%, #000 30%, transparent 85%);
+      z-index: 0;
+    }
+
+    .shell {
+      position: relative;
+      z-index: 1;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 28px;
+    }
+
+    /* Navigation */
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 74px;
+      border-bottom: 1px solid rgba(148, 198, 206, 0.12);
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 11px;
+      text-decoration: none;
+      color: var(--fg);
+    }
+
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      border-radius: 9px;
+      overflow: hidden;
+      border: 1px solid var(--stroke-hi);
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+    }
+    .brand-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+    .brand-name { font-weight: 700; font-size: 16px; letter-spacing: -0.02em; }
+    .nav-right { display: flex; align-items: center; gap: 10px; }
+
+    .nav-link {
+      color: var(--dim);
+      text-decoration: none;
+      font-size: 13.5px;
+      font-weight: 500;
+      padding: 8px 12px;
+      border-radius: 9px;
+      transition: color 180ms var(--ease), background 180ms var(--ease);
+    }
+    .nav-link:hover { color: var(--fg); background: rgba(255, 255, 255, 0.04); }
+
+    .lang-pill {
+      display: inline-flex;
+      background: var(--card);
+      border: 1px solid var(--stroke);
+      border-radius: 999px;
+      padding: 3px;
+      gap: 2px;
+    }
+    .lang-btn {
+      border: 0;
+      background: transparent;
+      color: var(--dim);
+      font-family: var(--mono);
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 5px 10px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 180ms var(--ease);
+    }
+    .lang-btn.active { background: var(--accent); color: #041310; }
+
+    /* Hero */
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(360px, 404px);
+      gap: 64px;
+      align-items: center;
+      padding: 54px 0 78px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: 0.02em;
+      color: var(--accent);
+      background: var(--accent-soft);
+      border: 1px solid var(--stroke-hi);
+      padding: 6px 12px;
+      border-radius: 999px;
+      margin-bottom: 22px;
+    }
+    .eyebrow-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+
+    h1 {
+      font-size: clamp(34px, 4.5vw, 52px);
+      line-height: 1.09;
+      letter-spacing: -0.035em;
+      font-weight: 700;
+      margin-bottom: 20px;
+    }
+    h1 .accent { color: var(--accent); }
+
+    .hero-copy {
+      font-size: 15.5px;
+      line-height: 1.68;
+      color: var(--dim);
+      max-width: 510px;
+      margin-bottom: 28px;
+    }
+
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 32px; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      padding: 12px 20px;
+      border-radius: 12px;
+      text-decoration: none;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: transform 160ms var(--ease), background 180ms var(--ease), border-color 180ms var(--ease);
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary { background: var(--accent); color: #041310; }
+    .btn-primary:hover { background: #46ecc6; }
+    .btn-ghost { background: var(--card); color: var(--fg); border-color: var(--stroke); }
+    .btn-ghost:hover { border-color: var(--stroke-hi); background: var(--card-2); }
+
+    /* Scenario Jump Cards (50% User Scenario + 50% Engineering Anchor) */
+    .jump-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      max-width: 530px;
+    }
+
+    .jump-btn {
+      text-align: left;
+      background: var(--card);
+      border: 1px solid var(--stroke);
+      border-radius: 14px;
+      padding: 13px 15px;
+      color: var(--fg);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      transition: all 180ms var(--ease);
+    }
+    .jump-btn:hover { border-color: rgba(148, 198, 206, 0.28); background: var(--card-2); }
+    .jump-btn.active {
+      border-color: var(--stroke-hi);
+      background: linear-gradient(155deg, rgba(47, 224, 184, 0.11), rgba(18, 29, 33, 0.96));
+    }
+    .jump-kicker { font-family: var(--mono); font-size: 10.5px; color: var(--mute); }
+    .jump-btn.active .jump-kicker { color: var(--accent); }
+    .jump-title { font-size: 13.5px; font-weight: 650; line-height: 1.3; }
+    .jump-spec { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
+
+    /* 1:1 Authentic Android Phone Frame (Single Continuous ScrollView) */
+    .phone-wrap { position: relative; display: flex; justify-content: center; }
+    .phone-glow {
+      position: absolute;
+      inset: 28px -18px;
+      background: radial-gradient(circle at 50% 30%, rgba(47, 224, 184, 0.15), transparent 68%);
+      filter: blur(28px);
+      pointer-events: none;
+    }
+
+    .phone {
+      position: relative;
+      width: 392px;
+      height: 786px;
+      border-radius: 46px;
+      background: #070d10;
+      border: 1px solid rgba(176, 220, 226, 0.22);
+      box-shadow: 0 34px 90px rgba(0, 0, 0, 0.68), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      padding: 11px;
+      display: flex;
+    }
+
+    .phone-screen {
+      position: relative;
+      flex: 1;
+      border-radius: 36px;
+      background: linear-gradient(180deg, var(--app-bg-top) 0%, var(--app-bg) 28%, var(--app-bg) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 11px 22px 6px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--dim);
+      background: linear-gradient(180deg, rgba(11, 20, 22, 0.96), rgba(11, 20, 22, 0));
+      flex-shrink: 0;
+    }
+    .camera-dot { width: 10px; height: 10px; border-radius: 50%; background: #040709; border: 1px solid rgba(255,255,255,0.08); }
+
+    .app-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 18px 26px;
+      scroll-behavior: smooth;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(148, 198, 206, 0.18) transparent;
+    }
+    .app-scroll::-webkit-scrollbar { width: 4px; }
+    .app-scroll::-webkit-scrollbar-thumb { background: rgba(148, 198, 206, 0.2); border-radius: 99px; }
+
+    .cw-header { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 14px; }
+    .cw-title-grp { display: flex; align-items: center; gap: 10px; }
+    .cw-bar { width: 4px; height: 22px; border-radius: 99px; background: var(--accent); }
+    .cw-title { font-size: 21px; font-weight: 700; letter-spacing: -0.02em; }
+    .cw-hdr-right { display: flex; align-items: center; gap: 8px; }
+
+    .cw-root {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      background: rgba(47, 224, 184, 0.06);
+      border: 1px solid rgba(47, 224, 184, 0.36);
+      padding: 5px 13px;
+      border-radius: 999px;
+    }
+
+    .cw-eye {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: 1px solid var(--stroke);
+      background: rgba(18, 29, 33, 0.7);
+      color: var(--dim);
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      transition: all 160ms var(--ease);
+    }
+    .cw-eye.masked { color: var(--accent); border-color: var(--stroke-hi); background: var(--accent-soft); }
+
+    .cw-seg {
+      padding: 4px;
+      border-radius: 15px;
+      background: #0f181c;
+      border: 1px solid var(--stroke);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+    .cw-seg-btn {
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--dim);
+      border-radius: 11px;
+      padding: 9px 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: baseline;
+      justify-content: center;
+      gap: 5px;
+      transition: all 160ms var(--ease);
+    }
+    .cw-seg-btn strong { font-size: 13.5px; font-weight: 650; }
+    .cw-seg-btn span { font-family: var(--mono); font-size: 9.5px; color: var(--mute); }
+    .cw-seg-btn.active { background: #142126; border-color: rgba(47, 224, 184, 0.32); color: var(--fg); }
+
+    .cw-preflight {
+      border-radius: 14px;
+      padding: 10px 13px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      border: 1px solid;
+      transition: all 220ms var(--ease);
+    }
+    .cw-preflight.blocked { background: var(--red-soft); border-color: rgba(232, 97, 107, 0.45); color: #f47c85; }
+    .cw-preflight.ready { background: rgba(47, 224, 184, 0.09); border-color: rgba(47, 224, 184, 0.36); color: #67f0cf; }
+    .cw-pf-txt { font-size: 13px; font-weight: 650; }
+    .cw-pf-btn {
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 4px 11px;
+      border-radius: 999px;
+      border: 1px solid currentColor;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+    }
+
+    .cw-sec {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--fg);
+      margin: 4px 0 10px;
+      scroll-margin-top: 8px;
+    }
+    .cw-sec::before { content: ""; width: 3px; height: 13px; border-radius: 99px; background: var(--accent); }
+
+    .cw-card {
+      background: var(--card);
+      border: 1px solid var(--stroke);
+      border-radius: 18px;
+      padding: 13px;
+      margin-bottom: 20px;
+    }
+
+    .persona-top { display: flex; align-items: center; gap: 8px; margin-bottom: 11px; }
+    .space-pill {
+      flex-shrink: 0;
+      border: 1px solid var(--stroke);
+      background: var(--tile);
+      color: var(--fg);
+      font-size: 12px;
+      font-weight: 650;
+      padding: 8px 12px;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+    .region-bar {
+      flex: 1;
+      border: 1px solid var(--stroke-hi);
+      background: #132127;
+      color: var(--fg);
+      border-radius: 12px;
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      font-size: 12.5px;
+      font-weight: 650;
+    }
+    .region-bar .state-tag { font-family: var(--mono); font-size: 10.5px; color: var(--mute); }
+    .region-bar.on .state-tag { color: var(--accent); }
+
+    .cw-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .cw-tile {
+      background: var(--tile);
+      border: 1px solid rgba(148, 198, 206, 0.11);
+      border-radius: 12px;
+      padding: 10px 11px;
+      text-align: left;
+      cursor: pointer;
+      transition: border-color 160ms var(--ease), background 160ms var(--ease);
+    }
+    .cw-tile:hover { border-color: var(--stroke-hi); background: #18272d; }
+    .cw-tile-k { display: block; font-size: 10.5px; color: var(--mute); margin-bottom: 5px; }
+    .cw-tile-v {
+      display: block;
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--fg);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cw-tile-v.mono { font-family: var(--mono); font-size: 11.5px; }
+    .okc { color: var(--accent) !important; }
+    .badc { color: var(--red) !important; }
+    .warnc { color: var(--amber) !important; }
+    .dimc { color: var(--dim) !important; }
+
+    .cw-div { height: 1px; background: var(--stroke); margin: 11px 0 9px; }
+    .cw-footer { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
+    .cw-footer.between { justify-content: space-between; }
+
+    .cw-pill {
+      border: 1px solid var(--stroke);
+      background: var(--tile);
+      color: var(--dim);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 5px 11px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 150ms var(--ease);
+    }
+    .cw-pill:hover { border-color: var(--stroke-hi); color: var(--fg); }
+    .cw-pill.teal { background: var(--accent); border-color: var(--accent); color: #041310; font-weight: 700; padding: 6px 15px; }
+    .cw-pill.danger { border-color: rgba(232, 97, 107, 0.45); background: var(--red-soft); color: #ff8c95; }
+    .cw-pill.active-soft { border-color: var(--stroke-hi); background: var(--accent-soft); color: var(--accent); }
+
+    .cw-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .cw-tri {
+      background: var(--tile);
+      border: 1px solid rgba(148, 198, 206, 0.11);
+      border-radius: 11px;
+      padding: 9px 8px;
+      text-align: left;
+      cursor: pointer;
+      transition: border-color 160ms var(--ease);
+    }
+    .cw-tri.open, .cw-tri:hover { border-color: var(--stroke-hi); }
+
+    .inline-drawer {
+      margin-top: 8px;
+      background: #0e171b;
+      border: 1px solid rgba(47, 224, 184, 0.22);
+      border-radius: 11px;
+      padding: 9px 10px;
+      font-family: var(--mono);
+      font-size: 10.5px;
+      color: var(--dim);
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .tv-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 3px;
+      padding: 3px;
+      border-radius: 11px;
+      background: var(--app-bg);
+      border: 1px solid var(--stroke);
+      margin-bottom: 11px;
+    }
+    .tv-tab {
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--dim);
+      border-radius: 8px;
+      padding: 7px 4px;
+      font-size: 11.5px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+    }
+    .tv-tab.active { background: var(--card-2); border-color: #2b454b; color: var(--fg); }
+    .tv-tab small { font-family: var(--mono); font-size: 9.5px; font-weight: 600; }
+
+    .mode-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+    .mode-btn {
+      border: 1px solid var(--stroke);
+      background: var(--tile);
+      color: var(--dim);
+      border-radius: 10px;
+      padding: 7px 4px;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .mode-btn.on { border-color: var(--stroke-hi); background: var(--accent-soft); color: var(--accent); }
+    .mode-btn.warn-on { border-color: rgba(240, 184, 75, 0.45); background: rgba(240, 184, 75, 0.12); color: var(--amber); }
+
+    .kv-list { display: flex; flex-direction: column; gap: 6px; }
+    .kv-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: var(--mono); font-size: 10.5px; padding: 4px 0; }
+    .kv-k { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kv-v { color: var(--fg); flex-shrink: 0; font-weight: 600; }
+
+    .fold-box { background: var(--tile); border: 1px solid rgba(148, 198, 206, 0.11); border-radius: 11px; margin-bottom: 8px; overflow: hidden; }
+    .fold-head {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: var(--fg);
+      padding: 9px 11px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11.5px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .fold-body { border-top: 1px solid rgba(148, 198, 206, 0.09); padding: 7px 11px 9px; display: flex; flex-direction: column; gap: 5px; }
+    .http-tag { font-family: var(--mono); font-size: 10px; padding: 1px 6px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); }
+
+    .sheet-bg {
+      position: absolute;
+      inset: 0;
+      background: rgba(3, 7, 9, 0.7);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: flex-end;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 200ms var(--ease);
+      z-index: 20;
+    }
+    .sheet-bg.open { opacity: 1; pointer-events: auto; }
+    .sheet {
+      width: 100%;
+      max-height: 78%;
+      overflow-y: auto;
+      background: #0e181d;
+      border-top: 1px solid var(--stroke-hi);
+      border-radius: 22px 22px 0 0;
+      padding: 12px 16px 20px;
+      transform: translateY(24px);
+      transition: transform 220ms var(--ease);
+    }
+    .sheet-bg.open .sheet { transform: translateY(0); }
+    .sheet-handle { width: 34px; height: 4px; border-radius: 99px; background: rgba(148,198,206,0.28); margin: 0 auto 11px; }
+    .sheet-title { display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 700; margin-bottom: 12px; }
+    .sheet-x { border: 0; background: transparent; color: var(--dim); font-size: 16px; cursor: pointer; }
+    .sheet-opt {
+      width: 100%;
+      border: 1px solid var(--stroke);
+      background: var(--tile);
+      color: var(--fg);
+      border-radius: 12px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .sheet-opt.on { border-color: var(--stroke-hi); background: var(--accent-soft); color: var(--accent); }
+    .sheet-opt small { font-family: var(--mono); font-size: 10.5px; color: var(--dim); font-weight: 400; }
+
+    .gesture-bar { width: 112px; height: 4px; border-radius: 99px; background: rgba(237, 244, 246, 0.24); margin: 4px auto 8px; flex-shrink: 0; }
+
+    /* Dual-Angle Scenario Bento Grid (2 top + 3 bottom = 5 balanced cards, zero orphan) */
+    .scenarios { padding: 44px 0 74px; border-top: 1px solid rgba(148, 198, 206, 0.12); }
+    .scenarios-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; }
+    .sc-card {
+      grid-column: span 2;
+      background: var(--bg-elev);
+      border: 1px solid var(--stroke);
+      border-radius: 20px;
+      padding: 24px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: border-color 180ms var(--ease);
+    }
+    .sc-card.wide { grid-column: span 3; }
+    .sc-card:hover { border-color: var(--stroke-hi); }
+    .sc-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .sc-when { font-size: 12px; font-weight: 650; color: var(--accent); letter-spacing: 0.01em; }
+    .sc-new {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      color: #041310;
+      background: var(--accent);
+      padding: 2px 7px;
+      border-radius: 999px;
+    }
+    .sc-card h3 { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
+    .sc-user { font-size: 14px; line-height: 1.65; color: var(--fg); opacity: 0.9; }
+    .sc-eng {
+      margin-top: auto;
+      padding-top: 12px;
+      border-top: 1px solid rgba(148, 198, 206, 0.1);
+      font-family: var(--mono);
+      font-size: 11.5px;
+      line-height: 1.55;
+      color: var(--dim);
+    }
+
+    /* Composite Preview Showcase */
+    .gallery { padding: 0 0 82px; }
+    .gallery-frame { background: var(--bg-elev); border: 1px solid var(--stroke); border-radius: 24px; padding: 16px; }
+    .gallery-frame img { width: 100%; height: auto; display: block; border-radius: 14px; }
+
+    .footer {
+      border-top: 1px solid rgba(148, 198, 206, 0.12);
+      padding: 26px 0 38px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 14px;
+      font-size: 13px;
+      color: var(--mute);
+    }
+    .footer a { color: var(--dim); text-decoration: none; margin-left: 16px; }
+    .footer a:hover { color: var(--accent); }
+
+    @media (max-width: 980px) {
+      .hero { grid-template-columns: minmax(0, 1fr); gap: 40px; padding: 36px 0 56px; }
+      .hero > * { min-width: 0; }
+      .scenarios-grid { grid-template-columns: minmax(0, 1fr); }
+      .sc-card, .sc-card.wide { grid-column: span 1; }
+    }
+    @media (max-width: 560px) {
+      .shell { padding: 0 16px; }
+      .nav { height: 64px; }
+      .nav-link.hide-sm { display: none; }
+      .jump-grid { grid-template-columns: minmax(0, 1fr); }
+      .phone { width: 100%; max-width: 360px; height: 720px; border-radius: 36px; padding: 9px; }
+      .phone-screen { border-radius: 28px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="grid-bg" aria-hidden="true"></div>
+  <div class="shell">
+    <header class="nav">
+      <a class="brand" href="#">
+        <span class="brand-mark">
+          <img src="./icon.png" alt="ClaudeWilson" width="32" height="32" />
+        </span>
+        <span class="brand-name">ClaudeWilson</span>
+      </a>
+      <div class="nav-right">
+        <a class="nav-link hide-sm" href="#scenarios" data-i18n="nav_sc">使用场景</a>
+        <a class="nav-link hide-sm" href="#preview" data-i18n="nav_shots">全屏总览</a>
+        <a class="nav-link" href="https://github.com/dontflashatnight/ClaudeWilson" target="_blank" rel="noopener">GitHub</a>
+        <div class="lang-pill" role="group" aria-label="Language">
+          <button class="lang-btn active" id="langZh" type="button">中文</button>
+          <button class="lang-btn" id="langEn" type="button">EN</button>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <div class="eyebrow"><span class="eyebrow-dot"></span><span>Android 13–17 · Offline · Reversible</span></div>
+          <h1 data-i18n-html="hero_h1">打开 Claude / ChatGPT 前，<br>先把<span class="accent">全套环境</span>对齐到位</h1>
+          <p class="hero-copy" data-i18n="hero_copy">
+            选好地区，SIM、语言、时区、GPS、机型与 IPv6 一次成套生效；不联网、不留痕，不用时点「关闭」不重启还原原机。右侧为 1:1 真实界面，可直接点按体验。
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="https://github.com/dontflashatnight/ClaudeWilson/releases" target="_blank" rel="noopener" data-i18n="cta_dl">下载 APK</a>
+            <a class="btn btn-ghost" href="https://github.com/dontflashatnight/ClaudeWilson/blob/main/README.md" target="_blank" rel="noopener" data-i18n="cta_doc">阅读文档</a>
+          </div>
+
+          <div class="jump-grid">
+            <button class="jump-btn active" data-jump="sec-persona" type="button">
+              <span class="jump-kicker" data-i18n="j1_k">场景 01 · 跨区启动</span>
+              <span class="jump-title" data-i18n="j1_t">门禁放行 &amp; 一键对齐/还原</span>
+              <span class="jump-spec">PreflightBar · 100+ Regions · Baseline</span>
+            </button>
+            <button class="jump-btn" data-jump="sec-network" type="button">
+              <span class="jump-kicker" data-i18n="j2_k">场景 02 · 代理防漏</span>
+              <span class="jump-title" data-i18n="j2_t">锁死 IPv6 &amp; 现代代理隐身</span>
+              <span class="jump-spec">ip -6 monitor · sing-box / FlClash / WARP</span>
+            </button>
+            <button class="jump-btn" data-jump="sec-clean" type="button">
+              <span class="jump-kicker" data-i18n="j3_k">场景 03 · 换号隔离</span>
+              <span class="jump-title" data-i18n="j3_t">精准清 Cookie &amp; 隐匿应用</span>
+              <span class="jump-spec">Domain Cookies · HMA Presets · Multi-User</span>
+            </button>
+            <button class="jump-btn" data-jump="sec-target" type="button">
+              <span class="jump-kicker" data-i18n="j4_k">场景 04 · 保镖与审计</span>
+              <span class="jump-title" data-i18n="j4_t">越界熔断保镖 &amp; 缓存报表</span>
+              <span class="jump-spec">BLOCK_KILL · 167 Baseline · ledger.db</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="phone-wrap">
+          <div class="phone-glow" aria-hidden="true"></div>
+          <div class="phone" aria-label="1:1 ClaudeWilson Android UX">
+            <div class="phone-screen">
+              <div class="status-bar">
+                <span>11:39</span>
+                <span class="camera-dot"></span>
+                <span>Wi-Fi · 97%</span>
+              </div>
+
+              <div class="app-scroll" id="appScroll">
+                <div class="cw-header">
+                  <div class="cw-title-grp">
+                    <span class="cw-bar"></span>
+                    <span class="cw-title">ClaudeWilson</span>
+                  </div>
+                  <div class="cw-hdr-right">
+                    <span class="cw-root">root</span>
+                    <button class="cw-eye" id="eyeBtn" type="button" title="Privacy Mask">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M2 12s3.8-7 10-7 10 7 10 7-3.8 7-10 7-10-7-10-7Z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="cw-seg">
+                  <button class="cw-seg-btn active" data-target="claude" type="button">
+                    <strong>Claude</strong><span>v1.261117.19</span>
+                  </button>
+                  <button class="cw-seg-btn" data-target="chatgpt" type="button">
+                    <strong>ChatGPT</strong><span>v1.2026.300</span>
+                  </button>
+                </div>
+
+                <div class="cw-preflight ready" id="preflightBar">
+                  <span class="cw-pf-txt" id="preflightTxt">就绪 · 日本</span>
+                  <button class="cw-pf-btn" id="preflightBtn" type="button">已对齐</button>
+                </div>
+
+                <div class="cw-sec" id="sec-persona" data-i18n="s_persona">人设空间</div>
+                <div class="cw-card" id="personaCard"></div>
+
+                <div class="cw-sec" id="sec-network" data-i18n="s_network">网络</div>
+                <div class="cw-card" id="networkCard"></div>
+
+                <div class="cw-sec" id="sec-clean" data-i18n="s_clean">数据清理</div>
+                <div class="cw-card" id="cleanCard"></div>
+
+                <div class="cw-sec" id="sec-target" data-i18n="s_target">目标视角</div>
+                <div class="cw-card" id="targetCard"></div>
+              </div>
+
+              <div class="gesture-bar"></div>
+
+              <div class="sheet-bg" id="sheetBg">
+                <div class="sheet" id="sheetBox"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 50% User Scenario + 50% Engineering Rigor (5-Card Bento: 2 Wide + 3 Compact) -->
+      <section class="scenarios" id="scenarios">
+        <div class="scenarios-grid">
+          <article class="sc-card wide">
+            <div class="sc-top">
+              <span class="sc-when" data-i18n="sc1_w">场景 01 · 跨区使用与秒回原机</span>
+              <span class="sc-new">CORE + UPDATED</span>
+            </div>
+            <h3 data-i18n="sc1_t">开 App 前一眼看懂能不能安全启动</h3>
+            <p class="sc-user" data-i18n="sc1_u">
+              顶部红/绿门禁直接告诉你当前是不是禁区卡、有没有出口错位；选定日本/美国/韩国后，运营商、时区、语言、GPS 与机型整套联动，点「关闭」不重启回到最开始的本机状态。
+            </p>
+            <div class="sc-eng">
+              PreflightBar (就绪 / 安全运行中 / 阻断) · EnvSession 事务 + 首次 baseline 回读校验 · Android 13–17 全链路适配
+            </div>
+          </article>
+
+          <article class="sc-card wide">
+            <div class="sc-top">
+              <span class="sc-when" data-i18n="sc2_w">场景 02 · 现代代理内核 &amp; 切网防漏</span>
+              <span class="sc-new">NEW</span>
+            </div>
+            <h3 data-i18n="sc2_t">切 Wi-Fi 不回弹 IPv6，代理内核零露出</h3>
+            <p class="sc-user" data-i18n="sc2_u">
+              默认锁死本机 IPv6 防止国内地址偷跑，切 Wi-Fi 或开关飞行模式也不会反弹；无论使用 FlClash、sing-box (SFA)、v2rayNG、NekoBox、NetProxy 还是 WARP，目标进程里都看不到 TUN 网卡、9000 巨帧或代理包名。
+            </p>
+            <div class="sc-eng">
+              ip -6 monitor 零轮询内核看门狗 · tun_flags/POINTOPOINT 动态隐藏 · LinkProperties IPv4/DNS/MTU/Route + VpnTransportInfo + NET_CAPABILITY_NOT_VPN
+            </div>
+          </article>
+
+          <article class="sc-card">
+            <div class="sc-top">
+              <span class="sc-when" data-i18n="sc5_w">场景 03 · 越界即拦的进程保镖</span>
+              <span class="sc-new">NEW</span>
+            </div>
+            <h3 data-i18n="sc5_t">未对齐误点开，或新版偷读新字段，当场熔断</h3>
+            <p class="sc-user" data-i18n="sc5_u">
+              提供关闭 / 仅观察 / 强阻断三档。开启强阻断后，若忘记切人设误点目标，或目标升级后读取基线外陌生采集项，保镖立即强杀进程并锁定，防止真实设备信息发出，确认无风险后可一键解锁或加白名单。
+            </p>
+            <div class="sc-eng">
+              Bodyguard (OFF / OBSERVE / BLOCK_KILL fail-closed) · 167/154 项审计基线 + 可逆白名单 · 6 门禁校验
+            </div>
+          </article>
+
+          <article class="sc-card">
+            <div class="sc-top">
+              <span class="sc-when" data-i18n="sc3_w">场景 04 · 异常排障与历史复盘</span>
+              <span class="sc-new">NEW</span>
+            </div>
+            <h3 data-i18n="sc3_t">不用抓包，直接看清目标缓存记了什么</h3>
+            <p class="sc-user" data-i18n="sc3_u">
+              无需装抓包证书，只读汇总目标暂存区里的轨迹与接口状态码，自动比对历史上传记录并可一键导出 Markdown；全程不读聊天正文与 Token，也不往目标目录写任何文件。
+            </p>
+            <div class="sc-eng">
+              5 维暂存诊断 (Sentry / Datadog / Bootstrap / Statsig / Model) · SQLite ledger.db v2 · Zero Residue
+            </div>
+          </article>
+
+          <article class="sc-card">
+            <div class="sc-top">
+              <span class="sc-when" data-i18n="sc4_w">场景 05 · 换号清理与应用隐身</span>
+              <span class="sc-new">CORE + UPDATED</span>
+            </div>
+            <h3 data-i18n="sc4_t">只清目标不伤 Chrome，藏住工具不断登录</h3>
+            <p class="sc-user" data-i18n="sc4_u">
+              清理前先看私有沙盒体积和命中的目标域名 Cookie，勾选后只删目标站点登录态、不动其他网站；Root、现代代理客户端和探测器按分组隐藏，保留 OAuth 与 Play 支付。
+            </p>
+            <div class="sc-eng">
+              多用户 pm clear + 域级 Cookie 清理 · HMA 预设 (KernelSU / SFA / FlClash / moe.nb4a / WARP) · ARM64 16KB libcwpersona.so
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="gallery" id="preview">
+        <div class="gallery-frame">
+          <img src="./App_Preview/preview.png" alt="ClaudeWilson 5-screen scenario overview" loading="lazy" />
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>ClaudeWilson · PolyForm Noncommercial License 1.0.0 · No INTERNET Permission</span>
+      <div>
+        <a href="https://x.com/i/chat/group_join/g2118665695424864750/bFuy8UtwS7" target="_blank" rel="noopener">X Group</a>
+        <a href="https://github.com/dontflashatnight/ClaudeWilson" target="_blank" rel="noopener">Repository</a>
+        <a href="https://github.com/dontflashatnight/ClaudeWilson/blob/main/docs/ARCHITECTURE.md" target="_blank" rel="noopener">Architecture</a>
+        <a href="https://github.com/dontflashatnight/ClaudeWilson/releases" target="_blank" rel="noopener">Releases</a>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    const REGIONS = {
+      off: { iso:'off', zh:'原机态', en:'Native', simZh:'cn · 禁区', simEn:'cn · Restricted', tz:'Asia/Shanghai', loc:'zh_CN', gpsZh:'未接管', gpsEn:'Native', wifiZh:'原机直通', wifiEn:'Passthrough', store:'Play US · Pay US', egressZh:'未探测', egressEn:'Not probed', asn:'—', blocked:true },
+      jp:  { iso:'jp',  zh:'日本', en:'Japan', simZh:'44010 · docomo', simEn:'44010 · docomo', tz:'Asia/Tokyo', loc:'ja_JP', gpsZh:'东京 35.68°N', gpsEn:'Tokyo 35.68°N', wifiZh:'Wi-Fi / BLE 拟态', wifiEn:'Wi-Fi / BLE Spoof', store:'Play JP · Pay JP', egressZh:'日本 · 住宅出口', egressEn:'JP · Residential', asn:'AS2516 KDDI', blocked:false },
+      us:  { iso:'us',  zh:'美国', en:'USA', simZh:'310260 · T-Mobile', simEn:'310260 · T-Mobile', tz:'America/Los_Angeles', loc:'en_US', gpsZh:'旧金山 37.77°N', gpsEn:'SF 37.77°N', wifiZh:'Wi-Fi / BLE 拟态', wifiEn:'Wi-Fi / BLE Spoof', store:'Play US · Pay US', egressZh:'美国 · 住宅出口', egressEn:'US · Residential', asn:'AS7922 Comcast', blocked:false },
+      kr:  { iso:'kr',  zh:'韩国', en:'Korea', simZh:'45006 · SKT', simEn:'45006 · SKT', tz:'Asia/Seoul', loc:'ko_KR', gpsZh:'首尔 37.56°N', gpsEn:'Seoul 37.56°N', wifiZh:'Wi-Fi / BLE 拟态', wifiEn:'Wi-Fi / BLE Spoof', store:'Play KR · Pay KR', egressZh:'韩国 · 住宅出口', egressEn:'KR · Residential', asn:'AS9318 SKB', blocked:false },
+      au:  { iso:'au',  zh:'澳大利亚', en:'Australia', simZh:'50501 · Telstra', simEn:'50501 · Telstra', tz:'Australia/Melbourne', loc:'en_AU', gpsZh:'墨尔本 37.81°S', gpsEn:'Melbourne 37.81°S', wifiZh:'Wi-Fi / BLE 拟态', wifiEn:'Wi-Fi / BLE Spoof', store:'Play AU · Pay AU', egressZh:'澳大利亚 · 住宅出口', egressEn:'AU · Residential', asn:'AS1221 Telstra', blocked:false }
+    };
+
+    const I18N = {
+      zh: {
+        nav_sc:'使用场景', nav_shots:'全屏总览',
+        hero_h1:'打开 Claude / ChatGPT 前，<br>先把<span class="accent">全套环境</span>对齐到位',
+        hero_copy:'选好地区，SIM、语言、时区、GPS、机型与 IPv6 一次成套生效；不联网、不留痕，不用时点「关闭」不重启还原原机。右侧为 1:1 真实界面，可直接点按体验。',
+        cta_dl:'下载 APK', cta_doc:'阅读文档',
+        j1_k:'场景 01 · 跨区启动', j1_t:'门禁放行 & 一键对齐/还原',
+        j2_k:'场景 02 · 代理防漏', j2_t:'锁死 IPv6 & 现代代理隐身',
+        j3_k:'场景 03 · 换号隔离', j3_t:'精准清 Cookie & 隐匿应用',
+        j4_k:'场景 04 · 保镖与审计', j4_t:'越界熔断保镖 & 缓存报表',
+        s_persona:'人设空间', s_network:'网络', s_clean:'数据清理', s_target:'目标视角',
+        sc1_w:'场景 01 · 跨区使用与秒回原机', sc1_t:'开 App 前一眼看懂能不能安全启动',
+        sc1_u:'顶部红/绿门禁直接告诉你当前是不是禁区卡、有没有出口错位；选定日本/美国/韩国后，运营商、时区、语言、GPS 与机型整套联动，点「关闭」不重启回到最开始的本机状态。',
+        sc2_w:'场景 02 · 现代代理内核 & 切网防漏', sc2_t:'切 Wi-Fi 不回弹 IPv6，代理内核零露出',
+        sc2_u:'默认锁死本机 IPv6 防止国内地址偷跑，切 Wi-Fi 或开关飞行模式也不会反弹；无论使用 FlClash、sing-box (SFA)、v2rayNG、NekoBox、NetProxy 还是 WARP，目标进程里都看不到 TUN 网卡、9000 巨帧或代理包名。',
+        sc3_w:'场景 04 · 异常排障与历史复盘', sc3_t:'不用抓包，直接看清目标缓存记了什么',
+        sc3_u:'无需装抓包证书，只读汇总目标暂存区里的轨迹与接口状态码，自动比对历史上传记录并可一键导出 Markdown；全程不读聊天正文与 Token，也不往目标目录写任何文件。',
+        sc4_w:'场景 05 · 换号清理与应用隐身', sc4_t:'只清目标不伤 Chrome，藏住工具不断登录',
+        sc4_u:'清理前先看私有沙盒体积和命中的目标域名 Cookie，勾选后只删目标站点登录态、不动其他网站；Root、现代代理客户端和探测器按分组隐藏，保留 OAuth 与 Play 支付。',
+        sc5_w:'场景 03 · 越界即拦的进程保镖', sc5_t:'未对齐误点开，或新版偷读新字段，当场熔断',
+        sc5_u:'提供关闭 / 仅观察 / 强阻断三档。开启强阻断后，若忘记切人设误点目标，或目标升级后读取基线外陌生采集项，保镖立即强杀进程并锁定，防止真实设备信息发出，确认无风险后可一键解锁或加白名单。'
+      },
+      en: {
+        nav_sc:'Scenarios', nav_shots:'Overview',
+        hero_h1:'Before opening Claude or ChatGPT,<br>align <span class="accent">every signal</span> cleanly.',
+        hero_copy:'Pick a region to align SIM, locale, timezone, GPS, device profile, and IPv6 in one pass — offline, zero residue, and one-tap rebootless revert. Interact with the 1:1 Android UI on the right.',
+        cta_dl:'Download APK', cta_doc:'Read Docs',
+        j1_k:'SCENARIO 01 · REGION', j1_t:'Preflight Gate & One-Tap Align',
+        j2_k:'SCENARIO 02 · STEALTH', j2_t:'IPv6 Lock & Modern Proxy Cloak',
+        j3_k:'SCENARIO 03 · CLEANUP', j3_t:'Scoped Cookies & App Hiding',
+        j4_k:'SCENARIO 04 · GUARD & AUDIT', j4_t:'Bodyguard Circuit-Breaker & Ledger',
+        s_persona:'Persona space', s_network:'Network', s_clean:'Data cleanup', s_target:'Target view',
+        sc1_w:'SCENARIO 01 · SWITCH & REVERT', sc1_t:'Know if it is safe before launching the app',
+        sc1_u:'The preflight bar flags restricted SIMs or mismatched egress upfront. Applying Japan, US, or Korea aligns carrier, timezone, locale, GPS, and model together — tapping Off restores your baseline without rebooting.',
+        sc2_w:'SCENARIO 02 · MODERN PROXIES & IPV6', sc2_t:'No IPv6 flip-back on Wi-Fi switch, zero VPN tells',
+        sc2_u:'IPv6 stays persistently disabled across Wi-Fi and airplane-mode toggles. Whether you run FlClash, sing-box (SFA), v2rayNG, NekoBox, NetProxy, or WARP, the target never sees TUN subnets, 9000 MTU, or VPN package extras.',
+        sc3_w:'SCENARIO 04 · OFFLINE TRIAGE', sc3_t:'Inspect what the target cached — without MITM',
+        sc3_u:'Read-only parsing extracts breadcrumbs, locale telemetry, bootstrap caches, and HTTP status codes into a local ledger with Markdown export — zero chat content, zero tokens, zero files written in target dirs.',
+        sc4_w:'SCENARIO 05 · RESET & ISOLATION', sc4_t:'Clear only target cookies, hide tools without breaking OAuth',
+        sc4_u:'Inspect sandbox size and domain-scoped Chrome cookies before wiping, leaving other sites signed in. Hide root managers, modern proxy apps, and detectors by preset while keeping Google OAuth & Play Billing alive.',
+        sc5_w:'SCENARIO 03 · PROCESS BODYGUARD', sc5_t:'Kill & lock on unaligned launch or unseen telemetry probes',
+        sc5_u:'Choose OFF, OBSERVE, or fail-closed BLOCK_KILL. If you accidentally open a target without an active persona — or an app update queries an unaudited signal outside the baseline — Bodyguard kills and locks the process immediately until you review, whitelist, or unlock.'
+      }
+    };
+
+    const st = {
+      lang: 'zh',
+      target: 'claude',
+      region: 'jp',
+      masked: false,
+      ipv6Off: true,
+      model: 'Pixel 9 Pro',
+      netScanned: true,
+      netBusy: false,
+      cleanDrawer: null,
+      browserCookieOn: true,
+      tvTab: 'ledger',
+      guardMode: 'OBSERVE',
+      foldHttp: true,
+      foldDiag: true,
+      diagDim: 'stealth',
+      hma: { root:true, proxy:true, detect:true, rom:false }
+    };
+
+    const $ = id => document.getElementById(id);
+    const m = v => st.masked ? '••••••••' : v;
+
+    function renderI18n() {
+      const d = I18N[st.lang];
+      document.querySelectorAll('[data-i18n]').forEach(el => { if (d[el.dataset.i18n]) el.textContent = d[el.dataset.i18n]; });
+      document.querySelectorAll('[data-i18n-html]').forEach(el => { if (d[el.dataset.i18nHtml]) el.innerHTML = d[el.dataset.i18nHtml]; });
+      $('langZh').classList.toggle('active', st.lang === 'zh');
+      $('langEn').classList.toggle('active', st.lang === 'en');
+    }
+
+    function renderPreflight() {
+      const zh = st.lang === 'zh';
+      const r = REGIONS[st.region];
+      const bar = $('preflightBar');
+      if (r.blocked) {
+        bar.className = 'cw-preflight blocked';
+        $('preflightTxt').textContent = zh ? '禁止启动 · 1 项阻断' : 'Blocked · 1 blocker';
+        $('preflightBtn').textContent = zh ? '选地区' : 'Pick region';
+      } else {
+        bar.className = 'cw-preflight ready';
+        $('preflightTxt').textContent = zh ? `就绪 · ${r.zh}` : `Ready · ${r.en}`;
+        $('preflightBtn').textContent = zh ? '已对齐' : 'Aligned';
+      }
+    }
+
+    function renderPersona() {
+      const zh = st.lang === 'zh';
+      const r = REGIONS[st.region];
+      const ipv6Str = st.ipv6Off ? (zh ? 'IPv6 关' : 'IPv6 Off') : (zh ? 'IPv6 拟态' : 'IPv6 Spoof');
+      const regionTitle = r.iso === 'off' ? (zh ? '✕  原机态' : '✕  Native') : (zh ? r.zh : r.en);
+      $('personaCard').innerHTML = `
+        <div class="persona-top">
+          <button class="space-pill" data-sheet="space" type="button">${zh ? '机主' : 'Owner'}</button>
+          <button class="region-bar ${r.blocked ? '' : 'on'}" data-sheet="region" type="button">
+            <span>${regionTitle}</span>
+            <span class="state-tag">${r.blocked ? 'OFF' : 'ON'}</span>
+          </button>
+        </div>
+        <div class="cw-grid2">
+          <button class="cw-tile" data-sheet="region" type="button">
+            <span class="cw-tile-k">${zh ? 'SIM 与网络' : 'SIM & Network'}</span>
+            <span class="cw-tile-v mono ${r.blocked ? 'badc' : 'okc'}">${m(zh ? r.simZh : r.simEn)}</span>
+          </button>
+          <button class="cw-tile" data-sheet="region" type="button">
+            <span class="cw-tile-k">${zh ? '语言与时区' : 'Locale & TZ'}</span>
+            <span class="cw-tile-v mono">${r.tz}</span>
+          </button>
+          <button class="cw-tile" data-sheet="gps" type="button">
+            <span class="cw-tile-k">${zh ? 'GPS 定位' : 'GPS Location'}</span>
+            <span class="cw-tile-v">${zh ? r.gpsZh : r.gpsEn}</span>
+          </button>
+          <button class="cw-tile" data-sheet="region" type="button">
+            <span class="cw-tile-k">${zh ? '无线与传感' : 'Wireless & Sensors'}</span>
+            <span class="cw-tile-v">${zh ? r.wifiZh : r.wifiEn}</span>
+          </button>
+          <button class="cw-tile" data-sheet="device" type="button">
+            <span class="cw-tile-k">${zh ? '设备与 IPv6' : 'Device & IPv6'}</span>
+            <span class="cw-tile-v mono">${m(st.model)} · ${ipv6Str}</span>
+          </button>
+          <button class="cw-tile" data-sheet="hma" type="button">
+            <span class="cw-tile-k">${zh ? '商店与账号' : 'Store & Account'}</span>
+            <span class="cw-tile-v mono">${r.store}</span>
+          </button>
+        </div>
+        <div class="cw-div"></div>
+        <div class="cw-footer">
+          <button class="cw-pill" data-sheet="hma" type="button">${zh ? '应用可见性' : 'App Visibility'}</button>
+          <button class="cw-pill" data-sheet="region" type="button">${zh ? 'SIM 管理器' : 'SIM manager'}</button>
+          ${!r.blocked ? `<button class="cw-pill danger" id="btnRevertOff" type="button">${zh ? '关闭' : 'Off'}</button>` : ''}
+        </div>
+      `;
+    }
+
+    function renderNetwork() {
+      const zh = st.lang === 'zh';
+      const r = REGIONS[st.region];
+      const scanned = st.netScanned && !r.blocked;
+      const ipv6Val = st.ipv6Off ? (zh ? '已关闭' : 'Disabled') : (zh ? '拟态池' : 'Spoofed');
+      $('networkCard').innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px">
+          <div>
+            <div style="font-size:14px;font-weight:700;color:${scanned ? 'var(--fg)' : 'var(--dim)'}">
+              ${st.netBusy ? (zh ? '探测中…' : 'Probing…') : (scanned ? (zh ? r.egressZh : r.egressEn) : (zh ? '未探测' : 'Not probed'))}
+            </div>
+            ${scanned ? `<div style="font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-top:2px">${m(r.asn)} · ${m('203.0.113.42')}</div>` : ''}
+          </div>
+          <button class="cw-pill teal" id="btnNetScan" type="button">${zh ? '检测' : 'Scan'}</button>
+        </div>
+        <div class="cw-grid2">
+          <div class="cw-tile" style="cursor:default">
+            <span class="cw-tile-k">DNS</span>
+            <span class="cw-tile-v mono ${scanned ? 'okc' : 'dimc'}">${scanned ? 'Fake-IP · 198.18.x' : '—'}</span>
+          </div>
+          <button class="cw-tile" data-sheet="device" type="button">
+            <span class="cw-tile-k">IPv6</span>
+            <span class="cw-tile-v ${st.ipv6Off ? 'okc' : 'warnc'}">${ipv6Val}</span>
+          </button>
+          <div class="cw-tile" style="cursor:default">
+            <span class="cw-tile-k">UDP</span>
+            <span class="cw-tile-v ${scanned ? 'okc' : 'dimc'}">${scanned ? (zh ? '同出口对齐' : 'Aligned') : '—'}</span>
+          </div>
+          <div class="cw-tile" style="cursor:default">
+            <span class="cw-tile-k">${zh ? '目标路由' : 'Target route'}</span>
+            <span class="cw-tile-v ${scanned ? 'okc' : 'dimc'}">${scanned ? (zh ? '已接管 · 隐身' : 'Captured') : '—'}</span>
+          </div>
+        </div>
+        <div class="cw-div"></div>
+        <div class="cw-footer">
+          <button class="cw-pill" data-sheet="proxy" type="button">${zh ? 'VPN 设置' : 'VPN settings'}</button>
+        </div>
+      `;
+    }
+
+    function renderClean() {
+      const zh = st.lang === 'zh';
+      const isClaude = st.target === 'claude';
+      const sizeStr = isClaude ? '18.4 MB' : '24.1 MB';
+      const cookieN = isClaude ? 3 : 5;
+      let drawerHtml = '';
+      if (st.cleanDrawer === 'sandbox') {
+        drawerHtml = `<div class="inline-drawer"><div>CE /data/data/${isClaude ? 'com.anthropic.claude' : 'com.openai.chatgpt'} (${sizeStr})</div><div>Sentry / Datadog / DataStore · Keystore</div></div>`;
+      } else if (st.cleanDrawer === 'browser') {
+        drawerHtml = `<div class="inline-drawer"><div>Chrome Cookies (${isClaude ? 'claude.ai' : 'chatgpt.com'}): ${cookieN} hits</div><div>${zh ? '仅按目标域名清理，不动其他网站登录态' : 'Domain-scoped only; other sites untouched'}</div></div>`;
+      } else if (st.cleanDrawer === 'boundary') {
+        drawerHtml = `<div class="inline-drawer"><div>${zh ? '目标进程: 已停止 · 零外部残留' : 'Target process: Idle · Zero residue'}</div><div>${zh ? 'Play Integrity / 服务端账号不受本地清理影响' : 'Server account & Play Integrity unaffected'}</div></div>`;
+      }
+
+      $('cleanCard').innerHTML = `
+        <div class="cw-grid3">
+          <button class="cw-tri ${st.cleanDrawer === 'sandbox' ? 'open' : ''}" data-clean="sandbox" type="button">
+            <span class="cw-tile-k">${zh ? '私有沙盒' : 'Sandbox'}</span>
+            <span class="cw-tile-v mono">${sizeStr}</span>
+          </button>
+          <button class="cw-tri ${st.cleanDrawer === 'browser' ? 'open' : ''}" data-clean="browser" type="button">
+            <span class="cw-tile-k">${zh ? '浏览器会话' : 'Browser'}</span>
+            <span class="cw-tile-v mono">${cookieN}${zh ? ' 项' : ' hits'}</span>
+          </button>
+          <button class="cw-tri ${st.cleanDrawer === 'boundary' ? 'open' : ''}" data-clean="boundary" type="button">
+            <span class="cw-tile-k">${zh ? '进程与跨界' : 'Process'}</span>
+            <span class="cw-tile-v dimc">${zh ? '已停止' : 'Idle'}</span>
+          </button>
+        </div>
+        ${drawerHtml}
+        <div class="cw-div"></div>
+        <div class="cw-footer between">
+          <button class="cw-pill ${st.browserCookieOn ? 'active-soft' : ''}" id="btnCookieScope" type="button">
+            ${st.browserCookieOn ? '✓ ' : ''}${zh ? `浏览器 Cookie (${cookieN})` : `Browser (${cookieN})`}
+          </button>
+          <button class="cw-pill danger" data-sheet="cleanConfirm" type="button">${zh ? '清理' : 'Clear'}</button>
+        </div>
+      `;
+    }
+
+    function renderTargetView() {
+      const zh = st.lang === 'zh';
+      const r = REGIONS[st.region];
+      const isClaude = st.target === 'claude';
+
+      let inner = '';
+      if (st.tvTab === 'guard') {
+        inner = `
+          <div class="mode-row">
+            <button class="mode-btn ${st.guardMode === 'OFF' ? 'on' : ''}" data-guard="OFF" type="button">OFF</button>
+            <button class="mode-btn ${st.guardMode === 'OBSERVE' ? 'warn-on' : ''}" data-guard="OBSERVE" type="button">OBSERVE</button>
+            <button class="mode-btn ${st.guardMode === 'BLOCK_KILL' ? 'on' : ''}" data-guard="BLOCK_KILL" type="button">BLOCK_KILL</button>
+          </div>
+          <div class="cw-grid2" style="margin-bottom:8px">
+            <div class="cw-tile" style="cursor:default">
+              <span class="cw-tile-k">${zh ? '审计基线' : 'Audited Baseline'}</span>
+              <span class="cw-tile-v mono okc">${isClaude ? '167' : '154'} ${zh ? '项' : 'signals'}</span>
+            </div>
+            <div class="cw-tile" style="cursor:default">
+              <span class="cw-tile-k">${zh ? '6 门禁校验' : '6-Gate Inspector'}</span>
+              <span class="cw-tile-v mono okc">6 / 6 PASS</span>
+            </div>
+          </div>
+          <div class="kv-list">
+            <div class="kv-row"><span class="kv-k">${zh ? '异常拦截事件' : 'Open Incidents'}</span><span class="kv-v okc">0</span></div>
+            <div class="kv-row"><span class="kv-k">${zh ? '目标目录残留' : 'Target Residue'}</span><span class="kv-v okc">0 files</span></div>
+          </div>
+        `;
+      } else if (st.tvTab === 'ledger') {
+        const httpRows = isClaude
+          ? [['POST /api/bootstrap','200'],['GET /api/org/capabilities','200'],['POST /api/append_message','200']]
+          : [['GET /backend-api/models','200'],['GET /backend-api/accounts/check','200'],['POST /backend-api/conversation','200']];
+        const diagRows = isClaude
+          ? [['Sentry breadcrumbs','18 events · 0 err'],['Datadog last_view',`locale=${r.loc}`],['global_bootstrap','cached · aligned'],['Statsig / Flags','synced']]
+          : [['Sentry envelopes','0 pending'],['Datadog last_view',`locale=${r.loc}`],['models_cache','gpt-4o · o3'],['account_check','synced']];
+        inner = `
+          <div class="fold-box">
+            <button class="fold-head" data-fold="http" type="button">
+              <span>${zh ? 'HTTP 响应' : 'HTTP Responses'}</span>
+              <span class="http-tag">${httpRows.length} · ${st.foldHttp ? '−' : '+'}</span>
+            </button>
+            ${st.foldHttp ? `<div class="fold-body">${httpRows.map(([p,c]) => `<div class="kv-row"><span class="kv-k">${p}</span><span class="http-tag">${c}</span></div>`).join('')}</div>` : ''}
+          </div>
+          <div class="fold-box">
+            <button class="fold-head" data-fold="diag" type="button">
+              <span>${zh ? '暂存诊断 (5 维只读)' : 'Staging Diagnostics (5D)'}</span>
+              <span class="http-tag">ledger.db · ${st.foldDiag ? '−' : '+'}</span>
+            </button>
+            ${st.foldDiag ? `<div class="fold-body">${diagRows.map(([k,v]) => `<div class="kv-row"><span class="kv-k">${k}</span><span class="kv-v">${m(v)}</span></div>`).join('')}</div>` : ''}
+          </div>
+          <div class="cw-footer">
+            <button class="cw-pill" data-sheet="mdExport" type="button">${zh ? '导出 Markdown' : 'Export Markdown'}</button>
+          </div>
+        `;
+      } else {
+        const dims = [
+          ['stealth', zh ? '隐身' : 'Stealth', '0/10 · clean'],
+          ['integrity', zh ? '完整性' : 'Integrity', 'verified'],
+          ['net', zh ? '网络定位' : 'Net & Geo', 'aligned'],
+          ['id', zh ? '身份链' : 'Identity', m('b154…1ff9')],
+          ['acc', zh ? '账号会话' : 'Account', 'server-only'],
+          ['perm', zh ? '权限传感' : 'Perms', 'GPS denied']
+        ];
+        inner = `
+          <div class="cw-grid2" style="margin-bottom:8px">
+            ${dims.map(([id, k, v]) => `
+              <button class="cw-tile" style="${st.diagDim === id ? 'border-color:var(--stroke-hi)' : ''}" data-dim="${id}" type="button">
+                <span class="cw-tile-k">${k}</span>
+                <span class="cw-tile-v mono okc">${v}</span>
+              </button>
+            `).join('')}
+          </div>
+          <div class="kv-list">
+            <div class="kv-row"><span class="kv-k">libcwpersona.so</span><span class="kv-v okc">ARM64 · 16KB · BTI/PAC</span></div>
+            <div class="kv-row"><span class="kv-k">LinkProperties</span><span class="kv-v okc">wlan0 · MTU 1500 · 1.1.1.1</span></div>
+            <div class="kv-row"><span class="kv-k">VpnTransportInfo</span><span class="kv-v okc">null (stripped)</span></div>
+          </div>
+        `;
+      }
+
+      $('targetCard').innerHTML = `
+        <div class="tv-tabs">
+          <button class="tv-tab ${st.tvTab === 'guard' ? 'active' : ''}" data-tv="guard" type="button">
+            <span style="color:${st.guardMode === 'BLOCK_KILL' ? 'var(--accent)' : (st.guardMode === 'OBSERVE' ? 'var(--amber)' : 'var(--dim)')}">${zh ? '保镖' : 'Guard'}</span>
+          </button>
+          <button class="tv-tab ${st.tvTab === 'ledger' ? 'active' : ''}" data-tv="ledger" type="button">
+            <span>${zh ? '报表' : 'Ledger'}</span><small class="okc">8/8</small>
+          </button>
+          <button class="tv-tab ${st.tvTab === 'diag' ? 'active' : ''}" data-tv="diag" type="button">
+            <span>${zh ? '诊断' : 'Diag'}</span><small class="okc">${zh ? '6维' : '6D'}</small>
+          </button>
+        </div>
+        ${inner}
+      `;
+    }
+
+    function openSheet(kind) {
+      const zh = st.lang === 'zh';
+      const box = $('sheetBox');
+      if (kind === 'region') {
+        box.innerHTML = `
+          <div class="sheet-handle"></div>
+          <div class="sheet-title"><span>${zh ? '选择地区人设' : 'Select Region Persona'}</span><button class="sheet-x" id="shClose" type="button">✕</button></div>
+          ${Object.values(REGIONS).map(reg => `
+            <button class="sheet-opt ${reg.iso === st.region ? 'on' : ''}" data-pick="${reg.iso}" type="button">
+              <span>${zh ? reg.zh : reg.en}</span><small>${reg.loc} · ${reg.tz}</small>
+            </button>
+          `).join('')}
+        `;
+      } else if (kind === 'device') {
+        box.innerHTML = `
+          <div class="sheet-handle"></div>
+          <div class="sheet-title"><span>${zh ? '设备与 IPv6 策略' : 'Device & IPv6 Policy'}</span><button class="sheet-x" id="shClose" type="button">✕</button></div>
+          <button class="sheet-opt ${st.ipv6Off ? 'on' : ''}" data-v6="off" type="button"><span>${zh ? '关闭 IPv6（默认防回弹）' : 'Disable IPv6 (Default)'}</span><small>ip -6 monitor</small></button>
+          <button class="sheet-opt ${!st.ipv6Off ? 'on' : ''}" data-v6="on" type="button"><span>${zh ? '放行并按区拟态 IPv6' : 'Allow & Spoof IPv6'}</span><small>Wi-Fi / Cellular</small></button>
+          <button class="sheet-opt ${st.model === 'Pixel 9 Pro' ? 'on' : ''}" data-mdl="Pixel 9 Pro" type="button"><span>Pixel 9 Pro</span><small>google/caiman · API 35</small></button>
+          <button class="sheet-opt ${st.model === 'Galaxy S25U' ? 'on' : ''}" data-mdl="Galaxy S25U" type="button"><span>Galaxy S25U</span><small>samsung/pa3q · API 36</small></button>
+        `;
+      } else if (kind === 'hma') {
+        const rows = [
+          ['root', zh ? 'Root 管理器' : 'Root Managers', 'KernelSU · Magisk · APatch'],
+          ['proxy', zh ? '现代代理客户端' : 'Proxy Clients', 'FlClash · SFA · NekoBox · NetProxy'],
+          ['detect', zh ? '环境探测应用' : 'Detector Apps', 'Momo · NativeTest · KeyAttest'],
+          ['rom', zh ? '第三方 ROM 包' : 'Custom ROMs', 'LineageOS · crDroid']
+        ];
+        box.innerHTML = `
+          <div class="sheet-handle"></div>
+          <div class="sheet-title"><span>${zh ? '应用可见性 (HMA 预设)' : 'App Visibility (HMA)'}</span><button class="sheet-x" id="shClose" type="button">✕</button></div>
+          ${rows.map(([k, t, s]) => `
+            <button class="sheet-opt ${st.hma[k] ? 'on' : ''}" data-hma="${k}" type="button">
+              <span>${t}</span><small>${st.hma[k] ? (zh ? '已隐藏' : 'Hidden') : (zh ? '可见' : 'Visible')} · ${s}</small>
+            </button>
+          `).join('')}
+        `;
+      } else if (kind === 'proxy') {
+        box.innerHTML = `
+          <div class="sheet-handle"></div>
+          <div class="sheet-title"><span>${zh ? '现代代理内核脱敏状态' : 'Modern Proxy-Core Stealth'}</span><button class="sheet-x" id="shClose" type="button">✕</button></div>
+          <div class="kv-list">
+            <div class="kv-row"><span class="kv-k">TUN Discovery</span><span class="kv-v okc">tun_flags + POINTOPOINT</span></div>
+            <div class="kv-row"><span class="kv-k">LinkAddresses</span><span class="kv-v okc">wlan0 · LAN IPv4/prefix</span></div>
+            <div class="kv-row"><span class="kv-k">DnsAddresses</span><span class="kv-v okc">1.1.1.1 (no TUN DNS)</span></div>
+            <div class="kv-row"><span class="kv-k">MTU / Routes</span><span class="kv-v okc">1500 · no ::/0 unreachable</span></div>
+            <div class="kv-row"><span class="kv-k">VpnTransportInfo</span><span class="kv-v okc">null (stripped)</span></div>
+            <div class="kv-row"><span class="kv-k">NET_CAPABILITY_NOT_VPN</span><span class="kv-v okc">true (API 15)</span></div>
+          </div>
+        `;
+      } else if (kind === 'gps') {
+        const r = REGIONS[st.region];
+        box.innerHTML = `
+          <div class="sheet-handle"></div>
+          <div class="sheet-title"><span>${zh ? 'GPS 地区锚点' : 'GPS Region Anchor'}</span><button class="sheet-x" id="shClose" type="button">✕</button></div>
+          <div class="kv-list">
+            <div class="kv-row"><span class="kv-k">${zh ? '当前坐标' : 'Anchor'}</span><span class="kv-v okc">${zh ? r.gpsZh : r.gpsEn}</span></div>
+            <div class="kv-row"><span class="kv-k">${zh ? '粗略精度网格' : 'Coarse Grid'}</span><span class="kv-v">3 km deterministic</span></div>
+            <div class="kv-row"><span class="kv-k">${zh ? '宿主机定位读取' : 'Host GPS Read'}</span><span class="kv-v okc">${zh ? '永不读取' : 'Never accessed'}</span></div>
+          </div>
+        `;
+      } else {
+        box.innerHTML = `
+          <div class="sheet-handle"></div>
+          <div class="sheet-title"><span>${kind === 'mdExport' ? (zh ? '离线 Markdown 报表' : 'Offline Markdown Export') : (zh ? '确认清理范围' : 'Confirm Clean Scope')}</span><button class="sheet-x" id="shClose" type="button">✕</button></div>
+          <div class="kv-list">
+            <div class="kv-row"><span class="kv-k">${zh ? '状态' : 'Status'}</span><span class="kv-v okc">${zh ? '在线演示模式（零实机写入）' : 'Interactive demo (read-only)'}</span></div>
+          </div>
+        `;
+      }
+      $('sheetBg').classList.add('open');
+      $('shClose').onclick = closeSheet;
+      box.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { st.region = b.dataset.pick; st.netScanned = !REGIONS[st.region].blocked; closeSheet(); renderAll(); });
+      box.querySelectorAll('[data-v6]').forEach(b => b.onclick = () => { st.ipv6Off = b.dataset.v6 === 'off'; closeSheet(); renderAll(); });
+      box.querySelectorAll('[data-mdl]').forEach(b => b.onclick = () => { st.model = b.dataset.mdl; closeSheet(); renderAll(); });
+      box.querySelectorAll('[data-hma]').forEach(b => b.onclick = () => { st.hma[b.dataset.hma] = !st.hma[b.dataset.hma]; openSheet('hma'); });
+    }
+
+    function closeSheet() { $('sheetBg').classList.remove('open'); }
+
+    function bindEvents() {
+      document.querySelectorAll('[data-sheet]').forEach(el => el.onclick = () => openSheet(el.dataset.sheet));
+      document.querySelectorAll('[data-clean]').forEach(el => el.onclick = () => {
+        st.cleanDrawer = st.cleanDrawer === el.dataset.clean ? null : el.dataset.clean;
+        renderClean(); bindEvents();
+      });
+      document.querySelectorAll('[data-tv]').forEach(el => el.onclick = () => { st.tvTab = el.dataset.tv; renderTargetView(); bindEvents(); });
+      document.querySelectorAll('[data-guard]').forEach(el => el.onclick = () => { st.guardMode = el.dataset.guard; renderTargetView(); bindEvents(); });
+      document.querySelectorAll('[data-fold]').forEach(el => el.onclick = () => {
+        if (el.dataset.fold === 'http') st.foldHttp = !st.foldHttp;
+        if (el.dataset.fold === 'diag') st.foldDiag = !st.foldDiag;
+        renderTargetView(); bindEvents();
+      });
+      document.querySelectorAll('[data-dim]').forEach(el => el.onclick = () => { st.diagDim = el.dataset.dim; renderTargetView(); bindEvents(); });
+      const rev = $('btnRevertOff');
+      if (rev) rev.onclick = () => { st.region = 'off'; st.netScanned = false; renderAll(); };
+      const scan = $('btnNetScan');
+      if (scan) scan.onclick = () => {
+        if (st.region === 'off') { openSheet('region'); return; }
+        st.netBusy = true; renderNetwork(); bindEvents();
+        setTimeout(() => { st.netBusy = false; st.netScanned = true; renderNetwork(); bindEvents(); }, 460);
+      };
+      const ck = $('btnCookieScope');
+      if (ck) ck.onclick = () => { st.browserCookieOn = !st.browserCookieOn; renderClean(); bindEvents(); };
+    }
+
+    function renderAll() {
+      renderI18n();
+      renderPreflight();
+      renderPersona();
+      renderNetwork();
+      renderClean();
+      renderTargetView();
+      bindEvents();
+    }
+
+    document.querySelectorAll('[data-target]').forEach(b => b.onclick = () => {
+      st.target = b.dataset.target;
+      document.querySelectorAll('[data-target]').forEach(x => x.classList.toggle('active', x.dataset.target === st.target));
+      renderClean(); renderTargetView(); bindEvents();
+    });
+    document.querySelectorAll('[data-jump]').forEach(b => b.onclick = () => {
+      document.querySelectorAll('[data-jump]').forEach(x => x.classList.toggle('active', x === b));
+      const targetEl = $(b.dataset.jump);
+      if (targetEl) targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    $('eyeBtn').onclick = () => { st.masked = !st.masked; $('eyeBtn').classList.toggle('masked', st.masked); renderAll(); };
+    $('preflightBtn').onclick = () => openSheet('region');
+    $('sheetBg').onclick = e => { if (e.target === $('sheetBg')) closeSheet(); };
+    $('langZh').onclick = () => { st.lang = 'zh'; renderAll(); };
+    $('langEn').onclick = () => { st.lang = 'en'; renderAll(); };
+
+    renderAll();
+  </script>
+</body>
+</html>

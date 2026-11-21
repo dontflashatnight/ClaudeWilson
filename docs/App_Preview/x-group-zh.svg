@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="104" viewBox="0 0 640 104" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="640" y2="104" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0D191D"/>
+      <stop offset="100%" stop-color="#0A1216"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="260" y2="104" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2FE0B8" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#2FE0B8" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="0.75" y="0.75" width="638.5" height="102.5" rx="18" fill="url(#bg)" stroke="#234048" stroke-width="1.5"/>
+  <rect x="1" y="1" width="280" height="102" rx="17" fill="url(#glow)"/>
+  <!-- X Mark Badge -->
+  <rect x="22" y="24" width="56" height="56" rx="15" fill="#122126" stroke="#2FE0B8" stroke-opacity="0.42" stroke-width="1.2"/>
+  <path d="M52.8 49.4L62.6 38H60.3L51.8 47.9L45 38H37.2L47.5 52.9L37.2 64.9H39.5L48.5 54.4L55.7 64.9H63.5L52.8 49.4ZM49.6 53.1L48.6 51.6L40.4 39.8H43.9L50.5 49.3L51.5 50.8L60.2 63.2H56.7L49.6 53.1Z" fill="#EDF4F6"/>
+  <!-- Text -->
+  <text x="96" y="47" fill="#EDF4F6" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei UI','Segoe UI',sans-serif" font-size="18" font-weight="700">ClaudeWilson · X 交流群</text>
+  <text x="96" y="72" fill="#8EA4AC" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei UI','Segoe UI',sans-serif" font-size="13.5">版本更新动态 · 设备适配反馈 · 现代代理与风控实战交流</text>
+  <!-- CTA Pill -->
+  <rect x="506" y="34" width="112" height="36" rx="18" fill="#2FE0B8"/>
+  <text x="562" y="57" text-anchor="middle" fill="#041310" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei UI','Segoe UI',sans-serif" font-size="13.5" font-weight="700">加入群聊 →</text>
+</svg>

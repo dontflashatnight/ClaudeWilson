@@ -1,57 +1,176 @@
 # iso|name|tx_power|weight
-jp|AirPods Pro|-1|5
-jp|Galaxy Watch6|-2|3
-jp|Mi Band 8|0|3
-jp|Sony WF-1000XM5|-3|3
-jp|Tile Mate|-6|2
-kr|Galaxy Buds3|-1|4
-kr|Galaxy Watch7|-2|3
-kr|AirPods Pro|-1|3
-kr|Mi Band 8|0|2
-sg|AirPods Pro|-1|4
-sg|Galaxy Watch6|-2|3
-sg|JBL Flip 6|-4|2
-sg|Mi Band 8|0|3
-my|AirPods Pro|-1|3
-my|Galaxy Watch6|-2|3
-my|Mi Band 8|0|2
-id|Mi Band 8|0|4
-id|Galaxy Watch6|-2|3
-id|AirPods Pro|-1|2
-th|AirPods Pro|-1|4
-th|Galaxy Watch6|-2|2
-th|Mi Band 8|0|3
-in|Mi Band 8|0|4
-in|Boat Airdopes|-2|3
-in|Galaxy Watch6|-2|2
-tw|AirPods Pro|-1|4
-tw|Galaxy Watch6|-2|2
-au|AirPods Pro|-1|4
-au|Galaxy Watch6|-2|3
-au|Mi Band 8|0|2
-us|AirPods Pro|-1|5
-us|Galaxy Watch6|-2|3
-us|Mi Band 8|0|3
-us|JBL Flip 6|-4|2
-ca|AirPods Pro|-1|4
-ca|Galaxy Watch6|-2|2
-gb|AirPods Pro|-1|4
-gb|Galaxy Watch6|-2|2
-gb|Mi Band 8|0|2
-de|AirPods Pro|-1|4
-de|Galaxy Watch6|-2|2
-fr|AirPods Pro|-1|4
-fr|Galaxy Watch6|-2|2
-ae|AirPods Pro|-1|3
-ae|Galaxy Watch6|-2|2
-tr|AirPods Pro|-1|3
-tr|Mi Band 8|0|2
-br|AirPods Pro|-1|3
-br|Galaxy Watch6|-2|2
-za|AirPods Pro|-1|3
-za|Mi Band 8|0|2
-*|Mi Band 8|0|3
-*|AirPods Pro|-1|3
-*|Galaxy Watch6|-2|2
-*|Tile Mate|-6|2
-*|JBL Flip 6|-4|2
+# Region-authentic consumer BLE peripherals (headphones, watches, trackers, speakers).
+jp|AirPods Pro 2|-1|6
+jp|Sony WF-1000XM5|-3|6
+jp|Sony WH-1000XM5|-2|5
+jp|Apple Watch|-2|4
+jp|Nintendo Switch|-4|4
+jp|BOSE QC Ultra|-2|3
+jp|Anker Soundcore Liberty 4|-3|4
+jp|GARMIN Forerunner 265|-3|3
+kr|Galaxy Buds3 Pro|-1|6
+kr|Galaxy Watch7|-2|6
+kr|AirPods Pro 2|-1|5
+kr|Sony WH-1000XM5|-2|4
+kr|Apple Watch|-2|3
+kr|BOSE QC Ultra|-2|3
+kr|JBL Flip 6|-4|2
+sg|AirPods Pro 2|-1|6
+sg|Apple Watch|-2|4
+sg|Sony WF-1000XM5|-3|4
+sg|Galaxy Watch7|-2|4
+sg|JBL Charge 5|-4|3
+sg|GARMIN Venu 3|-3|3
+sg|Anker Soundcore Space Q45|-3|3
+tw|AirPods Pro 2|-1|6
+tw|Apple Watch|-2|4
+tw|Sony WF-1000XM5|-3|4
+tw|Galaxy Buds3|-1|4
+tw|GARMIN Forerunner 265|-3|4
+tw|JBL Flip 6|-4|2
+au|AirPods Pro 2|-1|6
+au|Apple Watch|-2|5
+au|Bose QuietComfort Ultra|-2|4
+au|Sony WH-1000XM5|-2|4
+au|Galaxy Watch7|-2|4
+au|GARMIN Fenix 7|-3|4
+au|JBL Charge 5|-4|3
+nz|AirPods Pro 2|-1|5
+nz|Apple Watch|-2|4
+nz|Sony WH-1000XM5|-2|4
+nz|GARMIN Forerunner 265|-3|4
+nz|JBL Flip 6|-4|3
+us|AirPods Pro 2|-1|7
+us|Apple Watch|-2|5
+us|Beats Studio Pro|-2|5
+us|Bose QuietComfort Ultra|-2|4
+us|Pixel Buds Pro 2|-1|4
+us|Pixel Watch 3|-2|3
+us|Galaxy Buds3 Pro|-1|4
+us|GARMIN Forerunner 265|-3|4
+us|JBL Charge 5|-4|3
+us|Fitbit Charge 6|-3|3
+ca|AirPods Pro 2|-1|6
+ca|Apple Watch|-2|5
+ca|Bose QuietComfort Ultra|-2|4
+ca|Sony WH-1000XM5|-2|4
+ca|Beats Studio Pro|-2|4
+ca|GARMIN Venu 3|-3|3
+ca|Pixel Buds Pro 2|-1|3
+gb|AirPods Pro 2|-1|6
+gb|Apple Watch|-2|5
+gb|Sony WH-1000XM5|-2|5
+gb|Bose QuietComfort Ultra|-2|4
+gb|Galaxy Watch7|-2|4
+gb|GARMIN Forerunner 265|-3|4
+gb|Nothing Ear|-2|3
+gb|Fitbit Charge 6|-3|3
+de|AirPods Pro 2|-1|5
+de|Sennheiser MOMENTUM 4|-2|5
+de|Sony WH-1000XM5|-2|5
+de|Galaxy Watch7|-2|4
+de|GARMIN Fenix 7|-3|4
+de|JBL Charge 5|-4|4
+de|Bose QuietComfort Ultra|-2|3
+fr|AirPods Pro 2|-1|6
+fr|Sony WH-1000XM5|-2|5
+fr|Galaxy Buds3|-1|4
+fr|JBL Flip 6|-4|4
+fr|GARMIN Forerunner 265|-3|4
+fr|Sennheiser MOMENTUM 4|-2|3
+nl|AirPods Pro 2|-1|6
+nl|Sony WH-1000XM5|-2|5
+nl|JBL Charge 5|-4|5
+nl|Galaxy Watch7|-2|4
+nl|GARMIN Forerunner 265|-3|4
+ch|AirPods Pro 2|-1|6
+ch|Apple Watch|-2|5
+ch|Sony WH-1000XM5|-2|4
+ch|GARMIN Fenix 7|-3|5
+ch|Sennheiser MOMENTUM 4|-2|4
+se|AirPods Pro 2|-1|6
+se|Sony WH-1000XM5|-2|5
+se|GARMIN Forerunner 265|-3|4
+se|JBL Flip 6|-4|4
+se|Galaxy Watch7|-2|3
+it|AirPods Pro 2|-1|6
+it|Galaxy Buds3|-1|4
+it|Sony WF-1000XM5|-3|4
+it|JBL Flip 6|-4|4
+it|GARMIN Venu 3|-3|3
+es|AirPods Pro 2|-1|5
+es|Galaxy Watch7|-2|4
+es|Sony WH-1000XM5|-2|4
+es|JBL Flip 6|-4|4
+es|Xiaomi Smart Band 9|0|3
+pl|Galaxy Buds3|-1|5
+pl|AirPods Pro 2|-1|5
+pl|JBL Charge 5|-4|5
+pl|Sony WH-1000XM5|-2|4
+pl|GARMIN Forerunner 265|-3|4
+my|AirPods Pro 2|-1|5
+my|Galaxy Buds3|-1|4
+my|Sony WF-1000XM5|-3|4
+my|Anker Soundcore R50i|-3|4
+my|Xiaomi Smart Band 9|0|3
+id|Galaxy Buds3|-1|5
+id|AirPods Pro 2|-1|4
+id|Xiaomi Smart Band 9|0|4
+id|Anker Soundcore R50i|-3|4
+id|JBL Tune 520BT|-4|4
+th|AirPods Pro 2|-1|6
+th|Galaxy Watch7|-2|4
+th|Sony WF-1000XM5|-3|4
+th|JBL Flip 6|-4|4
+th|Anker Soundcore Liberty 4|-3|3
+vn|AirPods Pro 2|-1|5
+vn|Galaxy Buds3|-1|4
+vn|Sony WH-1000XM5|-2|4
+vn|JBL Flip 6|-4|4
+vn|Anker Soundcore R50i|-3|4
+ph|AirPods Pro 2|-1|5
+ph|Galaxy Buds3|-1|4
+ph|JBL Tune 520BT|-4|5
+ph|Anker Soundcore R50i|-3|4
+ph|Xiaomi Smart Band 9|0|3
+in|OnePlus Buds 3|-2|6
+in|boAt Airdopes 141|-2|5
+in|Galaxy Buds3|-1|4
+in|AirPods Pro 2|-1|4
+in|Nothing Ear|-2|4
+in|JBL Tune 520BT|-4|4
+ae|AirPods Pro 2|-1|6
+ae|Apple Watch|-2|5
+ae|Galaxy Watch7|-2|5
+ae|Sony WH-1000XM5|-2|4
+ae|Bose QuietComfort Ultra|-2|4
+sa|AirPods Pro 2|-1|6
+sa|Apple Watch|-2|5
+sa|Galaxy Watch7|-2|5
+sa|JBL Charge 5|-4|3
+tr|AirPods Pro 2|-1|5
+tr|Galaxy Buds3|-1|5
+tr|JBL Tune 520BT|-4|5
+tr|Xiaomi Smart Band 9|0|4
+tr|Anker Soundcore Q20i|-3|3
+br|AirPods Pro 2|-1|5
+br|JBL Flip 6|-4|6
+br|Galaxy Buds3|-1|5
+br|JBL Charge 5|-4|5
+br|Xiaomi Smart Band 9|0|3
+mx|AirPods Pro 2|-1|5
+mx|JBL Flip 6|-4|5
+mx|Galaxy Buds3|-1|5
+mx|Sony WH-1000XM5|-2|4
+mx|Beats Studio Pro|-2|3
+za|AirPods Pro 2|-1|5
+za|JBL Flip 6|-4|5
+za|Galaxy Watch7|-2|4
+za|GARMIN Forerunner 265|-3|4
+*|AirPods Pro 2|-1|5
+*|Sony WH-1000XM5|-2|4
+*|Galaxy Buds3|-1|4
+*|JBL Flip 6|-4|4
+*|GARMIN Venu 3|-3|3
+*|Bose QuietComfort Ultra|-2|3
+*|Anker Soundcore Liberty 4|-3|3

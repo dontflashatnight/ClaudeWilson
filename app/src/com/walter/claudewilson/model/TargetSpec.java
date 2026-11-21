@@ -30,16 +30,26 @@ public final class TargetSpec {
     private final String legacyConfigPath;
     private final List<String> identityMarkers;
     private final List<String> integrityMarkers;
+    private final List<String> cookieDomains;
 
     public TargetSpec(String id, String packageName, String displayName, String marketUri,
                       String domainRule, int support, String legacyConfigPath) {
         this(id, packageName, displayName, marketUri, domainRule, support, legacyConfigPath,
-                Collections.<String>emptyList(), Collections.<String>emptyList());
+                Collections.<String>emptyList(), Collections.<String>emptyList(),
+                Collections.<String>emptyList());
     }
 
     public TargetSpec(String id, String packageName, String displayName, String marketUri,
                       String domainRule, int support, String legacyConfigPath,
                       List<String> identityMarkers, List<String> integrityMarkers) {
+        this(id, packageName, displayName, marketUri, domainRule, support, legacyConfigPath,
+                identityMarkers, integrityMarkers, Collections.<String>emptyList());
+    }
+
+    public TargetSpec(String id, String packageName, String displayName, String marketUri,
+                      String domainRule, int support, String legacyConfigPath,
+                      List<String> identityMarkers, List<String> integrityMarkers,
+                      List<String> cookieDomains) {
         this.id = requireToken(id, "target id");
         this.packageName = requirePackage(packageName);
         this.displayName = Objects.requireNonNull(displayName, "displayName");
@@ -53,6 +63,24 @@ public final class TargetSpec {
         this.legacyConfigPath = legacyConfigPath == null ? "" : legacyConfigPath;
         this.identityMarkers = markers(identityMarkers);
         this.integrityMarkers = markers(integrityMarkers);
+        this.cookieDomains = domains(cookieDomains);
+    }
+
+    private static List<String> domains(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<String> out = new ArrayList<String>(values.size());
+        for (String value : values) {
+            if (value == null) {
+                continue;
+            }
+            String d = value.trim().toLowerCase(Locale.ROOT);
+            if (d.matches("[a-z0-9-]+(\\.[a-z0-9-]+)+")) {
+                out.add(d);
+            }
+        }
+        return Collections.unmodifiableList(out);
     }
 
     private static List<String> markers(List<String> values) {
@@ -123,6 +151,11 @@ public final class TargetSpec {
     /** Substrings naming local integrity/captcha/device-key stores; values are never read. */
     public List<String> integrityMarkers() {
         return integrityMarkers;
+    }
+
+    /** Root domains for browser Custom-Tabs cookie inspection and domain-scoped cleanup. */
+    public List<String> cookieDomains() {
+        return cookieDomains;
     }
 
     /** Canonical per-target payload path read by the Vector module. */

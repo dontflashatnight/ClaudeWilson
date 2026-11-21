@@ -95,6 +95,7 @@ final class Privacy {
         String lower = text.toLowerCase(Locale.ROOT);
         return text.startsWith("SIM ")
                 || "AID".equals(text)
+                || lower.contains("ipv6")
                 || text.contains("机型")
                 || text.contains("指纹")
                 || text.contains("拜访网络")

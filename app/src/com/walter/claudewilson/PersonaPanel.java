@@ -1,6 +1,7 @@
 package com.walter.claudewilson;
 
 import android.content.Context;
+import com.walter.claudewilson.model.PersonaSalt;
 import com.walter.claudewilson.model.PersonaSynth;
 import com.walter.claudewilson.model.TargetSpec;
 import android.graphics.Typeface;
@@ -9,20 +10,47 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import static com.walter.claudewilson.RegionSelection.*;
 
-/** Persona fields and selection controls, embedded in Dashboard's persona space. */
+/** Persona workbench: SpaceProfile + Region Switch + 2x2 expandable identity matrix. */
 final class PersonaPanel extends UiSection {
+    interface WorkbenchActions {
+        void openSpacePicker();
+        void openRegionPicker();
+        void selectRegionIso(String iso);
+        void reapplyCurrent();
+        boolean isApplyBusy();
+        boolean isReverting();
+    }
+
+    private static volatile String expandedDrawer;
+
     private final Runnable renderScreen;
     private final java.util.function.Supplier<String> currentUser;
     private final java.util.function.Supplier<String> playCountry;
     private final java.util.function.Supplier<String> applyStatus;
     private final java.util.function.Supplier<com.walter.claudewilson.model.RiskModel> riskModel;
+    private java.util.function.Supplier<java.util.List<com.walter.claudewilson.model.Account>> accountsSupplier;
+    private java.util.function.BooleanSupplier accountsReadableSupplier;
     private final PersonaState persona;
+    private WorkbenchActions actions;
     private int mismatches;
+    private boolean restrictedNativeSim;
     private final RootActions rootActions;
     private final RegionActions regionActions;
     private volatile String payload;
+    private volatile String lastLedgerSnapSig;
+    private LinearLayout lastCard;
     private final Object injectLock = new Object();
     private TextView rootHint, actionStatus;
+    private String memoRadioKey, memoWifi, memoBle, memoSensor;
+    private java.util.List<com.walter.claudewilson.model.WifiProfile.Ap> memoWifiList;
+    private java.util.List<com.walter.claudewilson.model.BleProfile.Device> memoBleList;
+    private com.walter.claudewilson.model.SensorProfile memoSensorProfile;
+    private static final java.util.concurrent.ExecutorService EDIT_TX =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "cw-persona-edit");
+                t.setDaemon(true);
+                return t;
+            });
 
     PersonaPanel(Context context, Runnable renderScreen,
                  java.util.function.Supplier<String> currentUser,
@@ -38,6 +66,61 @@ final class PersonaPanel extends UiSection {
         this.persona = new PersonaState(context);
         this.rootActions = new RootActions(context);
         this.regionActions = new RegionActions(context);
+    }
+
+    void setWorkbenchActions(WorkbenchActions actions) {
+        this.actions = actions;
+    }
+
+    void setAccountSupplier(
+            java.util.function.Supplier<java.util.List<com.walter.claudewilson.model.Account>> accounts,
+            java.util.function.BooleanSupplier readable) {
+        this.accountsSupplier = accounts;
+        this.accountsReadableSupplier = readable;
+    }
+
+    String spaceRegionIso(String user) {
+        return persona.regionIso(user);
+    }
+
+    String spaceRegionZone(String user) {
+        return persona.regionZone(user);
+    }
+
+    String spaceRegionLocale(String user) {
+        return persona.regionLocale(user);
+    }
+
+    void bindSpaceRegion(String user, String iso, String zone, String locale) {
+        persona.putRegion(user, iso, zone, locale);
+    }
+
+    void clearSpaceRegion(String user) {
+        persona.clearRegion(user);
+    }
+
+    String lastSelectedUser() {
+        return persona.lastSelectedUser();
+    }
+
+    void putLastSelectedUser(String user) {
+        persona.putLastSelectedUser(user);
+    }
+
+    boolean legacyRegionMigrated() {
+        return persona.legacyRegionMigrated();
+    }
+
+    void markLegacyRegionMigrated() {
+        persona.markLegacyRegionMigrated();
+    }
+
+    boolean hasAnyBoundRegion() {
+        return persona.hasAnyBoundRegion();
+    }
+
+    com.walter.claudewilson.model.SpaceProfile spaceProfile(String user) {
+        return persona.profile(user);
     }
 
     /** iso → {simOperator, carrierName}：官方大区主要拜访网值，缺省 mcc+01。 */
@@ -131,17 +214,207 @@ final class PersonaPanel extends UiSection {
             return null;
         }
         String[] custom = persona.customDevice(user);
-        if (custom != null) {
-            return PersonaSynth.cross(custom, persona.seed(user));
+        String[] baseRow = custom != null
+                ? custom
+                : deviceAt(Math.floorMod(persona.device(user), deviceCount()));
+        long crossSeed = persona.effectiveDeviceSeed(user);
+        Regions.R r = regionIdx >= 0 && regionIdx < Regions.ALL.size()
+                ? Regions.ALL.get(regionIdx) : null;
+        long profileSeed = profileSeedFor(user, baseRow, crossSeed, r != null ? r.iso : null);
+        return resolveDeviceRow(user, baseRow, crossSeed, profileSeed, r);
+    }
+
+    private String modelIdentityFor(String user, String[] dv) {
+        String profileIdentity =
+                com.walter.claudewilson.model.ProfileIdentity.of(dv != null ? dv : selfDevice());
+        if (!com.walter.claudewilson.model.ProfileIdentity.usable(profileIdentity)) {
+            profileIdentity = persona.unlistedIdentity(user);
         }
-        int index = Math.floorMod(persona.device(user), deviceCount());
-        return PersonaSynth.cross(deviceAt(index), persona.seed(user));
+        return profileIdentity;
+    }
+
+    private long profileSeedFor(String user, String[] dv, long crossSeed, String regionIso) {
+        String profileIdentity = modelIdentityFor(user, dv);
+        return PersonaSalt.profileSeed(persona.saltVersion(user), crossSeed,
+                persona.profileSalt(user, profileIdentity), regionIso);
+    }
+
+    /**
+     * Resolves the 14-field build identity for {@code (user, baseRow)} with permanent build-pin
+     * freezing:
+     * <ol>
+     *   <li>Returns the already-frozen build pin if present and matching this model/release.</li>
+     *   <li>For legacy v1 spaces without a pin yet, adopts the previously uploaded fingerprint +
+     *       os_build from telemetry when it matches this model/release, preventing mid-flight
+     *       identity mutation across app upgrades.</li>
+     *   <li>Otherwise synthesizes once (cross + align + region CSC tag) and freezes the result.</li>
+     * </ol>
+     */
+    private String[] resolveDeviceRow(String user, String[] baseRow, long crossSeed,
+                                      long profileSeed, Regions.R region) {
+        if (baseRow == null) {
+            return null;
+        }
+        String modelId = modelIdentityFor(user, baseRow);
+        String[] pin = persona.buildPin(user, modelId);
+        if (pin != null && pin.length == 4) {
+            String[] applied = PersonaSalt.applyBuildPin(baseRow, pin[0], pin[1], pin[2], pin[3]);
+            if (applied != null) {
+                return applied;
+            }
+        }
+        if (persona.saltVersion(user) <= PersonaSalt.SALT_V1) {
+            String[] adopted = adoptLegacyBuildPin(user, modelId, baseRow);
+            if (adopted != null) {
+                return adopted;
+            }
+        }
+        String[] crossed = PersonaSynth.cross(baseRow, crossSeed);
+        String[] aligned = alignToHost(crossed, profileSeed);
+        String[] finalDv = taggedForRegion(aligned, region);
+        persona.putBuildPin(user, modelId, finalDv);
+        return finalDv;
+    }
+
+    private String[] adoptLegacyBuildPin(String user, String modelId, String[] baseRow) {
+        try {
+            TargetSpec target = Targets.current();
+            if (target == null) {
+                return null;
+            }
+            java.util.Map<String, TelemetryStore.Entry> entries =
+                    TelemetryStore.read(this, target.id());
+            if (entries == null || entries.isEmpty()) {
+                return null;
+            }
+            String histFp = TelemetryStore.latest(entries, "fingerprint");
+            String histBuild = TelemetryStore.latest(entries, "os-build");
+            String[] adopted = PersonaSalt.applyBuildPin(baseRow, histFp, histBuild, "", "");
+            if (adopted != null) {
+                persona.putBuildPin(user, modelId, adopted);
+                return adopted;
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static String[] alignToHost(String[] dv, long alignSeed) {
+        if (dv == null) {
+            return null;
+        }
+        return PersonaSynth.alignToHostSdk(
+                dv, android.os.Build.VERSION.SDK_INT, android.os.Build.VERSION.RELEASE, alignSeed);
+    }
+
+    /** Host {@code Build.VERSION.SDK_INT_FULL} (API 36+), or 0 on earlier releases. */
+    private static int hostSdkIntFull() {
+        try {
+            return android.os.Build.VERSION.class.getField("SDK_INT_FULL").getInt(null);
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    private static String formatSdkFull(int sdkIntFull) {
+        if (sdkIntFull >= 100000) {
+            return (sdkIntFull / 100000) + "." + (sdkIntFull % 100000);
+        }
+        return sdkIntFull + ".0";
+    }
+
+    /**
+     * Aligns OEM region properties present on the host/brand (Samsung {@code ro.csc.*} /
+     * {@code ril.product_code} / {@code ril.matchedcsc*} / {@code ril.simoperator} /
+     * {@code ril.epdg.currenMno} and Xiaomi {@code ro.miui.region}) so neither Java nor native
+     * property reads leak the physical firmware's country or domestic MNO code.
+     */
+    private static String oemRegionPropsJson(String[] dv, Regions.R r, String effSimCar) {
+        if (r == null || r.iso == null || r.iso.isEmpty()) {
+            return "";
+        }
+        String isoUp = r.iso.toUpperCase(java.util.Locale.ROOT);
+        StringBuilder sb = new StringBuilder();
+        boolean isSamsung = (dv != null && dv.length > 2 && "samsung".equalsIgnoreCase(dv[2]))
+                || !empty(DeviceSignals.getprop("ro.csc.sales_code"))
+                || !empty(DeviceSignals.getprop("ro.csc.country_code"))
+                || !empty(DeviceSignals.getprop("ril.product_code"));
+        if (isSamsung) {
+            String countryName = new java.util.Locale("", isoUp)
+                    .getDisplayCountry(java.util.Locale.ENGLISH);
+            if (countryName == null || countryName.isEmpty()) {
+                countryName = isoUp;
+            }
+            String salesCode = Regions.cscFor(r.iso);
+            if (salesCode == null || salesCode.isEmpty()) {
+                salesCode = isoUp;
+            }
+            sb.append(",\"ro.csc.country_code\":").append(q(countryName));
+            sb.append(",\"ro.csc.countryiso_code\":").append(q(isoUp));
+            sb.append(",\"ro.csc.sales_code\":").append(q(salesCode));
+
+            String hostProdCode = DeviceSignals.getprop("ril.product_code");
+            String spoofProdCode = "";
+            if (hostProdCode != null && hostProdCode.length() > 3 && salesCode.length() == 3) {
+                spoofProdCode = hostProdCode.substring(0, hostProdCode.length() - 3) + salesCode;
+            } else {
+                String model = (dv != null && dv.length > 3 && !empty(dv[3]))
+                        ? dv[3]
+                        : (!empty(DeviceSignals.getprop("ro.product.model"))
+                                ? DeviceSignals.getprop("ro.product.model")
+                                : android.os.Build.MODEL);
+                if (!empty(model)) {
+                    spoofProdCode = model + "ZSE" + salesCode;
+                }
+            }
+            if (!spoofProdCode.isEmpty()) {
+                sb.append(",\"ril.product_code\":").append(q(spoofProdCode));
+            }
+            sb.append(",\"ril.matchedcsc\":").append(q(salesCode));
+            sb.append(",\"ril.matchedcsc2\":").append(q(salesCode));
+
+            String carTok = (effSimCar != null && !effSimCar.trim().isEmpty())
+                    ? effSimCar.trim().replaceAll("[^A-Za-z0-9]", "") : salesCode;
+            if (carTok.isEmpty()) {
+                carTok = salesCode;
+            }
+            sb.append(",\"ril.simoperator\":")
+                    .append(q(slotFilledProp("ril.simoperator", carTok)));
+            sb.append(",\"ril.epdg.currenMno\":")
+                    .append(q(slotFilledProp("ril.epdg.currenMno", carTok + "_" + isoUp)));
+        }
+        if (!empty(DeviceSignals.getprop("ro.miui.region"))) {
+            sb.append(",\"ro.miui.region\":").append(q(isoUp));
+        }
+        return sb.toString();
+    }
+
+    /** Formats a single-slot value to match the device's per-slot comma list length. */
+    private static String slotFilledProp(String propName, String singleVal) {
+        String val = singleVal == null ? "" : singleVal;
+        String cur = DeviceSignals.getprop(propName);
+        if (cur == null || cur.indexOf(',') < 0) {
+            return val;
+        }
+        int commas = 0;
+        for (int i = 0; i < cur.length(); i++) {
+            if (cur.charAt(i) == ',') {
+                commas++;
+            }
+        }
+        StringBuilder out = new StringBuilder(val);
+        for (int i = 0; i < commas; i++) {
+            out.append(',').append(val);
+        }
+        return out.toString();
     }
 
     void renderInto(LinearLayout card) {
+        lastCard = card;
         card.removeAllViews();
         payload = null;
         mismatches = 0;
+        restrictedNativeSim = false;
         final String user = currentUser.get();
         if (!com.walter.claudewilson.model.ShellQuote.numeric(user)) {
             card.addView(txt(Lang.t("请输入数字空间 ID", "Enter a numeric space ID",
@@ -163,24 +436,19 @@ final class PersonaPanel extends UiSection {
             ccHint = iso;
         }
         String[] net = netFor(iso);
-        String op = saved != null && saved.op.matches("\\d{5,6}") ? saved.op
-                : net != null ? net[1]
-                : (hasPersona ? r.mcc.split("/")[0] + "01" : "—");
-        String car = saved != null && !saved.carrier.isEmpty() ? saved.carrier
-                : net != null ? net[2]
-                : (hasPersona && r.carriers != null && !r.carriers.isEmpty()
-                        ? r.carriers.split("/")[0] : "—");
+        String op = hasPersona ? currentOp(r) : "—";
+        String car = hasPersona ? currentCarrier(r) : "";
         String opShown = op;
-        String carShown = car;
+        String carShown = car.isEmpty() ? "—" : car;
         // No persona value is minted up front: an unset AID means "this device's own id", and
         // only an explicit save in the AID dialog turns it into an override.
         String aidOverride = persona.aid(user);
         String[] customDevice = hasPersona ? persona.customDevice(user) : null;
         int devIdx = hasPersona ? persona.device(user) % deviceCount() : 0;
-        long seed = hasPersona ? persona.seed(user) : 0L;
-        String[] dv = hasPersona
-                ? PersonaSynth.cross(customDevice != null ? customDevice : deviceAt(devIdx), seed)
-                : null;
+        String[] baseDevice = hasPersona
+                ? (customDevice != null ? customDevice : deviceAt(devIdx)) : null;
+        final int saltVer = hasPersona ? persona.saltVersion(user) : PersonaSalt.SALT_V1;
+        long crossSeed = hasPersona ? persona.effectiveDeviceSeed(user) : 0L;
         final String loc = hasPersona && applyLocale != null ? applyLocale : "—";
         final String tz  = hasPersona && applyZone   != null ? applyZone   : "—";
         com.walter.claudewilson.model.GeoTable.Point regionPoint =
@@ -198,108 +466,172 @@ final class PersonaPanel extends UiSection {
             customLocation = true;
         }
         final boolean locationOn = hasPersona && persona.location(user);
-        String profileIdentity =
-                com.walter.claudewilson.model.ProfileIdentity.of(dv != null ? dv : selfDevice());
-        if (!com.walter.claudewilson.model.ProfileIdentity.usable(profileIdentity)) {
-            profileIdentity = persona.unlistedIdentity(user);
-        }
-        final long profileSeed = seed
-                ^ (hasPersona ? persona.profileSalt(user, profileIdentity) : 0L);
-        final String wifiJson = place == null ? "[]"
-                : com.walter.claudewilson.model.WifiProfile.json(
-                        com.walter.claudewilson.model.WifiProfile.forRegion(
-                                place.latitude, place.longitude,
-                                place.city.isEmpty() ? r.iso.toUpperCase(java.util.Locale.ROOT)
-                                        : place.city, profileSeed, 8,
-                                ProfileLibrary.wifi(this, r.iso), ProfileLibrary.oui(this)));
-        final String bleJson = place == null ? "[]"
-                : com.walter.claudewilson.model.BleProfile.json(
-                        com.walter.claudewilson.model.BleProfile.forRegion(
-                                profileSeed, 4, ProfileLibrary.ble(this, r.iso),
-                                ProfileLibrary.oui(this)));
+        final long profileSeed = hasPersona
+                ? profileSeedFor(user, baseDevice, crossSeed, r.iso) : 0L;
+        String[] dv = hasPersona
+                ? resolveDeviceRow(user, baseDevice, crossSeed, profileSeed, r) : null;
+        final boolean wifiOn = persona.wifiEnabled(user);
+        final long wifiSalt = persona.wifiSalt(user);
+        final String wifiCustomSsid = persona.wifiCustomSsid(user);
+        final String wifiCustomBssid = persona.wifiCustomBssid(user);
+        final boolean bleOn = persona.bleEnabled(user);
+        final boolean bleEmpty = persona.bleEmptyMode(user);
+        final long bleSalt = persona.bleSalt(user);
+        final String bleCustomBonded = persona.bleCustomBonded(user);
+        final boolean sensorsOn = persona.sensorsEnabled(user);
+        final String sensorPreset = persona.sensorPreset(user);
+        final String locAccMode = persona.locationAccuracyMode(user);
+        final double locAlt = persona.locationAltitude(user);
+
+        final String wifiJson;
+        final String bleJson;
         final String sensorJson;
+        final java.util.List<com.walter.claudewilson.model.WifiProfile.Ap> activeWifiList;
+        final java.util.List<com.walter.claudewilson.model.BleProfile.Device> activeBleList;
+        final com.walter.claudewilson.model.SensorProfile activeSensorProfile;
+        final int localHour;
         if (place == null) {
+            wifiJson = "[]";
+            bleJson = "[]";
             sensorJson = "{}";
+            activeWifiList = java.util.Collections.emptyList();
+            activeBleList = java.util.Collections.emptyList();
+            activeSensorProfile = null;
+            localHour = 12;
         } else {
-            java.util.TimeZone zone = java.util.TimeZone.getTimeZone(
+            java.util.TimeZone zoneObj = java.util.TimeZone.getTimeZone(
                     applyZone == null || applyZone.isEmpty() ? "UTC" : applyZone);
-            int hour = java.util.Calendar.getInstance(zone)
+            localHour = java.util.Calendar.getInstance(zoneObj)
                     .get(java.util.Calendar.HOUR_OF_DAY);
-            sensorJson = com.walter.claudewilson.model.SensorProfile.forRegion(
-                    profileSeed, place.latitude, place.longitude, hour,
-                    ProfileLibrary.sensor(this, profileSeed)).json();
+            String radioKey = r.iso + "|" + place.city + "|" + place.latitude + "|"
+                    + place.longitude + "|" + profileSeed + "|" + localHour
+                    + "|" + wifiOn + "|" + wifiSalt + "|" + wifiCustomSsid + "|" + wifiCustomBssid
+                    + "|" + bleOn + "|" + bleEmpty + "|" + bleSalt + "|" + bleCustomBonded
+                    + "|" + sensorsOn + "|" + sensorPreset + "|" + locAlt;
+            if (radioKey.equals(memoRadioKey) && memoWifi != null
+                    && memoBle != null && memoSensor != null
+                    && memoWifiList != null && memoBleList != null) {
+                wifiJson = memoWifi;
+                bleJson = memoBle;
+                sensorJson = memoSensor;
+                activeWifiList = memoWifiList;
+                activeBleList = memoBleList;
+                activeSensorProfile = memoSensorProfile;
+            } else {
+                String cityTag = place.city.isEmpty()
+                        ? r.iso.toUpperCase(java.util.Locale.ROOT) : place.city;
+                java.util.List<com.walter.claudewilson.model.WifiProfile.Ap> wList = wifiOn
+                        ? com.walter.claudewilson.model.WifiProfile.applyOverrides(
+                                com.walter.claudewilson.model.WifiProfile.forRegion(
+                                        place.latitude, place.longitude, cityTag,
+                                        PersonaSalt.wifiSeed(saltVer, profileSeed, wifiSalt), 8,
+                                        ProfileLibrary.wifi(this, r.iso), ProfileLibrary.oui(this)),
+                                wifiCustomSsid, wifiCustomBssid)
+                        : java.util.Collections.<com.walter.claudewilson.model.WifiProfile.Ap>emptyList();
+                java.util.List<com.walter.claudewilson.model.BleProfile.Device> bList = (bleOn && !bleEmpty)
+                        ? com.walter.claudewilson.model.BleProfile.applyOverrides(
+                                com.walter.claudewilson.model.BleProfile.forRegion(
+                                        PersonaSalt.bleSeed(saltVer, profileSeed, bleSalt), 4,
+                                        ProfileLibrary.ble(this, r.iso), ProfileLibrary.oui(this)),
+                                bleCustomBonded, false)
+                        : java.util.Collections.<com.walter.claudewilson.model.BleProfile.Device>emptyList();
+                com.walter.claudewilson.model.SensorProfile sProf = sensorsOn
+                        ? com.walter.claudewilson.model.SensorProfile.forPreset(
+                                profileSeed, place.latitude, place.longitude, localHour,
+                                ProfileLibrary.sensor(this, profileSeed), sensorPreset, locAlt)
+                        : null;
+                wifiJson = com.walter.claudewilson.model.WifiProfile.json(wList);
+                bleJson = com.walter.claudewilson.model.BleProfile.json(bList);
+                sensorJson = sProf != null ? sProf.json() : "{}";
+                activeWifiList = wList;
+                activeBleList = bList;
+                activeSensorProfile = sProf;
+                memoRadioKey = radioKey;
+                memoWifi = wifiJson;
+                memoBle = bleJson;
+                memoSensor = sensorJson;
+                memoWifiList = wList;
+                memoBleList = bList;
+                memoSensorProfile = sProf;
+            }
         }
+        boolean rootChannel = RootShell.rootReady();
         String liveOp = "", liveIso = "", liveCarrier = "";
-        // The property area holds one entry per slot ("mccmnc1,mccmnc2"), in slot order. Taking the
-        // first non-empty entry named the wrong card as soon as the active subscription was not
-        // slot 0 -- switching to the eSIM still showed the physical card's carrier. Read the entry
-        // that belongs to the active subscription's slot.
         int simSlot = activeSlot();
-        liveOp = slotValue(DeviceSignals.getprop("gsm.sim.operator.numeric"), simSlot);
-        liveIso = slotValue(DeviceSignals.getprop("gsm.sim.operator.iso-country"), simSlot);
-        liveCarrier = slotValue(DeviceSignals.getprop("gsm.sim.operator.alpha"), simSlot);
-        // The subscription record still carries MCC/MNC when the property area is empty (eSIM, or
-        // properties cleared by a previous root channel). Without it the row showed a dash for a
-        // perfectly known SIM.
-        if (empty(liveOp) || empty(liveIso) || empty(liveCarrier)) {
-            try {
-                android.telephony.SubscriptionManager sm =
-                        (android.telephony.SubscriptionManager) getSystemService(
-                                android.content.Context.TELEPHONY_SUBSCRIPTION_SERVICE);
-                java.util.List<android.telephony.SubscriptionInfo> subs =
-                        sm == null ? null : sm.getActiveSubscriptionInfoList();
-                if (subs != null && !subs.isEmpty()) {
-                    // The identity belongs to the subscription that carries data, not to the first
-                    // row: this device lists a disabled pSIM (460/01) before the live eSIM
-                    // (310/840), and the first row named a SIM the phone is not using.
-                    int wanted = android.telephony.SubscriptionManager.getDefaultDataSubscriptionId();
-                    android.telephony.SubscriptionInfo chosen = subs.get(0);
-                    for (android.telephony.SubscriptionInfo candidate : subs) {
-                        if (candidate.getSubscriptionId() == wanted) {
-                            chosen = candidate;
-                            break;
-                        }
-                    }
-                    String mcc = chosen.getMccString();
-                    String mnc = chosen.getMncString();
-                    if (empty(liveOp) && !empty(mcc) && !empty(mnc)) {
-                        liveOp = mcc + mnc;
-                    }
-                    if (empty(liveIso)) {
-                        String simIso = chosen.getCountryIso();
-                        if (!empty(simIso)) liveIso = simIso;
-                    }
-                    if (empty(liveCarrier)) {
-                        CharSequence name = chosen.getCarrierName();
-                        if (name != null && name.length() > 0) liveCarrier = name.toString();
+        String propOp = slotValue(DeviceSignals.getprop("gsm.sim.operator.numeric"), simSlot);
+        String propIso = slotValue(DeviceSignals.getprop("gsm.sim.operator.iso-country"), simSlot);
+        String propCarrier = slotValue(DeviceSignals.getprop("gsm.sim.operator.alpha"), simSlot);
+        if (rootChannel) {
+            liveOp = propOp;
+            liveIso = propIso;
+            liveCarrier = propCarrier;
+        }
+        String subOp = "", subIso = "", subCarrier = "", subDisplay = "";
+        try {
+            android.telephony.SubscriptionManager sm =
+                    (android.telephony.SubscriptionManager) getSystemService(
+                            android.content.Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+            java.util.List<android.telephony.SubscriptionInfo> subs =
+                    sm == null ? null : sm.getActiveSubscriptionInfoList();
+            if (subs != null && !subs.isEmpty()) {
+                // The identity belongs to the subscription that carries data, not to the first
+                // row: this device lists a disabled pSIM (460/01) before the live eSIM
+                // (310/840), and the first row named a SIM the phone is not using.
+                int wanted = android.telephony.SubscriptionManager.getDefaultDataSubscriptionId();
+                android.telephony.SubscriptionInfo chosen = subs.get(0);
+                for (android.telephony.SubscriptionInfo candidate : subs) {
+                    if (candidate.getSubscriptionId() == wanted) {
+                        chosen = candidate;
+                        break;
                     }
                 }
-            } catch (Throwable ignored) {
+                String mcc = chosen.getMccString();
+                String mnc = chosen.getMncString();
+                if (!empty(mcc) && !empty(mnc)) {
+                    subOp = mcc + mnc;
+                }
+                String simIso = chosen.getCountryIso();
+                if (!empty(simIso)) {
+                    subIso = simIso;
+                }
+                CharSequence name = chosen.getCarrierName();
+                if (name != null && name.length() > 0) {
+                    subCarrier = clean(name.toString());
+                }
+                CharSequence disp = chosen.getDisplayName();
+                if (disp != null && disp.length() > 0) {
+                    subDisplay = clean(disp.toString());
+                }
             }
+        } catch (Throwable ignored) {
         }
         android.telephony.TelephonyManager tm = (android.telephony.TelephonyManager)
                 getSystemService(Context.TELEPHONY_SERVICE);
+        String tmOp = "", tmIso = "", tmCarrier = "";
         if (tm != null) {
-            if (empty(liveOp)) {
-                try { liveOp = tm.getSimOperator(); } catch (RuntimeException ignored) {}
-            }
-            if (empty(liveIso)) {
-                try { liveIso = tm.getSimCountryIso(); } catch (RuntimeException ignored) {}
-            }
-            if (empty(liveCarrier)) {
-                try { liveCarrier = tm.getSimOperatorName(); } catch (RuntimeException ignored) {}
+            try { tmOp = tm.getSimOperator(); } catch (RuntimeException ignored) {}
+            try { tmIso = tm.getSimCountryIso(); } catch (RuntimeException ignored) {}
+            try { tmCarrier = clean(tm.getSimOperatorName()); } catch (RuntimeException ignored) {}
+        }
+        if (rootChannel) {
+            if (empty(liveOp)) liveOp = !empty(subOp) ? subOp : tmOp;
+            if (empty(liveIso)) liveIso = !empty(subIso) ? subIso : tmIso;
+            if (empty(liveCarrier)) liveCarrier = !empty(subCarrier) ? subCarrier : tmCarrier;
+        } else {
+            // On a shell channel gsm.sim.operator.* stays on the physical card; CarrierConfig
+            // and subscription display-name overrides appear in TelephonyManager / SubscriptionInfo.
+            liveOp = !empty(subOp) ? subOp : !empty(tmOp) ? tmOp : propOp;
+            liveIso = !empty(tmIso) ? tmIso : !empty(subIso) ? subIso : propIso;
+            if (hasPersona && RootShell.preservesMobileData() && !empty(subDisplay)) {
+                liveCarrier = subDisplay;
+            } else {
+                liveCarrier = !empty(tmCarrier) ? tmCarrier
+                        : !empty(subDisplay) ? subDisplay
+                        : !empty(subCarrier) ? subCarrier : propCarrier;
             }
         }
-        // Visited network. Which source is truthful depends on the channel: only root can keep
-        // gsm.operator.* on the persona (telephony rewrites it to the registered PLMN), so on a
-        // shell channel the property area is a leftover, not a statement -- measured: after a
-        // carrier override as uid 2000 the trio still read back the physical card.
-        // ServiceState is what the target process reads anyway, so it wins there.
-        boolean rootChannel = RootShell.rootReady();
-        // SIM country/carrier overrides are stored per space and written on the next apply.
-        // Without any privileged channel there is nothing to write, so the columns say
-        // "not compared" instead of showing red crosses for a value that cannot move.
-        boolean simCarrierWritable = RootShell.state() == RootShell.ST_READY;
+        boolean simCountryWritable = RootShell.simCountryWritable();
+        boolean simCarrierWritable = RootShell.simCarrierWritable();
         String liveNet = "", liveNetIso = "", liveNetName = "";
         if (tm != null) {
             try { liveNet = tm.getNetworkOperator(); } catch (RuntimeException ignored) {}
@@ -349,14 +681,16 @@ final class PersonaPanel extends UiSection {
         if (empty(liveTz)) {
             liveTz = java.util.TimeZone.getDefault().getID();
         }
-        // The target language is whatever the target process reads from the hook payload. It is
-        // not this control app's UI language and not the system locale.
+        // The target language is whatever the target process reads from the hook payload or per-app
+        // locale. It is not this control app's UI language and not the system fallback locale.
         com.walter.claudewilson.model.CheckItem targetLocale =
                 modelItem("target.locale");
-        boolean targetLocaleLive = targetLocale != null && targetLocale.isRead()
+        String targetLocaleNote = targetLocale != null ? targetLocale.note() : null;
+        boolean targetLocaleUsable = targetLocale != null && targetLocale.isRead()
                 && !targetLocale.isStale()
-                && !"next-launch".equals(targetLocale.note())
-                && !"system-fallback".equals(targetLocale.note());
+                && !"system-fallback".equals(targetLocaleNote);
+        boolean targetLocaleLive = targetLocaleUsable
+                && !"next-launch".equals(targetLocaleNote);
         String liveLoc = targetLocaleLive
                 ? targetLocale.value().replace('-', '_')
                 : "—";
@@ -375,427 +709,1329 @@ final class PersonaPanel extends UiSection {
         // Model and AID are injection-layer targets: without hooks they can only ever show
         // the device own value, so they must not pretend to compare against a persona.
         TargetSpec target = Targets.current();
-        boolean canInject = hasPersona && RootShell.shellReady()
+        com.walter.claudewilson.model.CheckItem spoofProbe = modelItem("target.ipv6_spoof");
+        boolean hookObserved = targetProcessLive()
+                || (spoofProbe != null && spoofProbe.isRead());
+        boolean hookChannel = rootChannel || hookObserved;
+        boolean canInject = hasPersona && hookChannel
                 && target.localIdentityWrites();
         // A target is shown only after a deliberate pick; a stored value alone is not a request.
         boolean devTarget = canInject && persona.hasDeviceOverride(user);
         boolean aidTarget = canInject && persona.hasAidOverride(user);
         // Built here rather than at the bottom: the rows below need the payload's signature to
         // tell "this process is running exactly this persona" from "the region tab moved on".
+        final com.walter.claudewilson.model.SimPolicy.Decision simDecision =
+                RegionActions.evaluateRealSim(this, target.id(), persona.keepRealSim(user));
+        final boolean preserveRealSim = hasPersona && simDecision.preserveRealSim;
+        final String effSimOp = preserveRealSim ? simDecision.resolvedOp : op;
+        final String effSimIso = preserveRealSim ? simDecision.resolvedIso : iso;
+        final String effSimCar = preserveRealSim ? simDecision.resolvedCarrier : car;
+        final String effSimOpShown = effSimOp;
+        final String effSimCarShown = effSimCar.isEmpty() ? "—" : effSimCar;
+        final boolean ipv6SpoofOn = persona.ipv6SpoofEnabled();
+        String[] v6Pair = (hasPersona && ipv6SpoofOn)
+                ? resolveIpv6Pair(user, iso, car, profileSeed)
+                : new String[]{"", ""};
+        String v6PayloadPfx = v6Pair[0];
+        String v6MobilePayloadPfx = v6Pair[1];
         if (hasPersona) {
-            payload = "{\"target\":\"" + target.id()
-                + "\",\"simOperator\":\"" + op
-                + "\",\"simCountryIso\":\"" + iso
-                + "\",\"simOperatorName\":\"" + car
-                + "\",\"netOperator\":\"" + op
-                + "\",\"netOperatorName\":\"" + car
-                + "\",\"netCountryIso\":\"" + iso
-                + "\",\"countryCodeHint\":\"" + ccHint
-                + "\",\"simCarrierId\":"
-                + ("docomo".equals(car) ? 1185 : -1)
-                + ",\"androidId\":\"" + (aidOverride != null ? aidOverride : liveAidText)
+            String aidVal = aidOverride != null ? aidOverride : liveAidText;
+            String dispId = dv[9] + "." + dv[10];
+            int hostSdkFull = hostSdkIntFull();
+            String[] soc = com.walter.claudewilson.model.PersonaSynth.socFor(
+                    dv[1], dv[3], dv[4], dv[6], dv[7]);
+            payload = "{\"target\":" + q(target.id())
+                + ",\"simOperator\":" + q(effSimOp)
+                + ",\"simCountryIso\":" + q(effSimIso)
+                + ",\"simOperatorName\":" + q(effSimCar)
+                + ",\"keepRealSim\":" + preserveRealSim
+                + ",\"netOperator\":" + q(effSimOp)
+                + ",\"netOperatorName\":" + q(effSimCar)
+                + ",\"netCountryIso\":" + q(effSimIso)
+                + ",\"countryCodeHint\":" + q(ccHint)
+                + ",\"simCarrierId\":"
+                + com.walter.claudewilson.model.PersonaEditRules.carrierIdFor(effSimOp, effSimCar)
+                + ",\"androidId\":" + q(aidVal)
                 + (applyLocale != null
-                        ? "\",\"locale\":\"" + applyLocale : "")
+                        ? ",\"locale\":" + q(applyLocale) : "")
                 + (applyZone != null
-                        ? "\",\"tz\":\"" + applyZone : "")
+                        ? ",\"tz\":" + q(applyZone) : "")
                 + (place != null
-                        ? "\",\"location\":" + com.walter.claudewilson.model.LocationPayload.json(
-                                locationOn, place.latitude, place.longitude, profileSeed, place.city)
+                        ? ",\"location\":" + com.walter.claudewilson.model.LocationPayload.json(
+                                locationOn, place.latitude, place.longitude, profileSeed,
+                                place.city, locAccMode, locAlt)
                                 + ",\"wifi\":" + wifiJson
                                 + ",\"ble\":" + bleJson
+                                + ",\"bleEmpty\":" + (bleOn && bleEmpty)
                                 + ",\"sensors\":" + sensorJson
-                                + ",\"sensorsEnabled\":true"
+                                + ",\"sensorsEnabled\":" + sensorsOn
                                 + ",\"build\":{"
-                        : "\",\"build\":{")
-                + "\"MANUFACTURER\":\"" + dv[1]
-                + "\",\"BRAND\":\"" + dv[2]
-                + "\",\"MODEL\":\"" + dv[3]
-                + "\",\"DEVICE\":\"" + dv[4]
-                + "\",\"PRODUCT\":\"" + dv[5]
-                + "\",\"HARDWARE\":\"" + dv[6]
-                + "\",\"BOARD\":\"" + dv[7]
-                + "\",\"FINGERPRINT\":\"" + dv[8]
-                + "\",\"ID\":\"" + dv[9]
-                + "\",\"TAGS\":\"release-keys\",\"TYPE\":\"user\""
-                + ",\"DISPLAY\":\"" + dv[9] + "." + dv[10]
-                + "\",\"VERSION.RELEASE\":\"" + dv[11]
-                + "\",\"VERSION.SDK_INT\":" + Integer.parseInt(dv[12])
-                + ",\"VERSION.SECURITY_PATCH\":\"" + dv[13]
-                + "\",\"VERSION.INCREMENTAL\":\"" + dv[10]
-                + "\"},\"props\":{"
-                + "\"ro.product.brand\":\"" + dv[2]
-                + "\",\"ro.product.model\":\"" + dv[3]
-                + "\",\"ro.product.device\":\"" + dv[4]
-                + "\",\"ro.product.name\":\"" + dv[5]
-                + "\",\"ro.product.manufacturer\":\"" + dv[1]
-                + "\",\"ro.product.board\":\"" + dv[7]
-                + "\",\"ro.hardware\":\"" + dv[6]
-                + "\",\"ro.build.fingerprint\":\"" + dv[8]
-                + "\",\"ro.build.display.id\":\"" + dv[9] + "." + dv[10]
-                + "\",\"ro.build.version.release\":\"" + dv[11]
-                + "\",\"ro.build.version.sdk\":\"" + dv[12]
-                + "\",\"ro.build.version.security_patch\":\"" + dv[13]
-                + "\",\"ro.build.version.incremental\":\"" + dv[10]
-                + "\",\"ro.build.id\":\"" + dv[9]
-                + "\",\"ro.product.locale\":\""
-                + (applyLocale == null ? "" : applyLocale)
-                + "\""
+                        : ",\"build\":{")
+                + "\"MANUFACTURER\":" + q(dv[1])
+                + ",\"BRAND\":" + q(dv[2])
+                + ",\"MODEL\":" + q(dv[3])
+                + ",\"DEVICE\":" + q(dv[4])
+                + ",\"PRODUCT\":" + q(dv[5])
+                + ",\"HARDWARE\":" + q(dv[6])
+                + ",\"BOARD\":" + q(dv[7])
+                + ",\"SOC_MANUFACTURER\":" + q(soc[0])
+                + ",\"SOC_MODEL\":" + q(soc[1])
+                + ",\"SKU\":" + q(soc[2])
+                + ",\"FINGERPRINT\":" + q(dv[8])
+                + ",\"ID\":" + q(dv[9])
+                + ",\"TAGS\":\"release-keys\",\"TYPE\":\"user\""
+                + ",\"DISPLAY\":" + q(dispId)
+                + ",\"VERSION.RELEASE\":" + q(dv[11])
+                + ",\"VERSION.SDK_INT\":" + Integer.parseInt(dv[12])
+                + (hostSdkFull > 0 ? ",\"VERSION.SDK_INT_FULL\":" + hostSdkFull : "")
+                + ",\"VERSION.SECURITY_PATCH\":" + q(dv[13])
+                + ",\"VERSION.INCREMENTAL\":" + q(dv[10])
+                + "},\"props\":{"
+                + "\"ro.product.brand\":" + q(dv[2])
+                + ",\"ro.product.model\":" + q(dv[3])
+                + ",\"ro.product.device\":" + q(dv[4])
+                + ",\"ro.product.name\":" + q(dv[5])
+                + ",\"ro.product.manufacturer\":" + q(dv[1])
+                + ",\"ro.product.board\":" + q(dv[7])
+                + ",\"ro.hardware\":" + q(dv[6])
+                + ",\"ro.soc.manufacturer\":" + q(soc[0])
+                + ",\"ro.soc.model\":" + q(soc[1])
+                + ",\"ro.boot.hardware.sku\":" + q(soc[2])
+                + ",\"ro.build.fingerprint\":" + q(dv[8])
+                + ",\"ro.build.display.id\":" + q(dispId)
+                + ",\"ro.build.version.release\":" + q(dv[11])
+                + ",\"ro.build.version.release_or_codename\":" + q(dv[11])
+                + ",\"ro.build.version.release_or_preview_display\":" + q(dv[11])
+                + ",\"ro.build.version.sdk\":" + q(dv[12])
+                + (hostSdkFull > 0
+                        ? ",\"ro.build.version.sdk_full\":" + q(formatSdkFull(hostSdkFull)) : "")
+                + ",\"ro.build.version.security_patch\":" + q(dv[13])
+                + ",\"ro.build.version.incremental\":" + q(dv[10])
+                + ",\"ro.build.id\":" + q(dv[9])
+                + ",\"ro.product.locale\":" + q(applyLocale == null ? "" : applyLocale)
                 + ",\"ro.build.tags\":\"release-keys\""
-                + ",\"ro.build.type\":\"user\"}"
+                + ",\"ro.build.type\":\"user\""
+                + ",\"gsm.operator.numeric\":"
+                        + q(slotFilledProp("gsm.operator.numeric", effSimOp))
+                + ",\"gsm.operator.iso-country\":"
+                        + q(slotFilledProp("gsm.operator.iso-country", effSimIso))
+                + ",\"gsm.operator.alpha\":"
+                        + q(slotFilledProp("gsm.operator.alpha", effSimCar))
+                + ",\"gsm.operator.isroaming\":"
+                        + q(slotFilledProp("gsm.operator.isroaming", "false"))
+                + ",\"gsm.sim.operator.numeric\":"
+                        + q(slotFilledProp("gsm.sim.operator.numeric", effSimOp))
+                + ",\"gsm.sim.operator.iso-country\":"
+                        + q(slotFilledProp("gsm.sim.operator.iso-country", effSimIso))
+                + ",\"gsm.sim.operator.alpha\":"
+                        + q(slotFilledProp("gsm.sim.operator.alpha", effSimCar))
+                + ",\"persist.sys.timezone\":" + q(applyZone == null ? "" : applyZone)
+                + oemRegionPropsJson(dv, r, effSimCar) + "}"
+                + ",\"ipv6Disabled\":" + (!ipv6SpoofOn)
+                + ",\"ipv6Prefix\":" + q(v6PayloadPfx)
+                + ",\"ipv6MobilePrefix\":" + q(v6MobilePayloadPfx)
+                + ",\"ipv6Seed\":" + profileSeed
+                + ",\"appVisMode\":" + q(persona.appVisMode(user))
+                + ",\"appVisPackages\":" + com.walter.claudewilson.model.AppVisibilityPolicy.toJsonArray(
+                        persona.appVisPackages(user))
+                + ",\"appVisExtraHidden\":" + com.walter.claudewilson.model.AppVisibilityPolicy.toJsonArray(
+                        persona.hasExplicitAppVisExtra(user)
+                                ? persona.appVisExtraHidden(user)
+                                : HmaPresetScanner.resolveSystemExtraHidden(
+                                        getApplicationContext(), target.packageName(),
+                                        persona.appVisPresetGroups(user)))
+                + ",\"appVisExcludeSystem\":" + persona.appVisExcludeSystem(user)
+                + ",\"appVisStrict\":" + persona.appVisStrict(user)
+                + ",\"appVisHideDev\":" + persona.appVisHideDev(user)
+                + ",\"appVisHideA11y\":" + persona.appVisHideA11y(user)
+                + ",\"appVisHideIme\":" + persona.appVisHideIme(user)
+                + ",\"bodyguard\":" + BodyguardStore.payloadJson(this, target.id(), user)
                 + "}";
         }
         String payloadSig = payload == null ? null : Integer.toHexString(payload.hashCode());
-        boolean injectedNow = payloadSig != null && payloadSig.equals(persona.injectedSig(user));
+        if (payload != null && payloadSig != null && !payloadSig.equals(lastLedgerSnapSig)) {
+            lastLedgerSnapSig = payloadSig;
+            final String snapJson = payload;
+            final String snapTarget = target.id();
+            final String snapRegion = iso;
+            final String rawCc = NetworkPanel.lastEgressCc();
+            final String snapEgress = rawCc == null ? "" : rawCc;
+            new Thread(() -> LedgerIngestor.recordPersonaFromPayload(
+                    getApplicationContext(), snapTarget, user, snapJson, snapRegion, snapEgress),
+                    "ledger-snap").start();
+        }
+        boolean injectedNow = hookChannel && payloadSig != null
+                && payloadSig.equals(persona.injectedSig(user));
         boolean targetLive = injectedNow && targetProcessLive();
-        // The four SIM rows describe what the target will read, not what the system property
-        // currently holds. A fresh target self-check wins; otherwise the published persona is
-        // the next-launch projection. The system values remain available to the data plane only.
         com.walter.claudewilson.model.CheckItem simOpItem = modelItem("target.simop");
         com.walter.claudewilson.model.CheckItem simIsoItem = modelItem("target.simiso");
         com.walter.claudewilson.model.CheckItem simCarItem = modelItem("target.carrier");
         boolean simFresh = targetLive && fresh(simOpItem) && fresh(simIsoItem) && fresh(simCarItem);
-        // With no region there is no persona projection: the three SIM rows must fall back to
-        // the card's own values, not to the expected-column dash.
-        String actualOp = !hasPersona ? liveOp : simFresh ? simOpItem.value() : op;
-        String actualIso = !hasPersona ? liveIso : simFresh ? simIsoItem.value() : iso;
-        String actualCar = !hasPersona ? liveCarrier : simFresh ? simCarItem.value() : car;
-        int opStatus = !hasPersona ? -1
-                : simFresh ? mccComparison(op, actualOp) : -3;
-        int isoStatus = !hasPersona ? -1
-                : simFresh ? comparison(iso, actualIso) : -3;
-        int carStatus = !hasPersona ? -1
-                : simFresh ? comparison(car, actualCar) : -3;
-        card.addView(row(hasPersona, Lang.t("字段", "field", "項目"),
-                Lang.t("期待", "expected", "期待"),
-                Lang.t("实际", "actual", "実際"), -2));
+        // Under root/hook channels the rows project the hook payload and turn green on self-check;
+        // under pure Shizuku (no hooks) they report the real card / CarrierConfig state instead of
+        // freezing forever on "next launch".
+        String actualOp;
+        String actualIso;
+        String actualCar;
+        int opStatus;
+        int isoStatus;
+        int carStatus;
+        if (!hasPersona) {
+            actualOp = liveOp;
+            actualIso = liveIso;
+            actualCar = liveCarrier;
+            opStatus = -1;
+            isoStatus = -1;
+            carStatus = -1;
+        } else if (preserveRealSim) {
+            actualOp = liveOp;
+            actualIso = liveIso;
+            actualCar = liveCarrier;
+            opStatus = mccComparison(effSimOp, liveOp) == 1 ? 1 : -3;
+            isoStatus = comparison(effSimIso, liveIso) == 1 ? 1 : -3;
+            carStatus = comparison(effSimCar, liveCarrier) == 1 ? 1 : -3;
+        } else if (hookChannel) {
+            actualOp = simFresh ? simOpItem.value() : effSimOp;
+            actualIso = simFresh ? simIsoItem.value() : effSimIso;
+            actualCar = simFresh ? simCarItem.value() : effSimCar;
+            opStatus = simFresh ? mccComparison(effSimOp, actualOp) : -3;
+            isoStatus = simFresh ? comparison(effSimIso, actualIso) : -3;
+            carStatus = simFresh ? comparison(effSimCar, actualCar) : -3;
+        } else {
+            actualOp = liveOp;
+            actualIso = liveIso;
+            actualCar = liveCarrier;
+            opStatus = mccComparison(effSimOp, liveOp) == 1 ? 1 : -1;
+            isoStatus = simCountryWritable
+                    ? (RegionSelection.regionApplied ? comparison(effSimIso, liveIso) : -3)
+                    : (comparison(effSimIso, liveIso) == 1 ? 1 : -1);
+            carStatus = simCarrierWritable
+                    ? (RegionSelection.regionApplied ? comparison(effSimCar, liveCarrier) : -3)
+                    : (comparison(effSimCar, liveCarrier) == 1 ? 1 : -1);
+        }
         rootHint = txt("", 10, AMBER);
         rootHint.setVisibility(View.GONE);
-        rootHint.setPadding(0, dp(this, 2), 0, dp(this, 2));
-        card.addView(rootHint);
+        rootHint.setPadding(0, dp(this, 4), 0, dp(this, 2));
         actionStatus = txt("", 10, DIM);
-        // The apply log was injected but never drawn: the locale read-back, the skipped steps
-        // and the failure reason all went to a supplier nobody rendered.
         String apply = applyStatus.get();
         if (apply != null && !apply.isEmpty()) actionStatus.setText(apply);
-        actionStatus.setPadding(0, dp(this, 2), 0, dp(this, 2));
-        // Status text is deliberately not attached: the card shows values, not a log stream.
-        // Group 1: values the region switch writes by itself, so they belong at the top.
-        LinearLayout mccRow = row(hasPersona, "SIM MCC/MNC",
-                hasPersona ? opShown : dash,
-                shown(actualOp),
-                opStatus);
-        if (hasPersona) gateRoot(mccRow,
-                Lang.t("SIM MCC/MNC 覆写需要系统级权限（root）",
-                        "SIM MCC/MNC override needs the system channel (root)",
-                        "SIM MCC/MNC 上書きにはシステムチャネル（root）が必要"),
-                this::editMcc);
-        card.addView(mccRow);
-        LinearLayout isoRow = row(hasPersona, Lang.t("SIM 国家", "SIM country", "SIM 国"),
-                hasPersona ? iso : dash,
-                shown(actualIso),
-                isoStatus);
-        if (hasPersona) {
-            if (simCarrierWritable) {
-                gateAnyChannel(isoRow,
-                        Lang.t("SIM 国家覆写需要 root 授权（shell 通道即可）",
-                                "SIM country override needs root (shell channel is enough)",
-                                "SIM 国上書きには root 許可が必要（shell チャネルで可）"),
-                        this::editIso);
+
+        // Collect all persona fields into 6 orthogonal workbench groups while computing exact mismatches.
+        final java.util.List<DrawerField> simFields = new java.util.ArrayList<DrawerField>();
+        final java.util.List<DrawerField> locFields = new java.util.ArrayList<DrawerField>();
+        final java.util.List<DrawerField> gpsFields = new java.util.ArrayList<DrawerField>();
+        final java.util.List<DrawerField> radioFields = new java.util.ArrayList<DrawerField>();
+        final java.util.List<DrawerField> devFields = new java.util.ArrayList<DrawerField>();
+        final java.util.List<DrawerField> storeFields = new java.util.ArrayList<DrawerField>();
+
+        // ---- GROUP 1: SIM & NETWORK ----
+        final String simModeActual;
+        final int simModeStatus;
+        {
+            String modeExpected;
+            String isoTag = effSimIso != null && !effSimIso.isEmpty() && !"—".equals(effSimIso)
+                    ? effSimIso.toUpperCase(java.util.Locale.ROOT) : "";
+            if (!hasPersona) {
+                modeExpected = dash;
+            } else if (simDecision.simEligible) {
+                modeExpected = preserveRealSim
+                        ? Lang.t("保留原卡", "keep real", "実SIM維持")
+                        : Lang.t("伪装覆写", "spoof", "偽装上書");
+            } else if (com.walter.claudewilson.model.SimPolicy.REASON_RESTRICTED_SIM
+                            .equals(simDecision.reason)
+                    || com.walter.claudewilson.model.SimPolicy.REASON_RESTRICTED_PEER
+                            .equals(simDecision.reason)) {
+                modeExpected = Lang.t("禁区伪装", "spoof", "制限偽装");
             } else {
-                gateRoot(isoRow,
-                        Lang.t("此 ROM 拒绝 shell SIM 覆写；SIM 需要 root 通道",
-                                "this ROM denies shell SIM overrides; use the root channel",
-                                "この ROM は shell の SIM 上書きを拒否します。root チャネルが必要"),
-                        this::editIso);
+                modeExpected = Lang.t("伪装覆写", "spoof", "偽装上書");
             }
-        }
-        card.addView(isoRow);
-        LinearLayout carrierRow = row(hasPersona, Lang.t("SIM 运营商", "SIM carrier", "SIM キャリア"),
-                hasPersona ? carShown : dash,
-                shown(actualCar),
-                carStatus);
-        if (hasPersona) {
-            if (simCarrierWritable) {
-                gateAnyChannel(carrierRow,
-                        Lang.t("SIM 运营商覆写需要 root 授权（shell 通道即可）",
-                                "SIM carrier override needs root (shell channel is enough)",
-                                "SIM キャリア上書きには root 許可が必要（shell チャネルで可）"),
-                        this::editCarrier);
+            if (com.walter.claudewilson.model.SimPolicy.REASON_PRESERVED
+                    .equals(simDecision.reason)) {
+                simModeActual = hasPersona
+                        ? Lang.t("保留原卡", "Real", "実SIM") + " · "
+                                + simDecision.resolvedIso.toUpperCase(java.util.Locale.ROOT)
+                        : simDecision.resolvedIso + " · " + Lang.t("原卡", "real", "実SIM");
+                simModeStatus = hasPersona ? 1 : -1;
+            } else if (com.walter.claudewilson.model.SimPolicy.REASON_DISABLED
+                    .equals(simDecision.reason)) {
+                simModeActual = hasPersona
+                        ? Lang.t("伪装覆写", "Spoofed", "偽装")
+                                + (isoTag.isEmpty() ? "" : " · " + isoTag)
+                        : simDecision.resolvedIso + " · " + Lang.t("原卡", "real", "実SIM");
+                simModeStatus = hasPersona ? 1 : -1;
+            } else if (com.walter.claudewilson.model.SimPolicy.REASON_RESTRICTED_SIM
+                    .equals(simDecision.reason)) {
+                simModeActual = hasPersona
+                        ? Lang.t("禁区伪装", "Spoofed", "制限偽装")
+                                + (isoTag.isEmpty() ? "" : " · " + isoTag)
+                        : simDecision.resolvedIso + " · " + Lang.t("禁区", "banned", "制限国");
+                simModeStatus = hasPersona ? 1 : 0;
+                if (!hasPersona) restrictedNativeSim = true;
+            } else if (com.walter.claudewilson.model.SimPolicy.REASON_RESTRICTED_PEER
+                    .equals(simDecision.reason)) {
+                simModeActual = hasPersona
+                        ? Lang.t("禁区伪装", "Spoofed", "制限偽装")
+                                + (isoTag.isEmpty() ? "" : " · " + isoTag)
+                        : Lang.t("双卡含禁区", "banned peer", "制限併用");
+                simModeStatus = hasPersona ? 1 : 0;
+                if (!hasPersona) restrictedNativeSim = true;
             } else {
-                gateRoot(carrierRow,
-                        Lang.t("此 ROM 拒绝 shell SIM 覆写；SIM 需要 root 通道",
-                                "this ROM denies shell SIM overrides; use the root channel",
-                                "この ROM は shell の SIM 上書きを拒否します。root チャネルが必要"),
-                        this::editCarrier);
+                simModeActual = hasPersona
+                        ? Lang.t("无卡伪装", "Virtual", "仮想SIM")
+                                + (isoTag.isEmpty() ? "" : " · " + isoTag)
+                        : Lang.t("无卡", "no SIM", "SIMなし");
+                simModeStatus = hasPersona ? 1 : -1;
             }
+            Runnable openCarrier = !hasPersona ? null : () -> runAnyChannelGated(
+                    Lang.t("SIM 运营商配置需要 root 或 Shizuku 授权",
+                            "SIM carrier configuration needs root or Shizuku"),
+                    () -> openCarrierSheet(simDecision, profileSeed));
+            addField(simFields, Lang.t("SIM 策略", "SIM mode", "SIM 方針"),
+                    modeExpected, simModeActual, simModeStatus,
+                    hasPersona, false, openCarrier);
+            String groupExpected = hasPersona ? (effSimCarShown + " · " + effSimOpShown) : dash;
+            String groupActual = !hasPersona
+                    ? (shown(actualCar) + " · " + shown(actualOp))
+                    : (shown(actualCar) + " · " + shown(actualOp));
+            int groupStatus = !hasPersona ? -1
+                    : (opStatus == 0 || carStatus == 0) ? 0
+                    : (opStatus == 1 && carStatus == 1) ? 1 : -3;
+            addField(simFields, Lang.t("SIM 运营商组", "SIM carrier", "SIM キャリア"),
+                    groupExpected, groupActual, groupStatus,
+                    hasPersona, false, openCarrier);
         }
-        card.addView(carrierRow);
-        // The trio is written system-wide, so the actual value is the property area -- the same
-        // three values the telemetry backend reads. A mismatch here is a real fact, not a UI state.
-        // The visited country is often blank in ServiceState on OEM builds, but the PLMN still
-        // carries the MCC, so the country is derivable instead of being displayed as "?".
+        addField(simFields, Lang.t("SIM 国家", "SIM country", "SIM 国"),
+                hasPersona ? effSimIso : dash, shown(actualIso), isoStatus,
+                false, false, null);
+
         if (liveNet.length() >= 3) {
-            // The PLMN's MCC is the authoritative country for the visited network. OEM
-            // telephony props can keep a stale iso next to a China MCC, and showing
-            // that beside the physical carrier is a contradiction, not an observation.
             String derived = mccIso(liveNet.substring(0, 3));
             if (!empty(derived) && (empty(liveNetIso)
                     || !derived.equalsIgnoreCase(liveNetIso))) {
                 liveNetIso = derived;
             }
         }
-        String netOp = saved != null && !saved.netOp.isEmpty() ? saved.netOp : op;
-        String netIso = saved != null && !saved.netIso.isEmpty() ? saved.netIso : iso;
-        String netName = saved != null && !saved.netName.isEmpty() ? saved.netName : car;
+        // Visited network in both hook payload and gsm.operator.* props follows the effective SIM trio.
+        String netOp = effSimOp;
+        String netIso = effSimIso;
+        String netName = effSimCar;
         String netTarget = val(netOp) + " · " + netIso + " · " + val(netName);
         String liveNetTrio = shown(liveNet) + " · " + shown(liveNetIso) + " · "
                 + shown(liveNetName);
         if (airplane) {
-            // No registration, no visited network: both columns say so instead of repeating the
-            // PLMN that was live before the radio was turned off.
-            card.addView(row(hasPersona,
-                    Lang.t("拜访网络", "visited network", "訪問ネットワーク"),
-                    dash, dash, -1));
+            addField(simFields, Lang.t("拜访网络", "visited network", "訪問ネットワーク"),
+                    dash, dash, -1, false, false, null);
         } else {
-            // The visited-network trio is its own region salt: it may name a different carrier
-            // than the SIM operator. With a fresh target it is the published payload; otherwise
-            // it is the stored next-launch value.
-            String targetNetTrio = netTarget;
-            int netStatus = !hasPersona ? -1 : simFresh ? 1 : -3;
-            card.addView(row(hasPersona,
-                    Lang.t("拜访网络", "visited network", "訪問ネットワーク"),
-                    hasPersona ? netTarget : dash,
-                    hasPersona ? targetNetTrio : liveNetTrio,
-                    netStatus));
+            String visitedActual = !hasPersona ? liveNetTrio
+                    : hookChannel ? netTarget : liveNetTrio;
+            int netStatus = !hasPersona ? -1
+                    : hookChannel ? (simFresh ? 1 : -3)
+                    : (visitedStatus(netOp, netIso, liveNet, liveNetIso) == 1 ? 1 : -1);
+            addField(simFields, Lang.t("拜访网络", "visited network", "訪問ネットワーク"),
+                    hasPersona ? netTarget : dash, visitedActual, netStatus,
+                    false, false, null);
         }
+
+        // ---- GROUP 2: LANGUAGE & LOCATION ----
+        String langShown;
         int langStatus;
         if (!hasPersona) {
+            langShown = targetLocaleUsable
+                    ? targetLocale.value().replace('-', '_')
+                    : dash;
             langStatus = -1;
-        } else if (!targetLocaleLive) {
-            langStatus = -3;
-        } else {
+        } else if (targetLocaleLive) {
+            langShown = liveLoc;
             langStatus = comparison(loc.replace("-", "_"), liveLoc) == 1
                     || Regions.localeMatch(loc, liveLoc) ? 1 : 0;
+        } else if (targetLocaleUsable && "next-launch".equals(targetLocaleNote)) {
+            String pendingLoc = targetLocale.value().replace('-', '_');
+            boolean match = comparison(loc.replace("-", "_"), pendingLoc) == 1
+                    || Regions.localeMatch(loc, pendingLoc);
+            langShown = pendingLoc + " · " + Lang.t("下次启动", "next launch", "次回起動");
+            langStatus = match ? -3 : 0;
+        } else if (hookChannel && injectedNow && !"—".equals(loc)) {
+            langShown = loc.replace('-', '_') + " · " + Lang.t("下次启动", "next launch", "次回起動");
+            langStatus = -3;
+        } else {
+            langShown = dash;
+            langStatus = -3;
         }
-        card.addView(row(hasPersona, Lang.t("目标语言", "target language", "対象言語"),
-                hasPersona ? loc.replace("-", "_") : dash,
-                liveLoc,
-                langStatus));
-        LinearLayout tzRow = row(hasPersona, Lang.t("时区", "tz", "TZ"),
-                hasPersona ? tz : dash,
-                liveTz,
-                !hasPersona ? -1 : comparison(tz, liveTz));
-        if (hasPersona) bindTimeZoneEditor(tzRow);
-        card.addView(tzRow);
+        Runnable openLocTz = !hasPersona ? null : this::openLocaleTzSheet;
+        addField(locFields, Lang.t("目标语言", "target language", "対象言語"),
+                hasPersona ? loc.replace("-", "_") : dash, langShown, langStatus,
+                hasPersona, false, openLocTz);
+        int tzStatus = !hasPersona ? -1 : comparison(tz, liveTz);
+        addField(locFields, Lang.t("时区", "tz", "TZ"),
+                hasPersona ? tz : dash, liveTz, tzStatus,
+                hasPersona, false, openLocTz);
         String liveUtc = Regions.utcAt(liveTz);
-        LinearLayout utcRow = row(hasPersona,
-                Lang.t("UTC 偏移", "UTC offset", "UTC オフセット"),
-                hasPersona ? r.utc : dash,
-                liveUtc,
-                !hasPersona ? -1 : Regions.utcMatch(r.utc, liveUtc) ? 1 : 0);
-        if (hasPersona) bindTimeZoneEditor(utcRow);
-        card.addView(utcRow);
-        // Synthetic location: the region point, not a reading. The expected cell is the place
-        // the target should see; the actual cell is the hook state (the control app never reads
-        // a real fix, so there is nothing else truthful to put there).
+        int utcStatus = !hasPersona ? -1 : Regions.utcMatch(r.utc, liveUtc) ? 1 : 0;
+        addField(locFields, Lang.t("UTC 偏移", "UTC offset", "UTC オフセット"),
+                hasPersona ? r.utc : dash, liveUtc, utcStatus,
+                hasPersona, false, openLocTz);
+
+        // ---- GROUP 3: GPS LOCATION ----
         int targetLocation = targetLocationPermission(this, target);
+        boolean targetHasLocPerm = targetLocation > 0;
         String locWhere = dash;
         if (place != null) {
             locWhere = (place.city.isEmpty() ? r.name : place.city) + (customLocation ? "*" : "");
         }
+        boolean effCoarse = (targetLocation == 1) || "coarse".equals(locAccMode);
+        String accTag = "coarse".equals(locAccMode) ? "±3km"
+                : "drift".equals(locAccMode) ? "±15m" : "±5m";
+        String effAccTag = targetHasLocPerm
+                ? (effCoarse ? "±3km" : accTag)
+                : accTag;
+        String altTag = Double.isNaN(locAlt) ? "" : " · " + Math.round(locAlt) + "m";
+        String effAltTag = (targetHasLocPerm && effCoarse) ? "" : altTag;
         String locActual;
         int locStatus;
-        if (!hasPersona) {
+        if (!hasPersona || !hookChannel) {
             locActual = dash;
             locStatus = -1;
         } else if (!locationOn) {
-            locActual = Lang.t("关闭", "off", "オフ");
-            locStatus = -1;
+            locActual = targetHasLocPerm
+                    ? Lang.t("关闭 · 透传", "off · passthrough", "オフ · 透過")
+                    : Lang.t("关闭", "off", "オフ");
+            locStatus = targetHasLocPerm ? -2 : -1;
         } else if (place == null) {
-            locActual = Lang.t("无坐标", "no coordinate", "座標なし");
-            locStatus = -3;
-        } else if (targetLocation == 0) {
-            locActual = Lang.t("无权限", "no permission", "権限なし");
-            locStatus = -3;
+            locActual = targetHasLocPerm
+                    ? Lang.t("无坐标", "no coordinate", "座標なし")
+                    : dash;
+            locStatus = targetHasLocPerm ? -2 : -1;
+        } else if (!targetHasLocPerm) {
+            // Target has no location permission: GPS is not a judgment/risk item; display staged
+            // coordinates neutrally without warning color.
+            String coordShort = String.format(java.util.Locale.US, "%.4f, %.4f",
+                    place.latitude, place.longitude);
+            locActual = locWhere + " · " + coordShort;
+            locStatus = -1;
         } else {
-            locActual = targetLocation == 2 ? "gps ±5m" : "network ±3km";
+            // Target holds location permission: inject by default and display the target-visible fix.
+            com.walter.claudewilson.model.LocationFix preview =
+                    new com.walter.claudewilson.model.LocationPlan(
+                            place.latitude, place.longitude, profileSeed, effCoarse)
+                            .fix(0L, 0L);
+            String coordShort = effCoarse
+                    ? String.format(java.util.Locale.US, "%.3f, %.3f",
+                            preview.latitude, preview.longitude)
+                    : String.format(java.util.Locale.US, "%.4f, %.4f",
+                            preview.latitude, preview.longitude);
+            locActual = locWhere + " · " + coordShort;
             locStatus = 1;
         }
-        LinearLayout locationRow = row(hasPersona,
-                Lang.t("定位", "location", "位置情報"),
+        Runnable openMap = hasPersona ? (hookChannel ? this::openLocationPicker
+                : () -> showRootHint(Lang.t("定位模拟需要系统级权限（root）",
+                        "Location simulation needs root"))) : null;
+        addField(gpsFields, Lang.t("定位坐标", "Coordinates", "位置座標"),
                 hasPersona ? locWhere : dash,
                 locActual,
-                locStatus);
-        if (hasPersona) bindLocationEditor(locationRow);
-        card.addView(locationRow);
+                locStatus, hasPersona && hookChannel, false, openMap);
+        addField(gpsFields, Lang.t("精度与海拔", "Accuracy & alt", "精度・高度"),
+                hasPersona && locationOn ? effAccTag + effAltTag : dash,
+                !hasPersona ? dash
+                        : !locationOn ? Lang.t("已关闭", "Off", "オフ")
+                        : effAccTag + effAltTag,
+                !hasPersona || !locationOn || !targetHasLocPerm ? -1 : 1,
+                hasPersona && hookChannel, false, openMap);
+
         String hintExpected = hasPersona ? r.iso.toUpperCase(java.util.Locale.ROOT) : dash;
-        // A target that does not write a stored country hint has no row to compare. Claude names
-        // only the hook payload it will read on the next launch, so do not invent a second store.
         if (modelItem("target.data.country_hint") != null) {
             String storedHint = modelValue("target.data.country_hint");
-            card.addView(row(hasPersona, Lang.t("应用已存国家", "stored country", "保存国"),
+            addField(gpsFields, Lang.t("应用已存国家", "stored country", "保存国"),
                     hintExpected, storedHint,
-                    hintStatus(hasPersona, "target.data.country_hint",
-                            hintExpected, storedHint)));
+                    hintStatus(hasPersona, "target.data.country_hint", hintExpected, storedHint),
+                    false, false, null);
         }
         if (modelItem("target.payload.cc_hint") != null) {
             String nextHint = modelValue("target.payload.cc_hint");
-            card.addView(row(hasPersona,
-                    Lang.t("下次启动国家", "next launch country", "次回起動国"),
-                    hintExpected, nextHint,
-                    hintStatus(hasPersona, "target.payload.cc_hint",
-                            hintExpected, nextHint)));
+            String nextHintShown = nextHint != null && nextHint.matches("[A-Za-z]{2}")
+                    ? nextHint.toUpperCase(java.util.Locale.ROOT) : nextHint;
+            addField(gpsFields, Lang.t("下次启动国家", "next launch country", "次回起動国"),
+                    hintExpected, nextHintShown,
+                    hintStatus(hasPersona, "target.payload.cc_hint", hintExpected, nextHint),
+                    false, false, null);
         }
 
-        // Group 2: never written by the region switch. Their expected value defaults to the
-        // device's own value, so "nothing changed" reads as a match instead of "not compared".
-        LinearLayout modelRow = row(hasPersona, Lang.t("机型", "model", "機種"),
-                devTarget ? dv[3] : liveModel, liveModel,
-                hasPersona ? comparison(devTarget ? dv[3] : liveModel, liveModel) : -1);
-        if (hasPersona) gateRoot(modelRow,
-                Lang.t("机型覆写需要系统级权限（root）",
-                        "Model injection needs the system channel (root)",
-                        "機種上書きにはシステムチャネル（root）が必要"),
-                this::editModel);
-        card.addView(modelRow);
-        // The fingerprint is the one field that reached Google mixed (brand from the real device,
-        // product/device from the persona). Shown as its three identity segments: the id and
-        // incremental vary per build and only add noise at this width.
+        // ---- GROUP 4: WIRELESS & SENSORS (Wi-Fi / BLE / Sensors / Cell Shield) ----
+        final String curIso = r != null ? r.iso : "";
+        final com.walter.claudewilson.model.GeoTable.Point curPlace = place;
+        final String wifiDisplay;
+        final int wifiSt;
+        if (!hasPersona || !hookChannel) {
+            wifiDisplay = dash;
+            wifiSt = -1;
+        } else if (!wifiOn) {
+            wifiDisplay = Lang.t("关闭 · 透传", "Off", "オフ");
+            wifiSt = -1;
+        } else if (!activeWifiList.isEmpty()) {
+            wifiDisplay = activeWifiList.get(0).ssid + " · " + activeWifiList.size() + " AP";
+            wifiSt = 1;
+        } else {
+            wifiDisplay = "0 AP";
+            wifiSt = -1;
+        }
+        Runnable openWifi = !hasPersona ? null : () -> runRootGated(
+                Lang.t("Wi-Fi 邻域注入需要 root 权限", "Wi-Fi neighbourhood hook needs root"),
+                () -> openWifiSheet(user, curIso, curPlace, profileSeed));
+        addField(radioFields, Lang.t("Wi-Fi 邻域", "Wi-Fi scan", "Wi-Fi 環境"),
+                wifiDisplay, wifiDisplay, wifiSt, hasPersona && hookChannel, false, openWifi);
+
+        final String bleDisplay;
+        final int bleSt;
+        if (!hasPersona || !hookChannel) {
+            bleDisplay = dash;
+            bleSt = -1;
+        } else if (!bleOn) {
+            bleDisplay = Lang.t("关闭 · 透传", "Off", "オフ");
+            bleSt = -1;
+        } else if (bleEmpty) {
+            bleDisplay = Lang.t("空蓝牙洁净", "Empty clean", "空モード");
+            bleSt = 1;
+        } else if (!activeBleList.isEmpty()) {
+            bleDisplay = activeBleList.get(0).name + " · " + activeBleList.size();
+            bleSt = 1;
+        } else {
+            bleDisplay = "0";
+            bleSt = -1;
+        }
+        Runnable openBle = !hasPersona ? null : () -> runRootGated(
+                Lang.t("蓝牙 BLE 注入需要 root 权限", "BLE neighbourhood hook needs root"),
+                () -> openBleSheet(user, curIso, profileSeed));
+        addField(radioFields, Lang.t("蓝牙 BLE", "Bluetooth BLE", "Bluetooth"),
+                bleDisplay, bleDisplay, bleSt, hasPersona && hookChannel, false, openBle);
+
+        final String sensDisplay;
+        final int sensSt;
+        if (!hasPersona || !hookChannel) {
+            sensDisplay = dash;
+            sensSt = -1;
+        } else if (!sensorsOn) {
+            sensDisplay = Lang.t("关闭 · 透传", "Off", "オフ");
+            sensSt = -1;
+        } else {
+            String pTag = sensorPresetLabel(sensorPreset);
+            String baro = activeSensorProfile != null
+                    ? String.format(java.util.Locale.US, " · %.0fhPa", activeSensorProfile.pressure)
+                    : "";
+            sensDisplay = pTag + baro;
+            sensSt = 1;
+        }
+        Runnable openSensor = !hasPersona ? null : () -> runRootGated(
+                Lang.t("传感器基线注入需要 root 权限", "Sensor hook needs root"),
+                () -> openSensorSheet(user, curPlace, profileSeed, localHour, locAlt));
+        addField(radioFields, Lang.t("环境传感器", "Sensors", "センサー"),
+                sensDisplay, sensDisplay, sensSt, hasPersona && hookChannel, false, openSensor);
+
+        addField(radioFields, Lang.t("基站扫描", "Cell info", "基地局"),
+                hasPersona && hookChannel ? Lang.t("已置空防泄漏", "Blanked", "遮断済") : dash,
+                hasPersona && hookChannel ? Lang.t("已置空防泄漏", "Blanked", "遮断済") : dash,
+                hasPersona && hookChannel ? 1 : -1, false, false, null);
+
+        // ---- GROUP 3: DEVICE & IPV6 ----
+        boolean devHookOnly = devTarget && persona.deviceHookOnly(user);
+        String modelActual = devHookOnly
+                ? dv[3] + " · " + Lang.t("Hook", "Hook", "Hook")
+                : liveModel;
+        int modelStatus = !hasPersona ? -1
+                : devHookOnly ? (targetLive ? 1 : -3)
+                : comparison(devTarget ? dv[3] : liveModel, liveModel);
+        Runnable openDev = !hasPersona ? null : () -> runRootGated(
+                Lang.t("机型与区域标记覆写需要系统级权限（root）", "Device/CSC override needs root"),
+                this::openDeviceCscSheet);
+        addField(devFields, Lang.t("机型", "model", "機種"),
+                devTarget ? dv[3] : liveModel, modelActual, modelStatus,
+                hasPersona, true, openDev);
+
         String liveFp = val(DeviceSignals.getprop("ro.build.fingerprint"));
         String fpExpected = devTarget ? shortFp(dv[8]) : shortFp(liveFp);
-        card.addView(row(hasPersona, Lang.t("指纹", "fingerprint", "指紋"),
-                fpExpected, shortFp(liveFp),
-                hasPersona ? comparison(fpExpected, shortFp(liveFp)) : -1));
-        String aidShown = aidOverride != null ? aidOverride : liveAidText;
-        // The SSAID cannot be written system-wide, so this row's mark means "the target process is
-        // running the payload that carries this id". With no attach (or a different payload after
-        // switching region) the column falls back to what the device itself reports.
-        boolean aidLive = aidTarget && injectedNow;
-        // No target means the row mirrors the device's own SSAID on both sides, which is a match:
-        // the "—" state is reserved for a value that cannot be compared at all.
-        int aidStatus = !aidTarget ? comparison(liveAidText, liveAidText)
-                : aidLive ? 1 : comparison(aidOverride, liveAidText);
-        LinearLayout aidRow = row(hasPersona, "AID",
-                aidTarget ? aidShown : liveAidText,
-                aidLive ? aidOverride : liveAidText,
-                aidStatus);
-        // 16 hex characters do not fit the column at the table size; shrink this row only. The row
-        // has three cells with a region selected and two without, so walk the value cells instead
-        // of indexing a fixed position.
-        for (int i = 1; i < aidRow.getChildCount(); i++) {
-            ((TextView) aidRow.getChildAt(i)).setTextSize(9);
-        }
-        if (hasPersona) gateRoot(aidRow,
-                Lang.t("改写/注入 AID 需要系统级权限（root）",
-                        "Rewriting/injecting AID needs the system channel (root)",
-                        "AID の書き換え/注入にはシステムチャネル（root）が必要"),
-                this::editAid);
+        String fpActual = devHookOnly ? fpExpected : shortFp(liveFp);
+        int fpStatus = !hasPersona ? -1
+                : devHookOnly ? (targetLive ? 1 : -3)
+                : comparison(fpExpected, shortFp(liveFp));
+        addField(devFields, Lang.t("指纹", "fingerprint", "指紋"),
+                fpExpected, fpActual, fpStatus, false, false, null);
+
         String[] hw = Regions.hwTag();
-        // The tag is not assigned by default either: with no target the row simply mirrors the
-        // device's own value. A target exists only after the CSC row wrote one, and then the row
-        // is the proof that the rewrite survived the zygote restart.
         String cscTarget = persona.csc(user);
         String cscExpected = !hasPersona ? dash : cscTarget != null ? cscTarget : hw[0];
-        // Same rule as the rows above: no target means both cells hold the device's own tag, so the
-        // row is a match; a written target is compared against what the rewrite produced.
-        int cscStatus = !hasPersona ? -1
-                : tagKey(cscExpected).equals(tagKey(hw[0])) ? 1 : 0;
-        LinearLayout cscRow = row(hasPersona,
-                Lang.t("区域标记/CSC", "region tag/CSC", "地域タグ/CSC"),
-                cscExpected, hw[0], cscStatus);
-        if (hasPersona) gateRoot(cscRow,
-                Lang.t("区域标记覆写需要系统级权限（root）",
-                        "Region tag override needs the system channel (root)",
-                        "地域タグ上書きにはシステムチャネル（root）が必要"),
-                this::editCsc);
-        card.addView(cscRow);
+        int cscStatus = !hasPersona ? -1 : tagKey(cscExpected).equals(tagKey(hw[0])) ? 1 : 0;
+        addField(devFields, Lang.t("区域标记/CSC", "region tag/CSC", "地域タグ/CSC"),
+                cscExpected, hw[0], cscStatus, hasPersona, true, openDev);
+
+        String isoUpper = iso.toUpperCase(java.util.Locale.ROOT);
+        String v6OffText = Lang.t("IPv6 已关闭", "IPv6 Off", "IPv6 無効");
+        String v6Expected = !ipv6SpoofOn ? v6OffText : (hasPersona ? v6PayloadPfx : dash);
+        String v6MobExpected = (hasPersona && ipv6SpoofOn) ? v6MobilePayloadPfx : "";
+        String v6Actual = !ipv6SpoofOn ? v6OffText : dash;
+        int v6Status = !ipv6SpoofOn ? 1 : -1;
+        com.walter.claudewilson.model.CheckItem netItem = modelItem("target.network_addresses");
+        if (ipv6SpoofOn && hasPersona && hookChannel && targetLive && netItem != null
+                && netItem.isRead() && !netItem.isStale()) {
+            String ips = netItem.value();
+            v6Actual = extractGlobalV6(ips);
+            if (!v6Actual.equals(dash)) {
+                boolean matchesPool = sharesPrefix(v6Actual, v6Expected)
+                        || sharesPrefix(v6Actual, v6MobExpected);
+                v6Status = matchesPool ? 1 : 0;
+                if (matchesPool) {
+                    v6Actual = v6Actual + " " + isoUpper;
+                }
+            }
+        } else if (ipv6SpoofOn && hasPersona && hookChannel && !v6Expected.isEmpty()
+                && !v6Expected.equals(dash)) {
+            v6Actual = v6Expected + " · " + Lang.t("下次启动", "next launch", "次回起動");
+            v6Status = -3;
+        }
+        final String v6SheetIso = isoUpper;
+        final String v6SheetPfx = v6PayloadPfx;
+        Runnable openIpv6Toggle = () -> PersonaEditSheets.showIpv6ModeSheet(
+                this, ipv6SpoofOn, v6SheetIso, v6SheetPfx, on -> {
+                    boolean enable = Boolean.TRUE.equals(on);
+                    if (getBaseContext() instanceof Dashboard) {
+                        ((Dashboard) getBaseContext()).setIpv6SpoofEnabled(enable);
+                    } else {
+                        persona.putIpv6SpoofEnabled(enable);
+                        new Thread(() -> rootActions.syncIpv6Enforcement(enable),
+                                "ipv6-toggle").start();
+                        if (enable) publishRotated();
+                        else publishCurrent();
+                    }
+                });
+        addField(devFields, Lang.t("IPv6 伪装", "IPv6 spoof", "IPv6 偽装"),
+                !ipv6SpoofOn ? v6OffText : (v6Expected.isEmpty() || v6Expected.equals(dash)
+                        ? dash : v6Expected + " " + isoUpper),
+                v6Actual, v6Status, true, true, openIpv6Toggle);
+
+        String aidShown = aidOverride != null ? aidOverride : liveAidText;
+        com.walter.claudewilson.model.CheckItem aidItem = modelItem("target.aid");
+        boolean aidFresh = targetLive && fresh(aidItem);
+        String aidActual = !aidTarget ? liveAidText
+                : aidFresh ? aidItem.value()
+                : injectedNow ? aidOverride : liveAidText;
+        int aidStatus = !aidTarget ? comparison(liveAidText, liveAidText)
+                : aidFresh ? comparison(aidOverride, aidActual)
+                : injectedNow ? -3 : comparison(aidOverride, liveAidText);
+        addField(devFields, "Android ID",
+                aidTarget ? aidShown : liveAidText,
+                aidActual, aidStatus, hasPersona, true,
+                hasPersona ? () -> runRootGated(
+                        Lang.t("改写/注入 AID 需要系统级权限（root）", "AID rewrite needs root"),
+                        this::openAidSheet) : null);
+
+        final String appVisMode = persona.appVisMode(user);
+        final java.util.Set<String> appVisPkgs = persona.appVisPackages(user);
+        final java.util.Set<String> appVisGroups = persona.appVisPresetGroups(user);
+        final java.util.Set<String> appVisExtra = persona.hasExplicitAppVisExtra(user)
+                ? persona.appVisExtraHidden(user)
+                : HmaPresetScanner.resolveSystemExtraHidden(
+                        getApplicationContext(), target.packageName(), appVisGroups);
+        final boolean appVisExclSys = persona.appVisExcludeSystem(user);
+        final boolean appVisStrict = persona.appVisStrict(user);
+        final String appVisShown;
+        final int appVisSt;
+        String presetTag = appVisGroups.isEmpty() ? ""
+                : Lang.t(" · 预设 ", " · ") + appVisGroups.size();
+        if (!hasPersona || !hookChannel) {
+            appVisShown = dash;
+            appVisSt = -1;
+        } else if (com.walter.claudewilson.model.AppVisibilityPolicy.MODE_ALLOWLIST.equals(appVisMode)) {
+            appVisShown = (appVisExclSys
+                    ? Lang.t("白名单 · ", "Allow · ")
+                    : Lang.t("严苛白 · ", "Strict · "))
+                    + appVisPkgs.size() + presetTag;
+            appVisSt = 1;
+        } else if (com.walter.claudewilson.model.AppVisibilityPolicy.MODE_DENYLIST.equals(appVisMode)) {
+            appVisShown = Lang.t("黑名单 · 隐 ", "Deny · ") + appVisPkgs.size() + presetTag;
+            appVisSt = 1;
+        } else {
+            appVisShown = appVisExtra.isEmpty()
+                    ? Lang.t("仅隐 Root · HMA", "Root only · HMA", "Root 隠蔽 · HMA")
+                    : Lang.t("默认 · 预设隐 ", "Default · +") + appVisExtra.size();
+            appVisSt = 1;
+        }
+        final TargetSpec curTarget = target;
+        addField(devFields, Lang.t("应用列表", "App list", "アプリ一覧"),
+                appVisShown, appVisShown, appVisSt, hasPersona && hookChannel, false,
+                hasPersona ? () -> runRootGated(
+                        Lang.t("应用列表可见性控制需要 root 权限", "App visibility control needs root"),
+                        () -> AppVisibilitySheet.show(
+                                this,
+                                curTarget.displayName(),
+                                curTarget.packageName(),
+                                persona.appVisMode(user),
+                                persona.appVisPackages(user),
+                                persona.hasExplicitAppVisExtra(user)
+                                        ? persona.appVisExtraHidden(user)
+                                        : HmaPresetScanner.resolveSystemExtraHidden(
+                                                getApplicationContext(), curTarget.packageName(),
+                                                persona.appVisPresetGroups(user)),
+                                persona.appVisExcludeSystem(user),
+                                persona.appVisStrict(user),
+                                persona.appVisHideDev(user),
+                                persona.appVisHideA11y(user),
+                                persona.appVisHideIme(user),
+                                persona.appVisPresetGroups(user),
+                                (newMode, newPkgs, newExtra, newExclSys, newStrict,
+                                 newHideDev, newHideA11y, newHideIme, newGroups) -> {
+                                    persona.putAppVisMode(user, newMode);
+                                    persona.putAppVisPackages(user, newPkgs);
+                                    persona.putAppVisExtraHidden(user, newExtra);
+                                    persona.putAppVisExcludeSystem(user, newExclSys);
+                                    persona.putAppVisStrict(user, newStrict);
+                                    persona.putAppVisHideDev(user, newHideDev);
+                                    persona.putAppVisHideA11y(user, newHideA11y);
+                                    persona.putAppVisHideIme(user, newHideIme);
+                                    persona.putAppVisPresetGroups(user, newGroups);
+                                    publishCurrent();
+                                })) : null);
+
+        // ---- GROUP 4: STORE & PAYMENT ----
         String pc = playCountry.get();
         String playValue;
-        // Informational only: the payments profile follows the Google account, not the region we
-        // simulate, so this row is never compared against the expected country.
-        int playStatus = -1;
-        // The payments profile is a property of the Google account, not of the simulated region, so
-        // it is worth showing even with no region selected -- that is the only way to see which
-        // country the account currently resolves to.
+        boolean playIsIso = false;
         if (pc == null) {
-            // The query is started by Dashboard's scan path, never from a render pass: creating a
-            // BillingClient on the UI thread while the region card is being rebuilt is the kind
-            // of hidden binder work this pass is removing.
             playValue = Lang.t("查询中…", "querying…", "照会中…");
         } else if (pc.startsWith("err")) {
-            // Keep raw diagnostics out of the table: a missing Play service is a state, not a
-            // log line, and the four-line message used to wreck the row height.
             playValue = playErrorLabel(pc);
-            playStatus = -1;
         } else {
             playValue = pc.toUpperCase(java.util.Locale.ROOT);
-            // Informational only: the payments profile follows the Google account, not the region
-            // we simulate, so comparing it against the region would always read as a failure.
-            playStatus = -1;
+            playIsIso = playValue.matches("[A-Z]{2}");
         }
-        card.addView(row(hasPersona, Lang.t("Play 商店", "Play store", "Play ストア"),
-                hasPersona ? r.iso.toUpperCase(java.util.Locale.ROOT) : dash,
-                playValue, playStatus));
-        card.addView(row(hasPersona, Lang.t("Google Pay", "Google Pay", "Google Pay"),
-                hasPersona ? r.iso.toUpperCase(java.util.Locale.ROOT) : dash,
-                playValue, playStatus));
-        String hist = persona.history(user);
-        String recent = "";
-        if (hasPersona && !hist.isEmpty()) {
-            StringBuilder hs = new StringBuilder();
-            for (String e : hist.split(",")) {
-                String[] t = e.split(":");
-                if (t.length < 2) continue;
-                try {
-                    int di = Integer.parseInt(t[1]);
-                    hs.append(' ').append(t[0])
-                      .append('×').append(deviceAt(di % deviceCount())[0]);
-                    if (t.length > 2) hs.append('·').append(t[2]);
-                } catch (NumberFormatException ignore) {}
+        boolean storeDiff = hasPersona && playIsIso && !playValue.equalsIgnoreCase(r.iso);
+        String storeExp = hasPersona ? r.iso.toUpperCase(java.util.Locale.ROOT) : dash;
+        String storeDisplay = storeDiff
+                ? playValue + " · " + Lang.t("期望 ", "exp ") + storeExp
+                : playValue;
+        addField(storeFields, Lang.t("Play 商店", "Play store", "Play ストア"),
+                storeExp, storeDisplay, storeDiff ? -2 : (playIsIso ? 1 : -1),
+                false, false, null);
+        addField(storeFields, "Google Pay",
+                storeExp, storeDisplay, storeDiff ? -2 : (playIsIso ? 1 : -1),
+                false, false, null);
+        // Merge Google account identity right into Store & Payment drawer (replaces orphan AccountLayer card).
+        boolean accReadable = accountsReadableSupplier != null && accountsReadableSupplier.getAsBoolean();
+        java.util.List<com.walter.claudewilson.model.Account> accs =
+                accountsSupplier != null ? accountsSupplier.get() : null;
+        if (!accReadable) {
+            addField(storeFields, Lang.t("Google 账号", "Google account", "Google アカウント"),
+                    dash, Lang.t("— · 读不到", "— · unreadable"), -1, false, false, null);
+        } else {
+            boolean foundGoogle = false;
+            if (accs != null) {
+                for (com.walter.claudewilson.model.Account account : accs) {
+                    if (account == null || account.name().isEmpty()
+                            || !"com.google".equals(account.type())) {
+                        continue;
+                    }
+                    addField(storeFields, Lang.t("Google 账号", "Google account", "Google アカウント"),
+                            dash, Privacy.mask(account.name()), -1, false, false, null);
+                    foundGoogle = true;
+                }
             }
-            recent = hs.toString().trim();
+            if (!foundGoogle) {
+                addField(storeFields, Lang.t("Google 账号", "Google account", "Google アカウント"),
+                        dash, Lang.t("— · 无记录", "— · no record"), -1, false, false, null);
+            }
         }
-        // Only show the history line when there is history: an empty "recent: —" row is a label
-        // that explains nothing.
-        if (!recent.isEmpty()) {
-            String spaceName = SpaceNames.name(this, user);
-            TextView hv = txt(Lang.t(spaceName + " · 最近人设: ",
-                    spaceName + " · recent: ", spaceName + " · 最近: ") + recent, 10, DIM);
-            hv.setTypeface(Typeface.MONOSPACE);
-            hv.setPadding(0, dp(this, 4), 0, 0);
-            card.addView(hv);
+
+        // =====================================================================
+        // LAYER 1: SPACE + REGION COMMAND BAR
+        // =====================================================================
+        final boolean busy = actions != null && actions.isApplyBusy();
+        final boolean reverting = busy && actions.isReverting();
+        final String busyText = reverting
+                ? Lang.t("复位中…", "Reverting…", "復元中…")
+                : Lang.t("应用中…", "Applying…", "適用中…");
+        LinearLayout cmdRow = new LinearLayout(this);
+        cmdRow.setOrientation(LinearLayout.HORIZONTAL);
+        cmdRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+
+        LinearLayout spacePill = new LinearLayout(this);
+        spacePill.setOrientation(LinearLayout.HORIZONTAL);
+        spacePill.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        spacePill.setPadding(dp(this, 12), dp(this, 8), dp(this, 12), dp(this, 8));
+        spacePill.setBackground(wbBox(CARD2, STROKE, 12));
+        if (busy) spacePill.setAlpha(0.6f);
+        TextView spNameTv = txt(SpaceNames.name(this, user), 11.5f, FG);
+        spNameTv.setTypeface(Typeface.DEFAULT_BOLD);
+        spNameTv.setSingleLine(true);
+        spacePill.addView(spNameTv);
+        if (!busy) {
+            bindWbPress(spacePill);
+            spacePill.setOnClickListener(v -> {
+                if (actions != null) actions.openSpacePicker();
+            });
+        }
+        LinearLayout.LayoutParams splp = new LinearLayout.LayoutParams(-2, -2);
+        splp.rightMargin = dp(this, 7);
+        spacePill.setLayoutParams(splp);
+        cmdRow.addView(spacePill);
+
+        LinearLayout regionHero = new LinearLayout(this);
+        regionHero.setOrientation(LinearLayout.HORIZONTAL);
+        regionHero.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        regionHero.setPadding(dp(this, 11), dp(this, 8), dp(this, 11), dp(this, 8));
+        int heroFill = busy ? 0x17E5A93B
+                : !hasPersona ? CARD2
+                : mismatches > 0 ? 0x17E5A93B : 0x142EC4B6;
+        int heroStroke = busy ? 0x73E5A93B
+                : !hasPersona ? 0x662EC4B6
+                : mismatches > 0 ? 0x73E5A93B : 0x732EC4B6;
+        regionHero.setBackground(wbBox(heroFill, heroStroke, 12));
+        regionHero.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+
+        TextView flagTv = txt(hasPersona ? Regions.flagOf(r.iso) : "✕", 14, hasPersona ? FG : DIM);
+        LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(-2, -2);
+        flp.rightMargin = dp(this, 7);
+        flagTv.setLayoutParams(flp);
+        regionHero.addView(flagTv);
+
+        TextView rNameTv = txt(busy ? busyText
+                : hasPersona ? r.dispName() : Lang.t("原机态", "Native", "端末のまま"),
+                12, busy ? AMBER : FG);
+        rNameTv.setTypeface(Typeface.DEFAULT_BOLD);
+        rNameTv.setSingleLine(true);
+        rNameTv.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        rNameTv.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+        regionHero.addView(rNameTv);
+
+        TextView rIsoTv = txt(busy ? "…" : (hasPersona ? r.iso.toUpperCase(java.util.Locale.ROOT) : "OFF"),
+                10, busy ? AMBER : DIM);
+        rIsoTv.setTypeface(Typeface.MONOSPACE);
+        regionHero.addView(rIsoTv);
+        if (!busy) {
+            bindWbPress(regionHero);
+            regionHero.setOnClickListener(v -> {
+                if (actions != null) actions.openRegionPicker();
+            });
+        }
+        cmdRow.addView(regionHero);
+        card.addView(cmdRow);
+
+        // Conditional Follow-Egress Quick Bar (only when probed egress is valid, non-restricted, and differs)
+        final String egressCc = NetworkPanel.lastEgressCc();
+        if (!busy && egressCc != null && egressCc.length() == 2
+                && (!hasPersona || !egressCc.equalsIgnoreCase(r.iso))
+                && !com.walter.claudewilson.model.SimPolicy.isRestrictedIso(
+                        com.walter.claudewilson.platform.TablesLoader.load(getApplicationContext()),
+                        egressCc, target.id())) {
+            Regions.R egressReg = findRegionByIso(egressCc);
+            if (egressReg != null) {
+                LinearLayout follow = new LinearLayout(this);
+                follow.setOrientation(LinearLayout.HORIZONTAL);
+                follow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+                follow.setPadding(dp(this, 10), dp(this, 6), dp(this, 10), dp(this, 6));
+                follow.setBackground(wbBox(0x122EC4B6, 0x552EC4B6, 10));
+                LinearLayout.LayoutParams fllp = new LinearLayout.LayoutParams(-1, -2);
+                fllp.topMargin = dp(this, 8);
+                follow.setLayoutParams(fllp);
+
+                TextView fl = txt(Lang.t("出口 ", "Exit ") + Regions.flagOf(egressReg.iso)
+                        + " " + egressReg.dispName() + " (" + egressCc.toUpperCase(java.util.Locale.ROOT)
+                        + ") " + Lang.t("与当前不一致", "differs"), 9.5f, FG);
+                fl.setTypeface(Typeface.MONOSPACE);
+                fl.setSingleLine(true);
+                fl.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                fl.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+                follow.addView(fl);
+
+                TextView fc = txt(Lang.t("一键对齐 →", "Align →"), 9.5f, CYAN);
+                fc.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+                LinearLayout.LayoutParams fclp = new LinearLayout.LayoutParams(-2, -2);
+                fclp.leftMargin = dp(this, 8);
+                fc.setLayoutParams(fclp);
+                follow.addView(fc);
+
+                bindWbPress(follow);
+                follow.setOnClickListener(v -> {
+                    if (actions != null) actions.selectRegionIso(egressReg.iso);
+                });
+                card.addView(follow);
+            }
+        }
+
+        // =====================================================================
+        // LAYER 2: 2x3 CORE IDENTITY MATRIX
+        // =====================================================================
+        boolean simDrift = !busy && hasDrift(simFields);
+        boolean locDrift = !busy && hasDrift(locFields);
+        boolean gpsDrift = !busy && hasDrift(gpsFields);
+        boolean devDrift = !busy && hasDrift(devFields);
+
+        String simVal;
+        int simCol;
+        if (busy) {
+            simVal = hasPersona ? (effSimCarShown + " · " + effSimOpShown) : Lang.t("原机", "Native", "端末");
+            simCol = DIM;
+        } else if (!hasPersona) {
+            boolean bannedNow = simModeStatus == 0;
+            simVal = bannedNow ? simModeActual
+                    : (!liveCarrier.isEmpty() ? liveCarrier + (liveIso.isEmpty() ? "" : " · " + liveIso)
+                    : !liveIso.isEmpty() ? liveIso : Lang.t("无卡", "No SIM"));
+            simCol = bannedNow ? RED : FG;
+        } else if (simDrift) {
+            simVal = Lang.t("偏差 · ", "Drift · ") + effSimCarShown;
+            simCol = AMBER;
+        } else if (preserveRealSim) {
+            simVal = Lang.t("真卡 · ", "Real · ") + effSimCarShown;
+            simCol = GREEN;
+        } else {
+            simVal = effSimCarShown + " · " + effSimOpShown;
+            simCol = GREEN;
+        }
+
+        String langTzVal;
+        int langTzCol;
+        String tzShort = tz != null && tz.contains("/") ? tz.substring(tz.lastIndexOf('/') + 1).replace('_', ' ') : tz;
+        if (busy) {
+            langTzVal = hasPersona ? (loc + " · " + tzShort) : Lang.t("基线时区", "Baseline TZ", "基準 TZ");
+            langTzCol = DIM;
+        } else if (!hasPersona) {
+            langTzVal = liveTz.isEmpty() ? dash : liveTz;
+            langTzCol = FG;
+        } else if (locDrift) {
+            langTzVal = Lang.t("偏差 · ", "Drift · ") + tzShort;
+            langTzCol = AMBER;
+        } else {
+            langTzVal = loc + " · " + tzShort;
+            langTzCol = GREEN;
+        }
+
+        String gpsVal;
+        int gpsCol;
+        if (busy) {
+            gpsVal = hasPersona ? (locWhere + " · " + effAccTag) : dash;
+            gpsCol = DIM;
+        } else if (!hasPersona) {
+            gpsVal = Lang.t("未接管", "Native", "未介入");
+            gpsCol = DIM;
+        } else if (!locationOn) {
+            gpsVal = targetHasLocPerm
+                    ? Lang.t("关闭 · 透传", "Off · real", "オフ · 透過")
+                    : Lang.t("已关闭", "Off", "オフ");
+            gpsCol = targetHasLocPerm ? AMBER : DIM;
+        } else if (gpsDrift || locStatus == -2) {
+            gpsVal = locWhere + " · " + effAccTag;
+            gpsCol = AMBER;
+        } else if (!targetHasLocPerm) {
+            gpsVal = locWhere + " · " + effAccTag;
+            gpsCol = DIM;
+        } else {
+            gpsVal = locWhere + " · " + effAccTag;
+            gpsCol = GREEN;
+        }
+
+        String radioVal;
+        int radioCol;
+        if (busy) {
+            radioVal = hasPersona ? ("Wi-Fi " + activeWifiList.size() + " · BLE " + activeBleList.size()) : dash;
+            radioCol = DIM;
+        } else if (!hasPersona || !hookChannel) {
+            radioVal = Lang.t("原机直通", "Native", "直通");
+            radioCol = DIM;
+        } else {
+            String wPart = wifiOn ? ("Wi-Fi " + activeWifiList.size()) : "Wi-Fi " + Lang.t("关", "off");
+            String bPart = !bleOn ? ("BLE " + Lang.t("关", "off"))
+                    : bleEmpty ? ("BLE " + Lang.t("空", "0"))
+                    : ("BLE " + activeBleList.size());
+            radioVal = wPart + " · " + bPart;
+            radioCol = (wifiOn || bleOn || sensorsOn) ? GREEN : DIM;
+        }
+
+        String v6Badge = !ipv6SpoofOn
+                ? " · " + Lang.t("IPv6 关", "IPv6 Off", "IPv6 切")
+                : (!v6Expected.isEmpty() && !v6Expected.equals(dash) ? " · v6" : "");
+        String devVal;
+        int devCol;
+        if (busy) {
+            devVal = hasPersona
+                    ? ((devTarget ? dv[3] : liveModel) + v6Badge)
+                    : (liveModel + (!ipv6SpoofOn ? v6Badge : ""));
+            devCol = DIM;
+        } else if (!hasPersona) {
+            devVal = liveModel + (!ipv6SpoofOn ? v6Badge : "");
+            devCol = FG;
+        } else if (devDrift) {
+            devVal = Lang.t("偏差 · ", "Drift · ") + (devTarget ? dv[3] : liveModel);
+            devCol = AMBER;
+        } else {
+            devVal = (devTarget ? dv[3] : liveModel) + v6Badge;
+            devCol = GREEN;
+        }
+
+        String storeVal = playIsIso ? ("Play " + playValue + " · Pay " + playValue) : playValue;
+        int storeCol = !playIsIso ? DIM : storeDiff ? AMBER : (hasPersona ? GREEN : FG);
+
+        LinearLayout rowA = new LinearLayout(this);
+        rowA.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams rAlp = new LinearLayout.LayoutParams(-1, -2);
+        rAlp.topMargin = dp(this, 10);
+        rAlp.bottomMargin = dp(this, 6);
+        rowA.setLayoutParams(rAlp);
+        rowA.addView(wbTile("sim", Lang.t("SIM 与网络", "SIM & Net", "SIM・回線"),
+                simVal, simCol, 0, dp(this, 6)));
+        rowA.addView(wbTile("loc", Lang.t("语言与时区", "Locale & TZ", "言語・TZ"),
+                langTzVal, langTzCol, 0, 0));
+        card.addView(rowA);
+
+        LinearLayout rowB = new LinearLayout(this);
+        rowB.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams rBlp = new LinearLayout.LayoutParams(-1, -2);
+        rBlp.bottomMargin = dp(this, 6);
+        rowB.setLayoutParams(rBlp);
+        rowB.addView(wbTile("gps", Lang.t("GPS 定位", "GPS & Map", "GPS 位置"),
+                gpsVal, gpsCol, 0, dp(this, 6)));
+        rowB.addView(wbTile("radio", Lang.t("无线与传感", "Wireless & Sensor", "無線・センサ"),
+                radioVal, radioCol, 0, 0));
+        card.addView(rowB);
+
+        LinearLayout rowC = new LinearLayout(this);
+        rowC.setOrientation(LinearLayout.HORIZONTAL);
+        rowC.addView(wbTile("dev", Lang.t("设备与 IPv6", "Device & v6", "端末・IPv6"),
+                devVal, devCol, 0, dp(this, 6)));
+        rowC.addView(wbTile("store", Lang.t("商店与账号", "Store & Account", "ストア・口座"),
+                storeVal, storeCol, 0, 0));
+        card.addView(rowC);
+
+        // Inline Expandable Drawer
+        if (expandedDrawer != null) {
+            String dTitle;
+            java.util.List<DrawerField> list;
+            if ("sim".equals(expandedDrawer)) {
+                dTitle = Lang.t("SIM 与网络", "SIM & Net", "SIM・回線");
+                list = simFields;
+            } else if ("loc".equals(expandedDrawer)) {
+                dTitle = Lang.t("语言与时区", "Locale & TZ", "言語・TZ");
+                list = locFields;
+            } else if ("gps".equals(expandedDrawer)) {
+                dTitle = Lang.t("GPS 定位", "GPS & Map", "GPS 位置");
+                list = gpsFields;
+            } else if ("radio".equals(expandedDrawer)) {
+                dTitle = Lang.t("无线与传感", "Wireless & Sensor", "無線・センサ");
+                list = radioFields;
+            } else if ("dev".equals(expandedDrawer)) {
+                dTitle = Lang.t("设备与 IPv6", "Device & v6", "端末・IPv6");
+                list = devFields;
+            } else {
+                dTitle = Lang.t("商店与账号", "Store & Account", "ストア・口座");
+                list = storeFields;
+            }
+            card.addView(buildWorkbenchDrawer(dTitle, list, hasPersona));
+        }
+
+        card.addView(rootHint);
+
+        // =====================================================================
+        // LAYER 3: CLEAN ACTION FOOTER (WITH SIM MANAGER SHORTCUT)
+        // =====================================================================
+        View div = new View(this);
+        div.setBackgroundColor(STROKE);
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(-1, dp(this, 1));
+        dlp.topMargin = dp(this, 10);
+        dlp.bottomMargin = dp(this, 9);
+        div.setLayoutParams(dlp);
+        card.addView(div);
+
+        LinearLayout footer = new LinearLayout(this);
+        footer.setOrientation(LinearLayout.HORIZONTAL);
+        footer.setGravity(android.view.Gravity.CENTER_VERTICAL);
+
+        String fText = "";
+        int fColor = MUTE;
+        if (busy) {
+            fText = busyText;
+            fColor = AMBER;
+        } else if (hasPersona && mismatches > 0) {
+            fText = mismatches + Lang.t(" 项偏差", " drift", " ズレ");
+            fColor = AMBER;
+        }
+        TextView ftv = txt(fText, 9.5f, fColor);
+        ftv.setTypeface(Typeface.MONOSPACE);
+        ftv.setSingleLine(true);
+        ftv.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        ftv.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+        footer.addView(ftv);
+
+        if (!busy) {
+            TextView simMgrBtn = wbPill(Lang.t("SIM 管理器", "SIM manager", "SIM 管理"),
+                    9.5f, FG, CARD2, STROKE);
+            LinearLayout.LayoutParams smlp = new LinearLayout.LayoutParams(-2, -2);
+            smlp.leftMargin = dp(this, 6);
+            simMgrBtn.setLayoutParams(smlp);
+            bindWbPress(simMgrBtn);
+            simMgrBtn.setOnClickListener(v -> new Thread(() -> RootActions.openSimManager(this)).start());
+            footer.addView(simMgrBtn);
+
+            if (hasPersona) {
+                if (mismatches > 0) {
+                    TextView alignBtn = wbPill(Lang.t("对齐", "Align", "同期"),
+                            9.5f, AMBER, 0x22E5A93B, AMBER);
+                    alignBtn.setTypeface(Typeface.DEFAULT_BOLD);
+                    LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-2, -2);
+                    alp.leftMargin = dp(this, 6);
+                    alignBtn.setLayoutParams(alp);
+                    bindWbPress(alignBtn);
+                    alignBtn.setOnClickListener(v -> {
+                        if (actions != null) actions.reapplyCurrent();
+                    });
+                    footer.addView(alignBtn);
+                }
+                TextView offBtn = wbPill(Lang.t("关闭", "Off", "解除"),
+                        9.5f, RED, 0x24E55353, 0x8CE55353);
+                offBtn.setTypeface(Typeface.DEFAULT_BOLD);
+                LinearLayout.LayoutParams olp = new LinearLayout.LayoutParams(-2, -2);
+                olp.leftMargin = dp(this, 6);
+                offBtn.setLayoutParams(olp);
+                bindWbPress(offBtn);
+                offBtn.setOnClickListener(v -> {
+                    if (actions != null) actions.selectRegionIso(null);
+                });
+                footer.addView(offBtn);
+            }
+        }
+        card.addView(footer);
+    }
+
+    private static final class DrawerField {
+        final String label;
+        final String expected;
+        final String actual;
+        final int status;
+        final boolean editable;
+        final boolean needsRoot;
+        final Runnable onClick;
+
+        DrawerField(String label, String expected, String actual, int status,
+                    boolean editable, boolean needsRoot, Runnable onClick) {
+            this.label = label;
+            this.expected = expected;
+            this.actual = actual;
+            this.status = status;
+            this.editable = editable;
+            this.needsRoot = needsRoot;
+            this.onClick = onClick;
         }
     }
 
-    private void gateRoot(View row, String message, Runnable action) {
+    private void addField(java.util.List<DrawerField> target, String label,
+                          String expected, String actual, int status,
+                          boolean editable, boolean needsRoot, Runnable onClick) {
+        if (Privacy.hidden() && (Privacy.sensitivePersona(label) || "Android ID".equals(label))) {
+            expected = Privacy.STARS;
+            actual = Privacy.STARS;
+            status = -1;
+        }
+        if (regionIdx >= 0 && status == 0) {
+            mismatches++;
+        }
+        target.add(new DrawerField(label, expected, actual, status, editable, needsRoot, onClick));
+    }
+
+    private static boolean hasDrift(java.util.List<DrawerField> fields) {
+        for (DrawerField f : fields) {
+            if (f.status == 0) return true;
+        }
+        return false;
+    }
+
+    private static Regions.R findRegionByIso(String iso) {
+        if (iso == null || iso.isEmpty()) return null;
+        for (Regions.R item : Regions.ALL) {
+            if (item.iso.equalsIgnoreCase(iso)) return item;
+        }
+        return null;
+    }
+
+    private void runRootGated(String message, Runnable action) {
         if (RootShell.rootReady()) {
-            row.setAlpha(1f);
-            row.setOnClickListener(v -> {
-                if (action != null) action.run();
-            });
-            return;
+            if (action != null) action.run();
+        } else {
+            showRootHint(message);
         }
-        row.setAlpha(0.45f);
-        row.setOnClickListener(v -> showRootHint(message));
     }
 
-    /**
-     * Rows driven by the carrier-config override: any root channel can make that binder call.
-     *
-     * <p>Measured as uid 2000: {@code Bridge cc} answers "cc set ..." while
-     * {@code setprop gsm.sim.operator.*} is refused. Gating these rows on root disabled a path
-     * that works.
-     */
-    private void gateAnyChannel(View row, String message, Runnable action) {
-        if (RootShell.state() == RootShell.ST_READY) {
-            row.setAlpha(1f);
-            row.setOnClickListener(v -> {
-                if (action != null) action.run();
-            });
-            return;
+    private void runAnyChannelGated(String message, Runnable action) {
+        if (RootShell.shellReady()) {
+            if (action != null) action.run();
+        } else {
+            showRootHint(message);
         }
-        row.setAlpha(0.45f);
-        row.setOnClickListener(v -> showRootHint(message));
+    }
+
+    private View wbTile(final String id, String label, String value,
+                        int valColor, int leftM, int rightM) {
+        boolean selected = id.equals(expandedDrawer);
+        LinearLayout tile = new LinearLayout(this);
+        tile.setOrientation(LinearLayout.VERTICAL);
+        tile.setPadding(dp(this, 11), dp(this, 9), dp(this, 11), dp(this, 9));
+        tile.setBackground(wbBox(selected ? 0xFF19282C : CARD2, selected ? CYAN : STROKE, 12));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
+        lp.leftMargin = leftM;
+        lp.rightMargin = rightM;
+        tile.setLayoutParams(lp);
+
+        TextView lbl = txt(label, 9.5f, DIM);
+        lbl.setSingleLine(true);
+        lbl.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        tile.addView(lbl);
+
+        TextView v = txt(value, 11, valColor);
+        v.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        v.setSingleLine(true);
+        v.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        v.setPadding(0, dp(this, 4), 0, 0);
+        tile.addView(v);
+
+        bindWbPress(tile);
+        tile.setOnClickListener(view -> {
+            expandedDrawer = selected ? null : id;
+            repaintSelf();
+        });
+        return tile;
+    }
+
+    private void repaintSelf() {
+        if (lastCard != null) {
+            renderInto(lastCard);
+            if (getBaseContext() instanceof Dashboard) {
+                ((Dashboard) getBaseContext()).refreshPreflight();
+            }
+        } else {
+            renderScreen.run();
+        }
+    }
+
+    private View buildWorkbenchDrawer(String title, java.util.List<DrawerField> fields,
+                                      boolean hasPersona) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(this, 11), dp(this, 9), dp(this, 11), dp(this, 9));
+        box.setBackground(wbBox(CARD2, 0xFF2B454B, 12));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(this, 8);
+        box.setLayoutParams(lp);
+
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        TextView ht = txt(title, 9.5f, CYAN);
+        ht.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        ht.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+        head.addView(ht);
+
+        TextView close = txt("✕", 10, MUTE);
+        close.setPadding(dp(this, 8), dp(this, 1), dp(this, 2), dp(this, 1));
+        close.setOnClickListener(v -> {
+            expandedDrawer = null;
+            repaintSelf();
+        });
+        head.addView(close);
+        box.addView(head);
+
+        for (int i = 0; i < fields.size(); i++) {
+            final DrawerField f = fields.get(i);
+            if (i > 0) {
+                View sep = new View(this);
+                sep.setBackgroundColor(0x661E3136);
+                LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, 1);
+                slp.topMargin = dp(this, 4);
+                slp.bottomMargin = dp(this, 4);
+                sep.setLayoutParams(slp);
+                box.addView(sep);
+            } else {
+                View gap = new View(this);
+                gap.setLayoutParams(new LinearLayout.LayoutParams(-1, dp(this, 6)));
+                box.addView(gap);
+            }
+
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            row.setPadding(0, dp(this, 2), 0, dp(this, 2));
+
+            TextView k = txt(f.label, 9.5f, DIM);
+            k.setTypeface(Typeface.MONOSPACE);
+            k.setSingleLine(true);
+            row.addView(k);
+
+            String shownVal;
+            int valColor;
+            if (hasPersona && f.status == 0 && !f.expected.isEmpty()
+                    && !"—".equals(f.expected) && !f.expected.equals(f.actual)) {
+                shownVal = f.actual + " → " + f.expected;
+                valColor = AMBER;
+            } else {
+                shownVal = f.actual;
+                valColor = f.status == 0 ? RED
+                        : f.status == 1 ? GREEN
+                        : f.status == -2 ? AMBER
+                        : f.status == -3 ? (f.editable ? CYAN : SAND)
+                        : FG;
+            }
+            if (f.editable && f.onClick != null) {
+                shownVal = shownVal + ("Android ID".equals(f.label) ? " ↻" : " ✎");
+                if (valColor == FG) valColor = CYAN;
+            }
+
+            TextView v = txt(shownVal, 9.5f, valColor);
+            v.setTypeface(Typeface.MONOSPACE);
+            v.setGravity(android.view.Gravity.END);
+            v.setSingleLine(true);
+            v.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(0, -2, 1f);
+            vlp.leftMargin = dp(this, 10);
+            v.setLayoutParams(vlp);
+            row.addView(v);
+
+            if (f.onClick != null) {
+                if (f.needsRoot && !RootShell.rootReady()) {
+                    row.setAlpha(0.55f);
+                }
+                bindWbPress(row);
+                row.setOnClickListener(view -> f.onClick.run());
+            }
+            box.addView(row);
+        }
+        return box;
+    }
+
+    private android.graphics.drawable.GradientDrawable wbBox(int fill, int stroke, int radiusDp) {
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setColor(fill);
+        bg.setCornerRadius(dp(this, radiusDp));
+        bg.setStroke(dp(this, 1), stroke);
+        return bg;
+    }
+
+    private TextView wbPill(String text, float sp, int fg, int fill, int stroke) {
+        TextView t = txt(text, sp, fg);
+        t.setSingleLine(true);
+        t.setGravity(android.view.Gravity.CENTER);
+        t.setPadding(dp(this, 10), dp(this, 5), dp(this, 10), dp(this, 5));
+        t.setBackground(wbBox(fill, stroke, 14));
+        return t;
+    }
+
+    private void bindWbPress(View view) {
+        view.setClickable(true);
+        view.setOnTouchListener((v, e) -> {
+            switch (e.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    v.animate().scaleX(0.985f).scaleY(0.985f).setDuration(80).start();
+                    break;
+                case android.view.MotionEvent.ACTION_UP:
+                case android.view.MotionEvent.ACTION_CANCEL:
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(120)
+                            .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+                    break;
+                default:
+                    break;
+            }
+            return false;
+        });
     }
 
     private void showRootHint(String message) {
@@ -816,15 +2052,20 @@ final class PersonaPanel extends UiSection {
      * start; the app never attaches to or launches the target.
      */
     private void publishPersona() {
-        publishPersona(null);
+        publishPersona(false, null);
     }
 
     private void publishPersona(final Runnable after) {
+        publishPersona(false, after);
+    }
+
+    private void publishPersona(final boolean rotateIpv6, final Runnable after) {
         TargetSpec target = Targets.current();
         if (!target.hooksEnabled()) {
             showRootHint(Lang.t("此目标目前只读诊断，不发布注入配置",
                     "this target is diagnostic-only; no payload is published",
                     "この対象は読取専用のため設定を配信しません"));
+            if (after != null) after.run();
             return;
         }
         if (!RootShell.shellReady()) {
@@ -834,51 +2075,143 @@ final class PersonaPanel extends UiSection {
                             + target.displayName() + " launch",
                     "先に root または Shizuku を許可してください。設定は次回の "
                             + target.displayName() + " 起動時に反映されます"));
+            if (after != null) after.run();
             return;
         }
+        com.walter.claudewilson.model.CheckItem spoofProbe = modelItem("target.ipv6_spoof");
+        boolean hookAvailable = RootShell.rootReady() || targetProcessLive()
+                || (spoofProbe != null && spoofProbe.isRead());
+        if (!hookAvailable) {
+            // Pure Shizuku has no Vector/Zygisk hook consumer; writing a tmp payload only leaves
+            // unconsumed preview state and false-positive injection markers.
+            final String u = currentUser.get();
+            persona.clearInjected(u);
+            new Thread(() -> rootActions.clearConfig(target), "config-clear-shell").start();
+            renderScreen.run();
+            if (after != null) {
+                after.run();
+            }
+            return;
+        }
+        // Only allocate/rotate spoofed IPv6 prefixes when the persistent IPv6 switch is ON.
+        final boolean ipv6SpoofOn = persona.ipv6SpoofEnabled();
+        final String prevPrefix;
+        final String prevMobPrefix;
+        final String prevIso;
+        final String prevCar;
+        {
+            String user0 = currentUser.get();
+            prevPrefix = persona.ipv6Prefix(user0);
+            prevMobPrefix = persona.ipv6MobilePrefix(user0);
+            prevIso = persona.ipv6Iso(user0);
+            prevCar = persona.ipv6Carrier(user0);
+            Regions.R r0 = regionIdx >= 0 ? Regions.ALL.get(regionIdx) : null;
+            if (ipv6SpoofOn && r0 != null) {
+                String car0 = currentCarrier(r0);
+                boolean isoChanged = prevIso == null || !r0.iso.equalsIgnoreCase(prevIso);
+                boolean carChanged = prevCar == null || !car0.equalsIgnoreCase(prevCar);
+                String[] dv0 = deviceValues(user0);
+                long crossSeed0 = persona.effectiveDeviceSeed(user0);
+                long seed0 = profileSeedFor(user0, dv0, crossSeed0, r0.iso);
+                long pickSeed = rotateIpv6
+                        ? PersonaSalt.mix64(seed0 ^ System.currentTimeMillis()) : seed0;
+                String wifiPfx = prevPrefix;
+                boolean changed = false;
+                if (rotateIpv6 || isoChanged || wifiPfx == null || wifiPfx.isEmpty()) {
+                    String egressAsn = NetworkPanel.lastEgressAsn();
+                    String picked = Ipv6Prefixes.pickPrefix(this,
+                            r0.iso.toLowerCase(java.util.Locale.ROOT), pickSeed, egressAsn);
+                    wifiPfx = picked != null ? picked : "";
+                    changed = true;
+                }
+                String mobPfx = prevMobPrefix;
+                if (rotateIpv6 || isoChanged || carChanged
+                        || mobPfx == null || mobPfx.isEmpty()) {
+                    String pickedMob = Ipv6Prefixes.pickMobilePrefix(this,
+                            r0.iso.toLowerCase(java.util.Locale.ROOT), car0, wifiPfx, pickSeed);
+                    mobPfx = pickedMob != null ? pickedMob : wifiPfx;
+                    changed = true;
+                }
+                if (changed || isoChanged || carChanged) {
+                    persona.putIpv6State(user0, wifiPfx, mobPfx, r0.iso, car0);
+                }
+            }
+        }
+        repaintSelf();
         final String json = payload;
         if (json == null) {
+            restoreIpv6State(currentUser.get(), prevPrefix, prevMobPrefix, prevIso, prevCar);
             showRootHint(Lang.t("请先选择地区生成人设",
                     "Select a region first to generate a persona",
                     "先に地域を選択して人設を生成してください"));
+            if (after != null) after.run();
             return;
         }
         final String user = currentUser.get();
         final String sig = Integer.toHexString(json.hashCode());
+        final String snapshotRegionIso = regionIdx >= 0 && regionIdx < Regions.ALL.size()
+                ? Regions.ALL.get(regionIdx).iso : "";
+        final String rawEgress = NetworkPanel.lastEgressCc();
+        final String snapshotEgressIso = rawEgress == null ? "" : rawEgress;
         try {
             new org.json.JSONObject(json);
         } catch (Exception e) {
+            restoreIpv6State(user, prevPrefix, prevMobPrefix, prevIso, prevCar);
             showRootHint(Lang.t("人设 JSON 无效，已拒绝写入: ",
                     "persona JSON is invalid; not publishing: ",
                     "人設 JSON が不正なため配信しません: ") + e.getMessage());
+            if (after != null) after.run();
             return;
         }
-        new Thread(() -> {
+        EDIT_TX.execute(() -> {
             try {
+                LedgerIngestor.recordPersonaFromPayload(getApplicationContext(),
+                        target.id(), user, json, snapshotRegionIso, snapshotEgressIso);
                 String out;
                 synchronized (injectLock) {
+                    if (!ipv6SpoofOn) {
+                        rootActions.syncIpv6Enforcement(false);
+                    }
                     out = rootActions.publish(target, json);
                     if (!RootShell.failed(out)) {
                         persona.markInjected(user, sig);
+                    } else {
+                        restoreIpv6State(user, prevPrefix, prevMobPrefix, prevIso, prevCar);
                     }
                 }
                 final String result = out;
                 ScreenUpdates.post(screen -> {
-                    renderScreen.run();
+                    repaintSelf();
                     showActionResult(result);
                     if (after != null) {
                         after.run();
                     }
                 });
             } catch (Exception e) {
-                ScreenUpdates.post(screen -> screen.personaPanel.showActionResult("io: " + e));
+                restoreIpv6State(user, prevPrefix, prevMobPrefix, prevIso, prevCar);
+                ScreenUpdates.post(screen -> {
+                    screen.personaPanel.showActionResult("io: " + e);
+                    if (after != null) {
+                        after.run();
+                    }
+                });
             }
-        }).start();
+        });
     }
 
-    /** Publishes the payload after the region/system write, without another UI action. */
+    /** Publishes the payload without rotating an already-persisted IPv6 prefix. */
     void publishCurrent() {
-        publishPersona();
+        publishPersona(false, null);
+    }
+
+    /** Publishes the payload and rotates the IPv6 prefix for a new region or egress ASN. */
+    void publishRotated() {
+        publishPersona(true, null);
+    }
+
+    /** Publishes the payload with IPv6 rotation, then invokes {@code after} on the UI thread. */
+    void publishRotated(Runnable after) {
+        publishPersona(true, after);
     }
 
     /**
@@ -901,6 +2234,9 @@ final class PersonaPanel extends UiSection {
     /** Returns to the region ISO; the next payload publication drops the custom hint. */
     void clearCountryHint(Runnable after) {
         String user = currentUser.get();
+        if (user == null || !com.walter.claudewilson.model.ShellQuote.numeric(user)) {
+            return;
+        }
         persona.clearCountryHint(user);
         renderScreen.run();
         publishPersona(after);
@@ -919,10 +2255,6 @@ final class PersonaPanel extends UiSection {
      * and the {@code ro.*} properties are derived from the same device row, and the visited-network
      * trio is written at the same time. {@code dv == null} restores the pre-persona snapshot.
      */
-    private void syncSystemThenPublish(String[] dv, Regions.R r) {
-        syncSystemThenPublish(dv, r, null);
-    }
-
     private void syncSystemThenPublish(String[] dv, Regions.R r, Runnable after) {
         final String op = r != null ? currentOp(r) : null;
         final String iso = r != null ? r.iso : null;
@@ -945,237 +2277,6 @@ final class PersonaPanel extends UiSection {
         }).start();
     }
 
-    private void editModel() {
-        if (!hooksForInjection()) return;
-        final String user = currentUser.get();
-        if (!com.walter.claudewilson.model.ShellQuote.numeric(user)) return;
-        final String aid = persona.aid(user);
-        final Regions.R region = regionIdx >= 0 ? Regions.ALL.get(regionIdx) : null;
-        String[] names = new String[deviceCount() + 1];
-        names[0] = Lang.t("本机", "this device", "実機") + ": " + selfDevice()[0];
-        for (int i = 1; i < deviceCount(); i++) names[i] = deviceAt(i)[0];
-        String[] custom = persona.customDevice(user);
-        int customIndex = names.length - 1;
-        names[customIndex] = custom == null
-                ? Lang.t("自定义机型…", "custom model…", "カスタム機種…")
-                : Lang.t("自定义机型：", "custom model: ", "カスタム機種：") + custom[3];
-        new android.app.AlertDialog.Builder(this)
-                .setTitle(Lang.t("选择机型", "select model", "機種を選択"))
-                .setItems(names, (dialog, which) -> {
-                    if (which == customIndex) {
-                        editCustomModel(region, user, aid);
-                        return;
-                    }
-                    // Re-choosing the same model must not mint a new fingerprint. Only a real
-                    // model change gets a fresh seed; the choice and seed are persisted with it.
-                    long seed = which == persona.device(user) && persona.seed(user) != 0L
-                            ? persona.seed(user) : new java.util.Random().nextLong();
-                    String[] dv = which == 0 ? null
-                            : taggedForRegion(PersonaSynth.cross(deviceAt(which), seed), region);
-                    String model = dv != null ? dv[3] : selfDevice()[3];
-                    String fp = dv != null ? dv[8] : selfDevice()[8];
-                    String csc = region != null ? Regions.cscFor(region.iso) : null;
-                    String where = region != null
-                            ? region.name + " " + region.iso.toUpperCase(java.util.Locale.ROOT)
-                            : "—";
-                    String message = Lang.t(
-                            "机型：" + model + "\n指纹：" + shortFp(fp)
-                                    + "\n区域：" + where + "\nCSC：" + (csc == null ? "—" : csc)
-                                    + "\n需要软重启，是否确认？",
-                            "model: " + model + "\nfingerprint: " + shortFp(fp)
-                                    + "\nregion: " + where + "\nCSC: " + (csc == null ? "—" : csc)
-                                    + "\nsoft reboot required. Continue?");
-                    new android.app.AlertDialog.Builder(PersonaPanel.this)
-                            .setTitle(Lang.t("确认修改机型", "confirm model change"))
-                            .setMessage(message)
-                            .setPositiveButton(Lang.t("确认软重启", "reboot now"),
-                                    (confirm, button) -> {
-                                        if (which == 0) {
-                                            persona.clearDeviceOverride(user);
-                                        } else {
-                                            persona.markDeviceOverride(user);
-                                        }
-                                        persona.put(user, which, aid, seed);
-                                        renderScreen.run();
-                                        syncSystemThenPublish(dv, region,
-                                                PersonaPanel.this::rebootZygote);
-                                    })
-                            .setNegativeButton(Lang.t("取消", "cancel"), null)
-                            .show();
-                }).show();
-    }
-
-    /**
-     * Backend/catalog rows cannot cover every device, so the same fourteen fields are editable
-     * here. Only the identity fields are asked for; build ID, incremental and patch are generated
-     * coherently from the release and one seed.
-     */
-    private void editCustomModel(Regions.R region, String user, String aid) {
-        String[] base = persona.customDevice(user);
-        if (base == null) {
-            base = deviceValues(user);
-        }
-        if (base == null) {
-            base = selfDevice();
-        }
-        int pad = dp(this, 20);
-        android.widget.LinearLayout form = new android.widget.LinearLayout(this);
-        form.setOrientation(android.widget.LinearLayout.VERTICAL);
-        form.setPadding(pad, dp(this, 8), pad, 0);
-
-        android.widget.EditText brand = customField(form,
-                Lang.t("品牌 / brand", "brand", "ブランド"), base[2]);
-        android.widget.EditText model = customField(form,
-                Lang.t("型号 / model", "model", "型番"), base[3]);
-        android.widget.EditText device = customField(form,
-                Lang.t("device", "device", "device"), base[4]);
-        android.widget.EditText product = customField(form,
-                Lang.t("product", "product", "product"), base[5]);
-        android.widget.EditText release = customField(form,
-                Lang.t("系统版本 / release（14 / 15 / 16）", "Android release (14 / 15 / 16)",
-                        "Android バージョン（14 / 15 / 16）"), base[11]);
-
-        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
-        scroll.addView(form);
-        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
-                .setTitle(Lang.t("自定义机型", "custom model", "カスタム機種"))
-                .setView(scroll)
-                .setPositiveButton(Lang.t("下一步", "next", "次へ"), null)
-                .setNegativeButton(Lang.t("取消", "cancel", "キャンセル"), null)
-                .create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(
-                android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String b = brand.getText().toString().trim();
-            String m = model.getText().toString().trim();
-            String d = device.getText().toString().trim();
-            String p = product.getText().toString().trim();
-            String r = release.getText().toString().trim();
-            if (b.isEmpty() || m.isEmpty() || d.isEmpty() || p.isEmpty()) {
-                toast(Lang.t("品牌、型号、device、product 都要填",
-                        "brand, model, device and product are required",
-                        "ブランド・型番・device・product は必須です"));
-                return;
-            }
-            if (!b.matches("[A-Za-z0-9._-]{1,92}")
-                    || !d.matches("[A-Za-z0-9._-]{1,92}")
-                    || !p.matches("[A-Za-z0-9._-]{1,92}")) {
-                toast(Lang.t("brand / device / product 只能包含字母、数字、点、下划线、连字符",
-                        "brand / device / product: letters, digits, dot, underscore, hyphen only",
-                        "brand / device / product は英数字・.・_・- のみ"));
-                return;
-            }
-            if (m.length() > 64) {
-                toast(Lang.t("型号过长", "model is too long", "型番が長すぎます"));
-                return;
-            }
-            int sdk;
-            if ("14".equals(r)) {
-                sdk = 34;
-            } else if ("15".equals(r)) {
-                sdk = 35;
-            } else if ("16".equals(r)) {
-                sdk = 36;
-            } else {
-                toast(Lang.t("Android 版本只支持 14/15/16",
-                        "Android release must be 14/15/16",
-                        "Android バージョンは 14/15/16 のみ"));
-                return;
-            }
-            java.util.Random random = new java.util.Random();
-            java.time.LocalDate now = java.time.LocalDate.now();
-            String date = now.format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
-            String buildId = "AP3A." + date + "." + (100000 + random.nextInt(900000));
-            String incremental = String.valueOf(10000000 + random.nextInt(90000000));
-            String patch = now.minusMonths(random.nextInt(12)).withDayOfMonth(1).toString();
-            String[] row = {
-                    b + " " + m,
-                    b,
-                    b,
-                    m,
-                    d,
-                    p,
-                    d,
-                    d,
-                    "",
-                    buildId,
-                    incremental,
-                    r,
-                    String.valueOf(sdk),
-                    patch
-            };
-            row[8] = PersonaSynth.fingerprint(row[2], row[5], row[4], row[11], row[9], row[10]);
-            long seed = random.nextLong();
-            String[] dv = taggedForRegion(PersonaSynth.cross(row, seed), region);
-            dialog.dismiss();
-            String csc = region != null ? Regions.cscFor(region.iso) : null;
-            String where = region != null
-                    ? region.name + " " + region.iso.toUpperCase(java.util.Locale.ROOT)
-                    : "—";
-            new android.app.AlertDialog.Builder(PersonaPanel.this)
-                    .setTitle(Lang.t("确认修改机型", "confirm model change"))
-                    .setMessage(Lang.t(
-                            "品牌 brand：" + dv[2]
-                                    + "\n厂商 manufacturer：" + dv[1]
-                                    + "\n型号 model：" + dv[3]
-                                    + "\ndevice：" + dv[4]
-                                    + "\nproduct：" + dv[5]
-                                    + "\nhardware：" + dv[6]
-                                    + "\nboard：" + dv[7]
-                                    + "\n系统版本 release：" + dv[11]
-                                    + "\nSDK：" + dv[12]
-                                    + "\nbuild ID：" + dv[9]
-                                    + "\nincremental：" + dv[10]
-                                    + "\nsecurity patch：" + dv[13]
-                                    + "\nfingerprint：" + dv[8]
-                                    + "\n区域：" + where + "\nCSC：" + (csc == null ? "—" : csc)
-                                    + "\n需要软重启，是否确认？",
-                            "brand: " + dv[2]
-                                    + "\nmanufacturer: " + dv[1]
-                                    + "\nmodel: " + dv[3]
-                                    + "\ndevice: " + dv[4]
-                                    + "\nproduct: " + dv[5]
-                                    + "\nhardware: " + dv[6]
-                                    + "\nboard: " + dv[7]
-                                    + "\nrelease: " + dv[11]
-                                    + "\nSDK: " + dv[12]
-                                    + "\nbuild ID: " + dv[9]
-                                    + "\nincremental: " + dv[10]
-                                    + "\nsecurity patch: " + dv[13]
-                                    + "\nfingerprint: " + dv[8]
-                                    + "\nregion: " + where + "\nCSC: " + (csc == null ? "—" : csc)
-                                    + "\nsoft reboot required. Continue?"))
-                    .setPositiveButton(Lang.t("确认软重启", "reboot now"),
-                            (confirm, button) -> {
-                                persona.putCustom(user, row, aid, seed);
-                                renderScreen.run();
-                                syncSystemThenPublish(dv, region,
-                                        PersonaPanel.this::rebootZygote);
-                            })
-                    .setNegativeButton(Lang.t("取消", "cancel"), null)
-                    .show();
-        }));
-        dialog.show();
-    }
-
-    private android.widget.EditText customField(android.widget.LinearLayout form,
-            String label, String value) {
-        android.widget.TextView caption = new android.widget.TextView(this);
-        caption.setText(label);
-        caption.setTextSize(11);
-        caption.setTextColor(0x66DDE4EE);
-        caption.setPadding(0, dp(this, 6), 0, 0);
-        form.addView(caption);
-        android.widget.EditText field = new android.widget.EditText(this);
-        field.setSingleLine(true);
-        field.setText(value == null ? "" : value);
-        form.addView(field);
-        return field;
-    }
-
-    private void toast(String message) {
-        android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show();
-    }
-
     /** Samsung profiles have no CSC in their template; append the selected region's CSC. */
     private static String[] taggedForRegion(String[] dv, Regions.R r) {
         if (dv == null || r == null || !"samsung".equalsIgnoreCase(dv[2])) {
@@ -1195,42 +2296,11 @@ final class PersonaPanel extends UiSection {
     }
 
     private void rebootZygote() {
-        new Thread(() -> RootShell.run("setprop ctl.restart zygote", 512, 10000L),
-                "model-reboot").start();
-    }
-
-    private void editAid() {
-        if (!hooksForInjection()) return;
-        final String user = currentUser.get();
-        if (!com.walter.claudewilson.model.ShellQuote.numeric(user)) return;
-        final String override = persona.aid(user);
-        android.widget.EditText input = edit(override != null ? override : liveAid());
-        input.setHint(liveAid());
-        new android.app.AlertDialog.Builder(this)
-                .setTitle("AID")
-                .setView(input)
-                .setPositiveButton(Lang.t("保存", "save", "保存"),
-                        (dialog, which) -> {
-                            String value = input.getText().toString().trim().toLowerCase();
-                            if (!value.matches("[0-9a-f]{16}")) {
-                                showRootHint(Lang.t("AID 需要 16 位 hex",
-                                        "AID must be 16 hex characters",
-                                        "AID は 16 桁の hex"));
-                                return;
-                            }
-                            persona.put(user, persona.device(user), value, persona.seed(user));
-                            persona.markAidOverride(user);
-                            renderScreen.run();
-                            publishPersona();
-                        })
-                .setNeutralButton(Lang.t("用本机值", "use device id", "実機値を使う"),
-                        (dialog, which) -> {
-                            persona.clearAid(user);
-                            persona.clearAidOverride(user);
-                            renderScreen.run();
-                        })
-                .setNegativeButton(Lang.t("取消", "cancel", "取消"), null)
-                .show();
+        new Thread(() -> {
+            PersonaState.flushPending();
+            RegionPersona.flushPending();
+            RootShell.run("setprop ctl.restart zygote", 512, 10000L);
+        }, "model-reboot").start();
     }
 
     /** A target without hooks must not accept a per-target identity edit. */
@@ -1284,69 +2354,264 @@ final class PersonaPanel extends UiSection {
 
     /** Runs a root-channel write on a worker, then reports and refreshes the rows. */
     private void sysWrite(final String script) {
-        new Thread(() -> {
+        EDIT_TX.execute(() -> {
             final String out = RootShell.runCapture(script);
-            // The property area changed; the render below reads the cache, not one getprop per row.
+            RootShell.observeCarrierDenial(out);
             DeviceSignals.refresh();
             ScreenUpdates.post(s -> {
                 showActionResult(out.trim().isEmpty() ? "ok" : out);
-                renderScreen.run();
+                repaintSelf();
             });
-        }).start();
+        });
     }
 
-    private void editMcc() {
+    private void openCarrierSheet(final com.walter.claudewilson.model.SimPolicy.Decision simDecision,
+                                  final long profileSeed) {
         final String user = currentUser.get();
         if (!com.walter.claudewilson.model.ShellQuote.numeric(user)) return;
-        Regions.R r = regionIdx >= 0 ? Regions.ALL.get(regionIdx) : null;
+        final Regions.R r = regionIdx >= 0 ? Regions.ALL.get(regionIdx) : null;
         if (r == null) return;
-        final String[] net = netFor(r.iso);
-        // Values, not labels, drive the click: null opens the manual entry, "" clears the
-        // per-space override so the region profile applies again.
-        final java.util.List<String> values = new java.util.ArrayList<>();
-        java.util.List<String> names = new java.util.ArrayList<>();
-        if (net != null) { values.add(net[1]); names.add(net[1] + "  " + net[2]); }
-        String fb = r.mcc.split("/")[0] + "01";
-        if (!values.contains(fb)) { values.add(fb); names.add(fb); }
-        values.add(null);
-        names.add(Lang.t("手动…", "manual…", "手動…"));
-        boolean overridden = persona.op(user) != null;
-        if (overridden) {
-            values.add("");
-            names.add(Lang.t("地区默认（清除覆盖）", "region default (clear override)",
-                    "地域既定（上書き解除）"));
-        }
-        new android.app.AlertDialog.Builder(this)
-                .setTitle("SIM MCC/MNC")
-                .setItems(names.toArray(new String[0]), (d, w) -> {
-                    String op = values.get(w);
-                    if (op == null) { editMccManual(user, r); return; }
-                    if (op.isEmpty()) persona.clearOp(user); else persona.putOp(user, op);
-                    sysWrite(simScript(currentOp(r), r, null));
-                    renderScreen.run();
-                    publishPersona();
-                }).show();
+        PersonaEditSheets.showCarrierSheet(
+                this, r, simDecision, persona.keepRealSim(user),
+                currentOp(r), currentCarrier(r), profileSeed,
+                (keepRealSim, op, carrier) -> applyCarrierEdit(user, r, keepRealSim, op, carrier));
     }
 
-    /** Timezone and UTC are one linked value: either cell opens the same IANA table. */
-    private void bindTimeZoneEditor(LinearLayout row) {
-        row.setClickable(true);
-        row.setOnClickListener(v -> editTimeZone());
-        for (int i = 1; i < row.getChildCount(); i++) {
-            View cell = row.getChildAt(i);
-            cell.setClickable(true);
-            cell.setOnClickListener(v -> editTimeZone());
+    private void applyCarrierEdit(final String user, final Regions.R r,
+                                  final boolean keepRealSim, final String op, final String carrier) {
+        final long t0 = android.os.SystemClock.elapsedRealtime();
+        persona.putKeepRealSim(user, keepRealSim);
+        if (!keepRealSim) {
+            RegionPersona.putCarrierTuple(this, user, r, op, carrier);
+            persona.putOp(user, op);
+            persona.putCarrier(user, carrier);
         }
+        repaintSelf();
+        EDIT_TX.execute(() -> {
+            final String script;
+            if (keepRealSim) {
+                EnvSession.Baseline base = EnvSession.baseline(this);
+                String[] origSim = base == null ? null
+                        : new String[]{base.simNum, base.simIso, base.simAlpha,
+                                base.simDisplay, String.valueOf(base.simSource)};
+                script = RootShell.restoreRealSimScript(regionActions.activeSub(), origSim);
+            } else {
+                script = RootShell.simOverrideScript(regionActions.activeSub(), op, r.iso, carrier);
+            }
+            String out = RootShell.runCapture(script);
+            RootShell.observeCarrierDenial(out);
+            DeviceSignals.refresh();
+            EnvSession.setSimSpoofed(this, !keepRealSim);
+            com.walter.claudewilson.platform.Diag.info("perf",
+                    "edit-carrier ms=" + (android.os.SystemClock.elapsedRealtime() - t0));
+            ScreenUpdates.post(screen -> {
+                showActionResult(out.trim().isEmpty() ? "ok" : out);
+                publishCurrent();
+            });
+        });
     }
 
-    private void bindLocationEditor(LinearLayout row) {
-        row.setClickable(true);
-        row.setOnClickListener(v -> openLocationPicker());
-        for (int i = 1; i < row.getChildCount(); i++) {
-            View cell = row.getChildAt(i);
-            cell.setClickable(true);
-            cell.setOnClickListener(v -> openLocationPicker());
+    private void openLocaleTzSheet() {
+        if (!RootShell.shellReady()) {
+            showRootHint(Lang.t("语言与时区修改需要 root 或 Shizuku",
+                    "Locale & timezone edit needs root or Shizuku",
+                    "言語・タイムゾーン変更には root または Shizuku が必要"));
+            return;
         }
+        final Regions.R r = regionIdx >= 0 ? Regions.ALL.get(regionIdx) : null;
+        if (r == null) return;
+        PersonaEditSheets.showLocaleTzSheet(this, r, applyLocale, applyZone,
+                this::applyLocaleAndZone);
+    }
+
+    private void applyLocaleAndZone(final String locale, final String zone,
+                                    final boolean syncLocation) {
+        final long t0 = android.os.SystemClock.elapsedRealtime();
+        final String user = currentUser.get();
+        final TargetSpec target = Targets.current();
+        if (getBaseContext() instanceof Dashboard) {
+            ((Dashboard) getBaseContext()).selectionLocaleAndZone(locale, zone, syncLocation);
+        } else {
+            if (locale != null && !locale.isEmpty()) RegionSelection.applyLocale = locale;
+            if (zone != null && !zone.isEmpty()) RegionSelection.applyZone = zone;
+        }
+        if (zone != null && !zone.isEmpty()) {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(zone));
+        }
+        repaintSelf();
+        EDIT_TX.execute(() -> {
+            String browser = RootShell.browserPackage(this);
+            String out = RootShell.setLocaleAndTimeZone(
+                    zone, locale, target.packageName(), browser, user);
+            boolean ok = !RootShell.failed(out);
+            if (ok) {
+                DeviceSignals.refresh();
+            }
+            com.walter.claudewilson.platform.Diag.info("perf",
+                    "edit-loc-tz ms=" + (android.os.SystemClock.elapsedRealtime() - t0));
+            ScreenUpdates.post(screen -> {
+                if (ok) {
+                    publishCurrent();
+                } else {
+                    showRootHint(Lang.t("语言/时区写入失败", "Locale/TZ write failed",
+                            "言語・TZ書込み失敗") + ": " + out);
+                    repaintSelf();
+                }
+            });
+        });
+    }
+
+    private void openDeviceCscSheet() {
+        if (!hooksForInjection()) return;
+        final String user = currentUser.get();
+        if (!com.walter.claudewilson.model.ShellQuote.numeric(user)) return;
+        final Regions.R region = regionIdx >= 0 ? Regions.ALL.get(regionIdx) : null;
+        final String aid = persona.aid(user);
+        final String[] hw = Regions.hwTag();
+        final java.util.List<PersonaEditSheets.CscOption> cscOpts = buildCscOptions(region, hw[0]);
+        PersonaEditSheets.showDeviceCscSheet(
+                this, region, devices(), selfDevice(),
+                persona.device(user), persona.hasDeviceOverride(user),
+                persona.deviceHookOnly(user), persona.customDevice(user),
+                cscOpts, hw[0],
+                new PersonaEditSheets.DeviceCallback() {
+                    @Override public void onSelectPreset(int presetIndex, boolean hookOnly) {
+                        boolean wasSystem = persona.hasDeviceOverride(user)
+                                && !persona.deviceHookOnly(user);
+                        boolean modelChanged = presetIndex != persona.device(user)
+                                || persona.customDevice(user) != null;
+                        long seed = !modelChanged && persona.seed(user) != 0L
+                                ? persona.seed(user)
+                                : PersonaSalt.nonZero(new java.security.SecureRandom().nextLong());
+                        if (modelChanged) {
+                            persona.clearBuildPins(user);
+                        }
+                        if (presetIndex == 0) {
+                            persona.clearDeviceOverride(user);
+                            persona.put(user, 0, aid, seed);
+                            repaintSelf();
+                            if (wasSystem) {
+                                syncSystemThenPublish(null, region, PersonaPanel.this::rebootZygote);
+                            } else {
+                                publishCurrent();
+                            }
+                            return;
+                        }
+                        int ver = persona.saltVersion(user);
+                        long crossSeed = PersonaSalt.deviceCrossSeed(ver,
+                                ver <= PersonaSalt.SALT_V1 ? 0L : persona.spaceSeed(user), seed);
+                        String[] baseRow = deviceAt(presetIndex);
+                        long pSeed = profileSeedFor(user, baseRow, crossSeed,
+                                region != null ? region.iso : null);
+                        String[] dv = resolveDeviceRow(user, baseRow, crossSeed, pSeed, region);
+                        persona.markDeviceOverride(user);
+                        persona.putDeviceHookOnly(user, hookOnly);
+                        persona.put(user, presetIndex, aid, seed);
+                        repaintSelf();
+                        if (hookOnly) {
+                            publishCurrent();
+                        } else {
+                            syncSystemThenPublish(dv, region, PersonaPanel.this::rebootZygote);
+                        }
+                    }
+
+                    @Override public void onSelectCustom(String[] customRow, long seed,
+                                                         boolean hookOnly) {
+                        persona.clearBuildPins(user);
+                        int ver = persona.saltVersion(user);
+                        long crossSeed = PersonaSalt.deviceCrossSeed(ver,
+                                ver <= PersonaSalt.SALT_V1 ? 0L : persona.spaceSeed(user), seed);
+                        long pSeed = profileSeedFor(user, customRow, crossSeed,
+                                region != null ? region.iso : null);
+                        String[] dv = resolveDeviceRow(user, customRow, crossSeed, pSeed, region);
+                        persona.putCustom(user, customRow, aid, seed);
+                        persona.putDeviceHookOnly(user, hookOnly);
+                        repaintSelf();
+                        if (hookOnly) {
+                            publishCurrent();
+                        } else {
+                            syncSystemThenPublish(dv, region, PersonaPanel.this::rebootZygote);
+                        }
+                    }
+
+                    @Override public void onRunCscScript(String targetCsc, String script) {
+                        if (targetCsc != null) {
+                            if (targetCsc.isEmpty()) {
+                                persona.clearCsc(user);
+                            } else {
+                                persona.putCsc(user, targetCsc);
+                            }
+                        }
+                        sysWrite(script);
+                    }
+                });
+    }
+
+    private java.util.List<PersonaEditSheets.CscOption> buildCscOptions(Regions.R r, String src) {
+        java.util.List<PersonaEditSheets.CscOption> out =
+                new java.util.ArrayList<PersonaEditSheets.CscOption>();
+        if (r == null) return out;
+        String isoUp = r.iso.toUpperCase(java.util.Locale.ROOT);
+        String rp = "RP=$(command -v resetprop || echo /data/adb/ksu/bin/resetprop); ";
+        String value = cscValue(r);
+        if (value != null) {
+            out.add(new PersonaEditSheets.CscOption(
+                    Lang.t("改为 " + value + "（软重启）",
+                            "Change to " + value + " (soft reboot)",
+                            value + " に変更（ソフト再起動）"),
+                    cscWriteScript(value), value));
+        }
+        if (src != null && (src.startsWith("ro.") || src.startsWith("persist."))) {
+            int eq = src.indexOf('=');
+            if (eq > 0) {
+                String key = src.substring(0, eq);
+                out.add(new PersonaEditSheets.CscOption(
+                        Lang.t("设置 " + key + " = " + isoUp + "（立即生效）",
+                                "Set " + key + " = " + isoUp + " (instant)",
+                                key + " = " + isoUp),
+                        rp + "$RP " + key + " " + isoUp, null));
+            }
+        }
+        String vendorRegion = DeviceSignals.getprop("ro.miui.region");
+        if (vendorRegion != null && !vendorRegion.isEmpty()
+                && (src == null || !src.startsWith("ro.miui.region"))) {
+            out.add(new PersonaEditSheets.CscOption(
+                    Lang.t("设置 ro.miui.region = " + isoUp + "（立即生效）",
+                            "Set ro.miui.region = " + isoUp + " (instant)",
+                            "ro.miui.region = " + isoUp),
+                    rp + "$RP ro.miui.region " + isoUp, null));
+        }
+        if (!out.isEmpty()) {
+            out.add(new PersonaEditSheets.CscOption(
+                    Lang.t("恢复本机原始标记（软重启）",
+                            "Restore original tag (soft reboot)",
+                            "元のタグに戻す（ソフト再起動）"),
+                    rp + "[ -f /data/local/tmp/ClaudeWilson_pn.bak ] && { "
+                            + "for k in ro.product.name ro.product.system.name "
+                            + "ro.product.system_ext.name ro.product.product.name "
+                            + "ro.product.vendor.name ro.product.odm.name "
+                            + "ro.product.vendor_dlkm.name ro.product.odm_dlkm.name; do "
+                            + "[ -n \"$(getprop $k)\" ] && "
+                            + "$RP $k \"$(cat /data/local/tmp/ClaudeWilson_pn.bak)\"; done; "
+                            + "setprop ctl.restart zygote; } || echo no-backup",
+                    ""));
+        }
+        return out;
+    }
+
+    private void openAidSheet() {
+        if (!hooksForInjection()) return;
+        final String user = currentUser.get();
+        if (!com.walter.claudewilson.model.ShellQuote.numeric(user)) return;
+        PersonaEditSheets.showAidSheet(this, liveAid(), persona.aid(user), value -> {
+            if (value == null) {
+                persona.clearAid(user);
+                persona.clearAidOverride(user);
+            } else {
+                persona.putAid(user, value);
+            }
+            publishCurrent();
+        });
     }
 
     private void openLocationPicker() {
@@ -1362,10 +2627,99 @@ final class PersonaPanel extends UiSection {
                     "この地域の座標がありません"));
             return;
         }
-        LocationPickerDialog.show(this, region, regionPoint, persona, user, () -> {
-            renderScreen.run();
-            publishPersona();
-        });
+        LocationPickerDialog.show(this, region, regionPoint, persona, user, applyZone,
+                this::publishCurrent,
+                newZone -> applyLocaleAndZone(null, newZone, false));
+    }
+
+    private void openWifiSheet(final String user, final String iso,
+                               final com.walter.claudewilson.model.GeoTable.Point place,
+                               final long profileSeed) {
+        if (place == null || iso == null || iso.isEmpty()) {
+            return;
+        }
+        final String cityTag = place.city.isEmpty()
+                ? iso.toUpperCase(java.util.Locale.ROOT) : place.city;
+        final int saltVer = persona.saltVersion(user);
+        PersonaEditSheets.showWifiEditorSheet(
+                this,
+                persona.wifiEnabled(user),
+                persona.wifiCustomSsid(user),
+                persona.wifiCustomBssid(user),
+                persona.wifiSalt(user),
+                salt -> com.walter.claudewilson.model.WifiProfile.forRegion(
+                        place.latitude, place.longitude, cityTag,
+                        PersonaSalt.wifiSeed(saltVer, profileSeed, salt), 8,
+                        ProfileLibrary.wifi(this, iso), ProfileLibrary.oui(this)),
+                (enabled, customSsid, customBssid, newSalt) -> {
+                    persona.putWifiEnabled(user, enabled);
+                    persona.putWifiCustomSsid(user, customSsid);
+                    persona.putWifiCustomBssid(user, customBssid);
+                    persona.putWifiSalt(user, newSalt);
+                    memoRadioKey = null;
+                    publishCurrent();
+                });
+    }
+
+    private void openBleSheet(final String user, final String iso, final long profileSeed) {
+        if (iso == null || iso.isEmpty()) {
+            return;
+        }
+        final int saltVer = persona.saltVersion(user);
+        PersonaEditSheets.showBleEditorSheet(
+                this,
+                persona.bleEnabled(user),
+                persona.bleEmptyMode(user),
+                persona.bleCustomBonded(user),
+                persona.bleSalt(user),
+                salt -> com.walter.claudewilson.model.BleProfile.forRegion(
+                        PersonaSalt.bleSeed(saltVer, profileSeed, salt), 4,
+                        ProfileLibrary.ble(this, iso), ProfileLibrary.oui(this)),
+                (enabled, emptyMode, customBonded, newSalt) -> {
+                    persona.putBleEnabled(user, enabled);
+                    persona.putBleEmptyMode(user, emptyMode);
+                    persona.putBleCustomBonded(user, customBonded);
+                    persona.putBleSalt(user, newSalt);
+                    memoRadioKey = null;
+                    publishCurrent();
+                });
+    }
+
+    private void openSensorSheet(final String user,
+                                 final com.walter.claudewilson.model.GeoTable.Point place,
+                                 final long profileSeed, final int localHour, final double alt) {
+        if (place == null) {
+            return;
+        }
+        PersonaEditSheets.showSensorEditorSheet(
+                this,
+                persona.sensorsEnabled(user),
+                persona.sensorPreset(user),
+                preset -> com.walter.claudewilson.model.SensorProfile.forPreset(
+                        profileSeed, place.latitude, place.longitude, localHour,
+                        ProfileLibrary.sensor(this, profileSeed), preset, alt),
+                (enabled, preset) -> {
+                    persona.putSensorsEnabled(user, enabled);
+                    persona.putSensorPreset(user, preset);
+                    memoRadioKey = null;
+                    publishCurrent();
+                });
+    }
+
+    private static String sensorPresetLabel(String preset) {
+        if (com.walter.claudewilson.model.SensorProfile.PRESET_DESK.equals(preset)) {
+            return Lang.t("桌面静止", "Desk", "卓上");
+        }
+        if (com.walter.claudewilson.model.SensorProfile.PRESET_HANDHELD.equals(preset)) {
+            return Lang.t("手持阅读", "Handheld", "手持ち");
+        }
+        if (com.walter.claudewilson.model.SensorProfile.PRESET_INDOOR_NIGHT.equals(preset)) {
+            return Lang.t("夜间室内", "Night", "夜間");
+        }
+        if (com.walter.claudewilson.model.SensorProfile.PRESET_OUTDOOR_DAY.equals(preset)) {
+            return Lang.t("户外日间", "Outdoor", "屋外");
+        }
+        return Lang.t("自动昼夜", "Auto", "自動");
     }
 
     private static int targetLocationPermission(android.content.Context context,
@@ -1386,359 +2740,6 @@ final class PersonaPanel extends UiSection {
         } catch (Throwable ignored) {
         }
         return 0;
-    }
-
-    /** Manual IANA timezone write; root and Shizuku share the same shell command. */
-    private void editTimeZone() {
-        if (!RootShell.shellReady()) {
-            showRootHint(Lang.t("时区修改需要 root 或 Shizuku",
-                    "timezone needs root or Shizuku",
-                    "タイムゾーン変更には root または Shizuku が必要"));
-            return;
-        }
-        final long now = System.currentTimeMillis();
-        final java.util.List<String> all = new java.util.ArrayList<String>();
-        final java.util.Map<String, String> ids =
-                new java.util.HashMap<String, String>();
-        final java.util.Map<String, Integer> offsets =
-                new java.util.HashMap<String, Integer>();
-        for (String id : java.util.TimeZone.getAvailableIDs()) {
-            java.util.TimeZone tz = java.util.TimeZone.getTimeZone(id);
-            int offset = tz.getOffset(now) / 60000;
-            String label = "UTC" + Regions.utcFmt(offset) + "  " + id;
-            all.add(label);
-            ids.put(label, id);
-            offsets.put(label, offset);
-        }
-        java.util.Collections.sort(all, (a, b) -> {
-            int cmp = Integer.compare(offsets.get(a), offsets.get(b));
-            return cmp != 0 ? cmp : a.compareTo(b);
-        });
-        final java.util.List<String> shown = new java.util.ArrayList<String>(all);
-        final android.widget.ArrayAdapter<String> adapter =
-                new android.widget.ArrayAdapter<String>(this, 0, shown) {
-                    @Override public View getView(int position, View convert,
-                                                  android.view.ViewGroup parent) {
-                        TextView row = convert instanceof TextView
-                                ? (TextView) convert : txt("", 12, FG);
-                        row.setText(getItem(position));
-                        row.setTypeface(Typeface.MONOSPACE);
-                        row.setPadding(dp(PersonaPanel.this, 12),
-                                dp(PersonaPanel.this, 9),
-                                dp(PersonaPanel.this, 12),
-                                dp(PersonaPanel.this, 9));
-                        return row;
-                    }
-                };
-        android.widget.EditText search = edit("");
-        search.setHint(Lang.t("点击搜索", "click to search", "検索をクリック"));
-        android.widget.ListView list = new android.widget.ListView(this);
-        list.setDivider(null);
-        list.setAdapter(adapter);
-        list.setLayoutParams(new LinearLayout.LayoutParams(-1, dp(this, 420)));
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(search);
-        box.addView(list);
-        final android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
-                .setTitle(Lang.t("时区", "timezone", "タイムゾーン"))
-                .setView(box)
-                .setNegativeButton(Lang.t("取消", "cancel", "取消"), null)
-                .create();
-        list.setOnItemClickListener((parent, view, position, id) -> {
-            String zone = ids.get(shown.get(position));
-            if (zone != null) {
-                applyTimeZone(zone);
-            }
-            dialog.dismiss();
-        });
-        search.addTextChangedListener(new android.text.TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
-            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
-            @Override public void afterTextChanged(android.text.Editable s) {
-                String q = s.toString().trim().toLowerCase(java.util.Locale.ROOT);
-                shown.clear();
-                for (String label : all) {
-                    if (q.isEmpty()
-                            || label.toLowerCase(java.util.Locale.ROOT).contains(q)) {
-                        shown.add(label);
-                    }
-                }
-                adapter.notifyDataSetChanged();
-            }
-        });
-        dialog.show();
-    }
-
-    private void applyTimeZone(final String zone) {
-        new Thread(() -> {
-            final String out = RootShell.setTimeZone(zone);
-            final boolean ok = !RootShell.failed(out);
-            ScreenUpdates.post(screen -> {
-                if (ok) {
-                    java.util.TimeZone.setDefault(
-                            java.util.TimeZone.getTimeZone(zone));
-                    RegionSelection.applyZone = zone;
-                    if (getBaseContext() instanceof Dashboard) {
-                        ((Dashboard) getBaseContext()).selectionZone(zone);
-                    }
-                    renderScreen.run();
-                    publishPersona();
-                } else {
-                    showRootHint(Lang.t("时区写入失败", "timezone write failed",
-                            "タイムゾーン書き込み失敗") + ": " + out);
-                }
-            });
-        }, "cw-timezone").start();
-    }
-
-    private void editMccManual(final String user, final Regions.R r) {
-        RegionPersona.Snapshot saved = RegionPersona.of(this, user, r);
-        android.widget.EditText input = edit(saved == null ? persona.op(user) : saved.op);
-        input.setHint("52501");
-        new android.app.AlertDialog.Builder(this)
-                .setTitle("SIM MCC/MNC")
-                .setView(input)
-                .setPositiveButton(Lang.t("保存", "save", "保存"),
-                        (dialog, which) -> {
-                            String value = input.getText().toString().trim();
-                            if (!value.matches("\\d{5,6}")) {
-                                showRootHint(Lang.t("MCC/MNC 需要 5-6 位数字",
-                                        "MCC/MNC must be 5-6 digits",
-                                        "MCC/MNC は 5-6 桁の数字"));
-                                return;
-                            }
-                            RegionPersona.putOp(PersonaPanel.this, user, r, value);
-                            persona.putOp(user, value);
-                            sysWrite(simScript(value, r, null));
-                            renderScreen.run();
-                            publishPersona();
-                        })
-                .setNegativeButton(Lang.t("取消", "cancel", "取消"), null)
-                .show();
-    }
-
-    /** gsm.sim.operator.* props + carrier-config + (best-effort) simop for the picked values. */
-    private String simScript(String op, Regions.R r, String carrier) {
-        String car = carrier != null ? carrier : currentCarrier(r);
-        int sub = regionActions.activeSub();
-        String name = com.walter.claudewilson.model.ShellQuote.quote(car);
-        com.walter.claudewilson.model.Command cmd = com.walter.claudewilson.model.Command.sh()
-                .raw("APK=$(pm path " + getPackageName() + " | cut -d: -f2)");
-        boolean keepReal = RootShell.preservesMobileData();
-        // Property writes need uid 0; the carrier-config override works from a shell uid too.
-        // Writing them unconditionally made a shell-channel tap report a setprop failure after the
-        // override had already been accepted.
-        if (RootShell.rootReady() && !keepReal) {
-            cmd.raw("setprop gsm.sim.operator.numeric " + op
-                            + " && setprop gsm.sim.operator.iso-country " + r.iso
-                            + " && setprop gsm.sim.operator.alpha " + name)
-                    // The visited-network trio the telemetry backend reads; kept in the same write
-                    // so the two SIM surfaces cannot name different networks.
-                    .raw("setprop gsm.operator.numeric " + op
-                            + " && setprop gsm.operator.iso-country " + r.iso
-                            + " && setprop gsm.operator.alpha " + name);
-        }
-        if (keepReal) {
-            // These stacks resolve the data APN from the SIM operator properties; a global
-            // persona there kills data. The target process still gets the persona from the
-            // hook, and the subscription display name is a safe, local rename.
-            return cmd.raw(sub < 0 ? "echo no-sub"
-                            : "app_process -Djava.class.path=$APK /system/bin "
-                                    + "com.walter.claudewilson.Bridge subname " + sub + " "
-                                    + name + " " + CarrierCommands.nameSourceUserInput())
-                    .build();
-        }
-        return cmd.raw(sub < 0 ? "echo no-sub"
-                        : "app_process -Djava.class.path=$APK /system/bin "
-                                + "com.walter.claudewilson.Bridge cc " + sub + " "
-                                + r.iso + " " + name
-                                // Settings' SIM manager renders the subscription display name,
-                                // not gsm.sim.operator.alpha. Keep the two in step when the
-                                // carrier is edited by hand.
-                                + "; app_process -Djava.class.path=$APK /system/bin "
-                                + "com.walter.claudewilson.Bridge subname " + sub + " "
-                                + name + " " + CarrierCommands.nameSourceUserInput()
-                                + (RootShell.rootReady()
-                                        ? "; app_process -Djava.class.path=$APK /system/bin "
-                                                + "com.walter.claudewilson.Bridge simop " + sub + " "
-                                                + op + " " + name
-                                        : ""))
-                .build();
-    }
-
-    private void editIso() {
-        Regions.R r = regionIdx >= 0 ? Regions.ALL.get(regionIdx) : null;
-        if (r == null) return;
-        sysWrite(simScript(currentOp(r), r, null));
-    }
-
-    private void editCarrier() {
-        final String user = currentUser.get();
-        if (!com.walter.claudewilson.model.ShellQuote.numeric(user)) return;
-        Regions.R r = regionIdx >= 0 ? Regions.ALL.get(regionIdx) : null;
-        if (r == null) return;
-        // Same contract as the MCC picker: a value applies, null opens manual entry, "" clears
-        // the per-space override so switching regions moves the value again.
-        final java.util.List<String> values = new java.util.ArrayList<>();
-        if (r.carriers != null)
-            for (String c : r.carriers.split("/"))
-                if (!c.isEmpty() && values.stream().noneMatch(n -> n != null && n.equalsIgnoreCase(c)))
-                    values.add(c);
-        String[] net = netFor(r.iso);
-        if (net != null && values.stream().noneMatch(n -> n != null && n.equalsIgnoreCase(net[2])))
-            values.add(net[2]);
-        values.add(null);
-        boolean overridden = persona.carrier(user) != null;
-        if (overridden) values.add("");
-        final java.util.List<String> names = new java.util.ArrayList<>();
-        for (String v : values) {
-            names.add(v == null ? Lang.t("手动…", "manual…", "手動…")
-                    : v.isEmpty() ? Lang.t("地区默认（清除覆盖）", "region default (clear override)",
-                            "地域既定（上書き解除）")
-                    : v);
-        }
-        new android.app.AlertDialog.Builder(this)
-                .setTitle(Lang.t("SIM 运营商", "SIM carrier", "SIM キャリア"))
-                .setItems(names.toArray(new String[0]), (dialog, which) -> {
-                    String value = values.get(which);
-                    if (value == null) { editCarrierManual(user, r); return; }
-                    applyCarrier(user, r, value.isEmpty() ? null : value);
-                }).show();
-    }
-
-    private void applyCarrier(String user, Regions.R r, String value) {
-        // Persist the edit in the region record. null resets to the region's primary carrier.
-        if (value == null) {
-            String[] net = netFor(r.iso);
-            String fallback = net != null ? net[2]
-                    : r.carriers != null && !r.carriers.isEmpty()
-                            ? r.carriers.split("/")[0] : "";
-            RegionPersona.putCarrier(this, user, r, fallback);
-            persona.clearCarrier(user);
-        } else {
-            RegionPersona.putCarrier(this, user, r, value);
-            persona.putCarrier(user, value);
-        }
-        sysWrite(simScript(currentOp(r), r, value));
-        renderScreen.run();
-        publishPersona();
-    }
-
-    private void editCarrierManual(final String user, final Regions.R r) {
-        android.widget.EditText input = edit(persona.carrier(user));
-        new android.app.AlertDialog.Builder(this)
-                .setTitle(Lang.t("SIM 运营商", "SIM carrier", "SIM キャリア"))
-                .setView(input)
-                .setPositiveButton(Lang.t("保存", "save", "保存"),
-                        (dialog, which) -> {
-                            String value = input.getText().toString().trim();
-                            if (!RootShell.safe(value)) {
-                                showRootHint(Lang.t("运营商名包含非法字符",
-                                        "carrier name contains invalid characters",
-                                        "キャリア名に不正文字"));
-                                return;
-                            }
-                            applyCarrier(user, r, value);
-                        })
-                .setNegativeButton(Lang.t("取消", "cancel", "取消"), null)
-                .show();
-    }
-
-    /**
-     * Region-tag writes: the row's source decides what can move it. A tag taken from the
-     * product/device name (e.g. {@code lineage_oriole}) shifts with a ro.product.*.name
-     * rewrite plus a zygote restart — Build fields are frozen at zygote start, so prop
-     * writes alone never reach Java readers. A dedicated region prop just takes the iso
-     * (getprop-based readers see it live). A fingerprint-derived CSC (Samsung) moves
-     * only with model override, and a device with no tag has nothing to aim at.
-     */
-    private void editCsc() {
-        Regions.R r = regionIdx >= 0 ? Regions.ALL.get(regionIdx) : null;
-        if (r == null) return;
-        String[] hw = Regions.hwTag();
-        String src = hw[0];
-        String isoUp = r.iso.toUpperCase(java.util.Locale.ROOT);
-        String rp = "RP=$(command -v resetprop || echo /data/adb/ksu/bin/resetprop); ";
-        java.util.List<String> labels = new java.util.ArrayList<>();
-        final java.util.List<String> scripts = new java.util.ArrayList<>();
-        // "" = restore (forget the target), null = an action that does not move the target.
-        final java.util.List<String> targets = new java.util.ArrayList<>();
-        String value = cscValue(r);
-        String tag = pickTag(r.iso);
-        String targetTag = tag == null ? null : "_" + tag + "@"
-                + (android.os.Build.BRAND == null ? "?"
-                        : android.os.Build.BRAND.toLowerCase(java.util.Locale.ROOT));
-        if (value != null) {
-            // The title carries current → target, so the item itself stays short enough not to
-            // break mid-word on a 1080-wide dialog.
-            labels.add(Lang.t("改为 " + value + "（软重启）",
-                    "change to " + value + " (soft reboot)",
-                    value + " に変更（ソフト再起動）"));
-            scripts.add(cscWriteScript(value));
-            targets.add(value);
-        }
-        if (src.startsWith("ro.") || src.startsWith("persist.")) {
-            String key = src.substring(0, src.indexOf('='));
-            labels.add(Lang.t("只设置 " + key + " = " + isoUp + "（立即生效）",
-                    "set only " + key + " = " + isoUp + " (takes effect now)",
-                    key + " のみ設定 = " + isoUp));
-            scripts.add(rp + "$RP " + key + " " + isoUp);
-            targets.add(null);
-        }
-        // Only offer the vendor property when the device actually ships one; on builds where it
-        // is empty the item would be a lever that moves nothing.
-        String vendorRegion = DeviceSignals.getprop("ro.miui.region");
-        if (vendorRegion != null && !vendorRegion.isEmpty()
-                && !src.startsWith("ro.miui.region")) {
-            labels.add(Lang.t("只设置小米区域属性 = " + isoUp + "（立即生效，标记不变）",
-                    "set only the Xiaomi region property = " + isoUp + " (tag unchanged)",
-                    "Xiaomi 地域属性のみ = " + isoUp + "（タグは不変）"));
-            scripts.add(rp + "$RP ro.miui.region " + isoUp);
-            targets.add(null);
-        }
-        labels.add(Lang.t("恢复本机原始标记（软重启）",
-                "restore this device's original tag (soft reboot)",
-                "実機の元のタグに戻す（ソフト再起動）"));
-        scripts.add(rp + "[ -f /data/local/tmp/ClaudeWilson_pn.bak ] && { "
-                + "for k in ro.product.name ro.product.system.name "
-                + "ro.product.system_ext.name ro.product.product.name "
-                + "ro.product.vendor.name ro.product.odm.name "
-                + "ro.product.vendor_dlkm.name ro.product.odm_dlkm.name; do "
-                + "[ -n \"$(getprop $k)\" ] && "
-                + "$RP $k \"$(cat /data/local/tmp/ClaudeWilson_pn.bak)\"; done; "
-                + "setprop ctl.restart zygote; } || echo no-backup");
-        targets.add("");
-        if (labels.size() <= 1) {
-            showRootHint(Lang.t("该标记源自整机指纹，只能随机型伪装变更",
-                    "the tag derives from the build fingerprint; it moves only with model override",
-                    "タグはビルドフィンガープリント由来——機種上書きでのみ変更可"));
-            return;
-        }
-        // AlertDialog shows either a message or the item list, not both, so the current/target
-        // pair rides in the title and each item spells out its own cost.
-        String title = value != null
-                ? Lang.t("区域标记/CSC · " + src + " → " + targetTag,
-                        "region tag/CSC · " + src + " → " + targetTag,
-                        "地域タグ/CSC · " + src + " → " + targetTag)
-                : Lang.t("区域标记/CSC · 当前 " + src,
-                        "region tag/CSC · now " + src,
-                        "地域タグ/CSC · 現在 " + src);
-        new android.app.AlertDialog.Builder(this)
-                .setTitle(title)
-                .setItems(labels.toArray(new String[0]), (d, w) -> {
-                    String target = targets.get(w);
-                    if (target == null) {
-                        sysWrite(scripts.get(w));
-                    } else if (target.isEmpty()) {
-                        persona.clearCsc(currentUser.get());
-                        sysWrite(scripts.get(w));
-                    } else {
-                        persona.putCsc(currentUser.get(), target);
-                        sysWrite(scripts.get(w));
-                    }
-                })
-                .show();
     }
 
     /**
@@ -1868,11 +2869,11 @@ final class PersonaPanel extends UiSection {
     /** Package-visible so Dashboard's radio reassert compares the same slot as the card. */
     static int activeSlotOf(android.content.Context context) {
         try {
-            android.telephony.SubscriptionManager sm =
-                    (android.telephony.SubscriptionManager) context.getSystemService(
-                            android.content.Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+            android.telephony.SubscriptionManager sm = context == null ? null
+                    : context.getSystemService(android.telephony.SubscriptionManager.class);
             int sub = android.telephony.SubscriptionManager.getDefaultDataSubscriptionId();
-            return sm == null || sub < 0 ? -1 : sm.getSlotIndex(sub);
+            return sm == null || sub < 0 ? -1
+                    : android.telephony.SubscriptionManager.getSlotIndex(sub);
         } catch (Throwable t) {
             return -1;
         }
@@ -1951,25 +2952,12 @@ final class PersonaPanel extends UiSection {
         return "";
     }
 
-    private static String spacedAid(String v) {
-        return v != null && v.length() == 16 ? v.substring(0, 8) + " " + v.substring(8) : v;
-    }
-
-    /** Drop the comparison column when no region gives an expected value to compare against. */
-    private LinearLayout row(boolean withExpected, String label, String exp, String act, int st) {
-        if (Privacy.hidden() && Privacy.sensitivePersona(label)) {
-            exp = Privacy.STARS;
-            act = Privacy.STARS;
-            st = -1;
-        }
-        if (st == 0) {
-            mismatches++;
-        }
-        return withExpected ? row3(label, exp, act, st) : row2(label, act, st);
-    }
-
     int mismatches() {
         return mismatches;
+    }
+
+    boolean restrictedNativeSim() {
+        return restrictedNativeSim;
     }
 
     /** True only when the target process itself reported this payload as live. */
@@ -1986,12 +2974,6 @@ final class PersonaPanel extends UiSection {
                 && !"next-launch".equals(locale.note())
                 && !"system-fallback".equals(locale.note())
                 && !"app-locale".equals(locale.note());
-    }
-
-    private void addBullet(LinearLayout card, String text) {
-        TextView t = txt("• " + text, 10, DIM);
-        t.setPadding(0, dp(this, 2), 0, 0);
-        card.addView(t);
     }
 
     /** A self-check value that belongs to a currently running target, not a stale file. */
@@ -2033,4 +3015,140 @@ final class PersonaPanel extends UiSection {
         return s == null || s.isEmpty() ? "?" : s;
     }
 
+    private static String q(String s) {
+        return org.json.JSONObject.quote(s == null ? "" : s);
+    }
+
+    private void restoreIpv6State(String user, String pfx, String mobPfx,
+                                  String iso, String car) {
+        persona.putIpv6State(user, pfx, mobPfx, iso, car);
+    }
+
+    /**
+     * Resolves [wifiPrefix, mobilePrefix] without mutating PersonaState on UI render.
+     * Reads savedIso and savedCar once up front so region switches never mix cross-country pools.
+     */
+    private String[] resolveIpv6Pair(String user, String iso, String carrier, long seed) {
+        String savedWifi = persona.ipv6Prefix(user);
+        String savedMob = persona.ipv6MobilePrefix(user);
+        String savedIso = persona.ipv6Iso(user);
+        String savedCar = persona.ipv6Carrier(user);
+        boolean sameIso = savedIso != null && iso.equalsIgnoreCase(savedIso);
+        boolean sameCar = sameIso && savedCar != null
+                && savedCar.equalsIgnoreCase(carrier == null ? "" : carrier);
+
+        String isoLow = iso.toLowerCase(java.util.Locale.ROOT);
+        String wifi;
+        if (sameIso && savedWifi != null && !savedWifi.isEmpty()) {
+            wifi = savedWifi;
+        } else {
+            String p = Ipv6Prefixes.pickPrefix(this, isoLow, seed, NetworkPanel.lastEgressAsn());
+            wifi = p != null ? p : "";
+        }
+
+        String mob;
+        if (sameCar && savedMob != null && !savedMob.isEmpty()) {
+            mob = savedMob;
+        } else {
+            String p = Ipv6Prefixes.pickMobilePrefix(this, isoLow, carrier, wifi, seed);
+            mob = p != null ? p : wifi;
+        }
+        return new String[]{wifi, mob};
+    }
+
+    /** Extracts the first 2000::/3 global unicast IPv6 from a comma-separated iface_ips value. */
+    private static String extractGlobalV6(String ips) {
+        if (ips == null) return "—";
+        for (String addr : ips.split(",")) {
+            addr = addr.trim();
+            int pct = addr.indexOf('%');
+            if (pct >= 0) addr = addr.substring(0, pct);
+            if (addr.isEmpty()) continue;
+            if (addr.contains(":") && !addr.startsWith("fe80")
+                    && !addr.startsWith("fd") && !addr.startsWith("fc")
+                    && !addr.startsWith("::") && addr.matches("^[23][0-9a-fA-F]{0,3}:.*")
+                    && expandV6(addr.toLowerCase(java.util.Locale.ROOT)) != null) {
+                return addr;
+            }
+        }
+        return "—";
+    }
+
+    /**
+     * Exact bit-level check whether {@code addr} falls within {@code cidr} (for any /1..128).
+     */
+    private static boolean sharesPrefix(String addr, String cidr) {
+        if (addr == null || cidr == null || cidr.isEmpty()) return false;
+        int pct = addr.indexOf('%');
+        if (pct >= 0) addr = addr.substring(0, pct);
+        int slash = cidr.indexOf('/');
+        if (slash < 0) return false;
+        String base = cidr.substring(0, slash).toLowerCase(java.util.Locale.ROOT);
+        int prefixLen;
+        try { prefixLen = Integer.parseInt(cidr.substring(slash + 1).trim()); }
+        catch (NumberFormatException e) { return false; }
+        if (prefixLen <= 0 || prefixLen > 128) return false;
+        String expandedBase = expandV6(base);
+        String expandedAddr = expandV6(addr.toLowerCase(java.util.Locale.ROOT));
+        if (expandedBase == null || expandedAddr == null) return false;
+        int fullHex = prefixLen / 4;
+        if (!expandedBase.substring(0, fullHex).equals(expandedAddr.substring(0, fullHex))) {
+            return false;
+        }
+        int remBits = prefixLen % 4;
+        if (remBits == 0) return true;
+        int bNib = Character.digit(expandedBase.charAt(fullHex), 16);
+        int aNib = Character.digit(expandedAddr.charAt(fullHex), 16);
+        if (bNib < 0 || aNib < 0) return false;
+        int mask = (0xF << (4 - remBits)) & 0xF;
+        return (bNib & mask) == (aNib & mask);
+    }
+
+    /** Expands an IPv6 address to 32 hex chars (no colons). Returns null on parse failure. */
+    private static String expandV6(String v6) {
+        if (v6 == null || v6.isEmpty()) return null;
+        int dc = v6.indexOf("::");
+        if (dc >= 0 && dc != v6.lastIndexOf("::")) return null;
+        if (dc >= 0) {
+            String leftPart = v6.substring(0, dc);
+            String rightPart = v6.substring(dc + 2);
+            String[] left = leftPart.isEmpty() ? new String[0] : leftPart.split(":", -1);
+            String[] right = rightPart.isEmpty() ? new String[0] : rightPart.split(":", -1);
+            int missing = 8 - left.length - right.length;
+            if (missing < 1) return null;
+            StringBuilder sb = new StringBuilder(32);
+            for (String g : left) {
+                String p = padGroup(g);
+                if (p == null) return null;
+                sb.append(p);
+            }
+            for (int i = 0; i < missing; i++) sb.append("0000");
+            for (String g : right) {
+                String p = padGroup(g);
+                if (p == null) return null;
+                sb.append(p);
+            }
+            return sb.length() == 32 ? sb.toString() : null;
+        }
+        String[] groups = v6.split(":", -1);
+        if (groups.length != 8) return null;
+        StringBuilder sb = new StringBuilder(32);
+        for (String g : groups) {
+            String p = padGroup(g);
+            if (p == null) return null;
+            sb.append(p);
+        }
+        return sb.length() == 32 ? sb.toString() : null;
+    }
+
+    private static String padGroup(String g) {
+        if (g == null || g.isEmpty() || g.length() > 4) return null;
+        for (int i = 0; i < g.length(); i++) {
+            if (Character.digit(g.charAt(i), 16) < 0) return null;
+        }
+        StringBuilder sb = new StringBuilder(4);
+        for (int i = g.length(); i < 4; i++) sb.append('0');
+        sb.append(g);
+        return sb.toString();
+    }
 }

@@ -25,11 +25,13 @@ public final class TablesLoader {
     private static final Charset UTF_8 = Charset.forName("UTF-8");
     private static final String DENYLIST = "denylist.txt";
     private static final String DENYLIST_OVERRIDE = "denylist-override.txt";
+    private static final String RESTRICTED_OVERRIDE = "restricted-regions-override.txt";
     private static final String[] NAMES = {
             Tables.SU_PATHS,
             Tables.RW_DIRS,
             Tables.MCC,
             Tables.CARRIERS,
+            Tables.RESTRICTED_REGIONS,
             Tables.PACKAGE_KEYWORDS,
             Tables.LABEL_KEYWORDS,
             Tables.EMULATOR_SIGNATURES,
@@ -89,6 +91,16 @@ public final class TablesLoader {
         String catalogKeywords = raw.get(Tables.PACKAGE_KEYWORDS);
         raw.put(Tables.PACKAGE_KEYWORDS,
                 (catalogKeywords == null ? "" : catalogKeywords + "\n") + keywords);
+        File restrictedOverride = new File(context.getExternalFilesDir(null), RESTRICTED_OVERRIDE);
+        if (restrictedOverride.isFile()) {
+            try (FileInputStream stream = new FileInputStream(restrictedOverride)) {
+                String base = raw.get(Tables.RESTRICTED_REGIONS);
+                raw.put(Tables.RESTRICTED_REGIONS,
+                        (base == null ? "" : base + "\n") + readAll(stream));
+            } catch (Exception e) {
+                Diag.warn("catalog", "cannot read " + RESTRICTED_OVERRIDE, e);
+            }
+        }
         cached = Tables.parse(raw);
         Diag.info("catalog", "loaded version=" + cached.version());
         return cached;

@@ -36,8 +36,10 @@ final class Dashboard extends UiSection {
     private final Activity activity;
     private final RegionActions regionActions;
     NetworkPanel network;
+    DataCleanPanel dataClean;
     PersonaPanel personaPanel;
     private LinearLayout personaFields;
+    private LinearLayout preflightHolder;
     private Report pipelineReport;
     /** Target-side check-item model; each target builds its own from target observations. */
     private volatile com.walter.claudewilson.model.RiskModel riskModel;
@@ -56,6 +58,8 @@ final class Dashboard extends UiSection {
     private static volatile boolean playBusy;
     private static volatile String applyLog;
     private static volatile boolean applyBusy;
+    private static volatile boolean reverting;
+    private static volatile boolean applyAwaitingGrant;
     private static volatile int pending;   // 0=none 1=apply 2=revert
     /** Serializes the shell transaction: an off tap waits for the running apply to finish. */
     private final Object txLock = new Object();
@@ -70,8 +74,9 @@ final class Dashboard extends UiSection {
     /** Local target inventory is expensive (one init-namespace walk); full scans refresh it. */
     private TargetEvidence cachedEvidence;
     private String cachedEvidenceTarget = "";
-    private boolean cachedEvidenceRoot;
+    private int cachedEvidenceIdentity = RootShell.ID_UNKNOWN;
     private boolean renderQueued;
+    private boolean upgradeCheckedThisSession;
     private final TelephonyReconciler telephony;
     private final Runnable renderTick = () -> {
         renderQueued = false;
@@ -90,18 +95,49 @@ final class Dashboard extends UiSection {
         Regions.init(this);   // region table lives in assets; load before anything reads ALL
         Targets.init(this);
         Privacy.init(this);
-        RootShell.bindSelf(getPackageName());
+        RootShell.bindSelf(this);
         ScreenUpdates.attach(this);
-        activity.getWindow().setStatusBarColor(BG);
-        activity.getWindow().setNavigationBarColor(BG);
+        configureEdgeToEdge(activity.getWindow());
+        android.widget.FrameLayout frame = new android.widget.FrameLayout(this);
         ScrollView sv = new ScrollView(this);
         scroller = sv;
         sv.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0xFF0A1424, BG, BG}));
+                new int[]{0xFF0D191B, BG, BG}));
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(this, 20), dp(this, 28), dp(this, 20), dp(this, 40));
+        root.setPadding(dp(this, 20), dp(this, 20), dp(this, 20), dp(this, 36));
         sv.addView(root);
+        frame.addView(sv, new android.widget.FrameLayout.LayoutParams(-1, -1));
+
+        // Translucent top status-bar gradient scrim so scrolling cards never collide with clock/icons.
+        final View statusScrim = new View(this);
+        statusScrim.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xF20B1416, 0xCC0B1416, 0x000B1416}));
+        android.widget.FrameLayout.LayoutParams scrimLp =
+                new android.widget.FrameLayout.LayoutParams(-1, dp(this, 32));
+        scrimLp.gravity = Gravity.TOP;
+        frame.addView(statusScrim, scrimLp);
+
+        frame.setOnApplyWindowInsetsListener((v, windowInsets) -> {
+            android.graphics.Insets bars = windowInsets.getInsets(
+                    android.view.WindowInsets.Type.systemBars()
+                            | android.view.WindowInsets.Type.displayCutout());
+            android.graphics.Insets ime = windowInsets.getInsets(
+                    android.view.WindowInsets.Type.ime());
+            int bottomInset = Math.max(bars.bottom, ime.bottom);
+            root.setPadding(
+                    bars.left + dp(this, 20),
+                    bars.top + dp(this, 20),
+                    bars.right + dp(this, 20),
+                    bottomInset + dp(this, 36));
+            android.view.ViewGroup.LayoutParams slp = statusScrim.getLayoutParams();
+            int scrimH = bars.top + dp(this, 14);
+            if (slp.height != scrimH) {
+                slp.height = scrimH;
+                statusScrim.setLayoutParams(slp);
+            }
+            return android.view.WindowInsets.CONSUMED;
+        });
         // Pull-to-refresh: the list follows the finger and a circular spinner rides in the gap it
         // opens above the content. The gap is a real layout height, so it needs no inset math.
         final int rest = dp(this, 60);
@@ -134,12 +170,45 @@ final class Dashboard extends UiSection {
         });
         network = new NetworkPanel(this, root, () -> regionIdx >= 0
                 ? Regions.ALL.get(regionIdx).iso.toUpperCase(Locale.ROOT) : null);
+        dataClean = new DataCleanPanel(this, root,
+                () -> regionIdx >= 0 && Targets.current().hooksEnabled(), this::rescan);
         personaPanel = new PersonaPanel(this, this::render, this::uid,
                 () -> playCountry, () -> applyLog, () -> riskModel);
-        activity.setContentView(sv);
+        personaPanel.setWorkbenchActions(new PersonaPanel.WorkbenchActions() {
+            @Override public void openSpacePicker() {
+                spacePicker();
+            }
+
+            @Override public void openRegionPicker() {
+                openRegionPickerSheet();
+            }
+
+            @Override public void selectRegionIso(String iso) {
+                selectRegionByIso(iso);
+            }
+
+            @Override public void reapplyCurrent() {
+                if (regionIdx >= 0) {
+                    maybeApply();
+                }
+            }
+
+            @Override public boolean isApplyBusy() {
+                return applyBusy;
+            }
+
+            @Override public boolean isReverting() {
+                return reverting;
+            }
+        });
+        personaPanel.setAccountSupplier(() -> cachedAccounts, () -> cachedAccountsReadable);
+        activity.setContentView(frame);
+        applySystemBarAppearance(activity.getWindow());
+        frame.requestApplyInsets();
         // One getprop dump (~40ms) instead of one process per row in every render. Startup only:
         // the switch path refreshes this cache on a worker.
         DeviceSignals.warm();
+        TimeZoneIndex.warmAsync();
         // Land on the tab chosen in the previous process. Deliberately not re-applied here:
         // writing SIM/timezone on every launch would be a surprise, so the selection comes back
         // with its recorded "applied" flag and the user can re-run it from the chip.
@@ -151,12 +220,58 @@ final class Dashboard extends UiSection {
         if (regionIdx >= 0 && RootShell.shellReady() && personaPanel != null) {
             personaPanel.publishCurrent();
         }
+        if (RootShell.shellReady()) {
+            checkSelfUpgradeAndSync();
+        }
         // One short entrance so the first paint has a beat instead of snapping in.
         root.setAlpha(0f);
         root.animate().alpha(1f).setDuration(220)
                 .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
         // A locale recreation can occur between worker completion and UI delivery.
         if (!applyBusy && pending != 0) drainPending();
+    }
+
+    void onConfigurationChanged() {
+        applySystemBarAppearance(activity.getWindow());
+        if (scroller != null) {
+            scroller.requestApplyInsets();
+        }
+        requestRender();
+    }
+
+    @SuppressWarnings("deprecation")
+    private void configureEdgeToEdge(android.view.Window window) {
+        if (window == null) {
+            return;
+        }
+        window.setDecorFitsSystemWindows(false);
+        android.view.WindowManager.LayoutParams lp = window.getAttributes();
+        lp.layoutInDisplayCutoutMode =
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        window.setAttributes(lp);
+        window.setStatusBarContrastEnforced(false);
+        window.setNavigationBarContrastEnforced(false);
+        if (Build.VERSION.SDK_INT < 35) {
+            clearLegacySystemBarColors(window);
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private static void clearLegacySystemBarColors(android.view.Window window) {
+        window.setStatusBarColor(Color.TRANSPARENT);
+        window.setNavigationBarColor(Color.TRANSPARENT);
+    }
+
+    private static void applySystemBarAppearance(android.view.Window window) {
+        if (window == null) {
+            return;
+        }
+        android.view.WindowInsetsController controller = window.getInsetsController();
+        if (controller != null) {
+            int lightBars = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                    | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+            controller.setSystemBarsAppearance(0, lightBars);
+        }
     }
 
     /** Opens or closes the pull gap; the spinner fades with it. */
@@ -214,7 +329,13 @@ final class Dashboard extends UiSection {
 
     void onRootPermission(int granted) {
         if (granted == android.content.pm.PackageManager.PERMISSION_GRANTED
-                && regionIdx >= 0) {
+                && RootShell.shellReady() && regionIdx >= 0) {
+            if (applyAwaitingGrant && !regionApplied) {
+                applyAwaitingGrant = false;
+                if (network != null) network.autoProbe();
+                doApply();
+                return;
+            }
             // Make the module config match the restored region without re-running the whole
             // apply (which would rewrite timezone/locale as a side effect of opening the app).
             render();
@@ -222,10 +343,15 @@ final class Dashboard extends UiSection {
         } else {
             requestRender();
         }
+        if (granted == android.content.pm.PackageManager.PERMISSION_GRANTED
+                && RootShell.shellReady()) {
+            checkSelfUpgradeAndSync();
+        }
         // The first scan may have started before the channel answered. Re-run once with the
         // capability known, so privileged target state (notably a package hidden from this
         // app's visibility view) is not left stale until the user pulls to refresh.
         startScan(true);
+        if (dataClean != null) dataClean.refreshAsync();
     }
 
     /**
@@ -240,6 +366,7 @@ final class Dashboard extends UiSection {
         }
         ensurePlay();                // UI thread; callback updates the region card only
         startScan(false);
+        if (dataClean != null) dataClean.refreshAsync();
     }
 
     /**
@@ -271,7 +398,9 @@ final class Dashboard extends UiSection {
                 // the network card has its own shell-side probe. Deliberately not armed.
             } else {
                 DeviceSignals.refresh();
-                Targets.refresh(this);
+                if (!Targets.state(Targets.current()).checked) {
+                    Targets.refresh(this);
+                }
             }
             final com.walter.claudewilson.model.RiskModel[] scannedRisk =
                     new com.walter.claudewilson.model.RiskModel[1];
@@ -324,7 +453,8 @@ final class Dashboard extends UiSection {
                 }
             }
             TargetEvidence evidence = targetEvidence(target, root, fast);
-            TargetPermissionCollector targetFacts = new TargetPermissionCollector();
+            TargetPermissionCollector.CachedFacts targetFacts =
+                    new TargetPermissionCollector().collect(this, target, fast);
             Snapshot snapshot = new AndroidSnapshotCollector().collect(
                     this, target.packageName(), accounts, readable, fast,
                     // In the root channel the target runs the persona payload, which hides the
@@ -333,15 +463,15 @@ final class Dashboard extends UiSection {
                     // every root interaction slower).
                     root,
                     evidence,
-                    targetFacts.permissions(this, target),
-                    targetFacts.location(this, target));
+                    targetFacts.permissions,
+                    targetFacts.location);
             if (target.id().equals(Targets.current().id())) {
                 if ("chatgpt".equals(target.id())) {
                     riskOut[0] = new ChatGptRiskCollector()
-                            .collect(this, target, snapshot, playCountry);
+                            .collect(this, target, snapshot, playCountry, fast);
                 } else if ("claude".equals(target.id())) {
                     riskOut[0] = new ClaudeRiskCollector()
-                            .collect(this, target, snapshot, playCountry);
+                            .collect(this, target, snapshot, playCountry, fast);
                 } else {
                     riskOut[0] = null;
                 }
@@ -383,14 +513,15 @@ final class Dashboard extends UiSection {
      * stores.
      */
     private TargetEvidence targetEvidence(TargetSpec target, boolean root, boolean fast) {
+        int id = RootShell.identity();
         if (fast && cachedEvidence != null && target.id().equals(cachedEvidenceTarget)
-                && cachedEvidenceRoot == root) {
+                && cachedEvidenceIdentity == id) {
             return cachedEvidence;
         }
         TargetEvidence evidence = new TargetEvidenceCollector().collect(this, target, root);
         cachedEvidence = evidence;
         cachedEvidenceTarget = target.id();
-        cachedEvidenceRoot = root;
+        cachedEvidenceIdentity = id;
         return evidence;
     }
 
@@ -410,17 +541,16 @@ final class Dashboard extends UiSection {
         int scrollY = scroller != null ? scroller.getScrollY() : 0;
         root.removeAllViews();
         header();
-        // 两步：先选空间（人设空间），再选地区（地区切换）。其余卡片都是这两步的结果。
+        preflightHolder = new LinearLayout(this);
+        preflightHolder.setOrientation(LinearLayout.VERTICAL);
+        root.addView(preflightHolder);
         personaSection();
-        regionSection();
-        // The network card is the one control-plane surface kept separate on purpose; it sits
-        // between the region controls and data cleanup.
+        renderPreflightInto(preflightHolder);
         if (network != null) network.render();
-        cleanupSection();
         // Both targets render the same item-card surface. The old probe cards described the
         // control plane, not what the target reads.
         riskSection();
-        new AccountLayerPanel(this, root).render(cachedAccounts, cachedAccountsReadable);
+        if (dataClean != null) dataClean.render();
         // A full rebuild detached every child; without this the list snapped to the top after
         // every apply/revert, which reads as a jump and made the next tap land on another card.
         if (scroller != null && scrollY > 0) {
@@ -428,9 +558,283 @@ final class Dashboard extends UiSection {
         }
     }
 
-    /** One item-level surface for every target; the collector decides what the target observes. */
+    void refreshPreflight() {
+        renderPreflightInto(preflightHolder);
+    }
+
+    private void renderPreflightInto(LinearLayout holder) {
+        if (holder == null) return;
+        holder.removeAllViews();
+        TargetSpec target = Targets.current();
+        boolean hasPersona = regionIdx >= 0 && regionIdx < Regions.ALL.size();
+        Regions.R r = hasPersona ? Regions.ALL.get(regionIdx) : null;
+        String regionIso = r != null ? r.iso : "";
+        String regionLabel = r != null ? r.dispName() : "";
+
+        NetworkAssessment.Result net = NetworkPanel.lastResult();
+        boolean egressProbed = net != null && net.egIp != null && !net.egIp.isEmpty();
+        boolean netLeak = net != null && (net.dnsState == 0 || net.v6State == 0
+                || net.udpState == 0 || net.routeState == 0
+                || net.globalProxySet || net.privateDnsBypass);
+
+        com.walter.claudewilson.model.PreflightVerdict.Input input =
+                new com.walter.claudewilson.model.PreflightVerdict.Input(
+                        hasPersona,
+                        regionIso,
+                        personaPanel != null ? personaPanel.mismatches() : 0,
+                        personaPanel != null && personaPanel.restrictedNativeSim(),
+                        isTargetRunningNow(),
+                        egressProbed,
+                        net != null ? net.egCc : "",
+                        net != null && net.egRestricted,
+                        net != null && net.egDatacenter,
+                        netLeak,
+                        playCountry != null && !playCountry.startsWith("err") ? playCountry : "");
+        com.walter.claudewilson.model.PreflightVerdict verdict =
+                com.walter.claudewilson.model.PreflightVerdict.evaluate(input);
+
+        new PreflightBar(this, holder, new PreflightBar.Actions() {
+            @Override public void stopTarget() {
+                forceStopTargetNow(null);
+            }
+
+            @Override public void alignPersona() {
+                if (regionIdx >= 0) maybeApply();
+            }
+
+            @Override public void pickRegion() {
+                openRegionPickerSheet();
+            }
+
+            @Override public void alignEgress() {
+                String cc = NetworkPanel.lastEgressCc();
+                if (cc != null && cc.length() == 2) {
+                    selectRegionByIso(cc);
+                } else {
+                    openRegionPickerSheet();
+                }
+            }
+
+            @Override public void probeNetwork() {
+                if (network != null) network.autoProbe();
+            }
+        }).render(verdict, target.displayName(), regionLabel, applyBusy);
+    }
+
+    private boolean isTargetRunningNow() {
+        com.walter.claudewilson.model.RiskModel m = riskModel;
+        if (m != null) {
+            com.walter.claudewilson.model.CheckItem st = m.item("target.state");
+            if (st != null && "running".equals(st.value())) {
+                return true;
+            }
+        }
+        DataClean.Snapshot clean = dataClean != null ? dataClean.currentSnapshot() : null;
+        return clean != null && clean.targetRunning;
+    }
+
+    private void forceStopTargetNow(final Runnable after) {
+        final TargetSpec target = Targets.current();
+        if (!RootShell.shellReady()
+                || !com.walter.claudewilson.model.ShellQuote.packageName(target.packageName())) {
+            if (after != null) after.run();
+            return;
+        }
+        new Thread(() -> {
+            RootShell.run("am force-stop " + target.packageName(), 128, 8000L);
+            ScreenUpdates.post(screen -> {
+                if (screen.riskModel != null) {
+                    screen.riskModel = screen.riskModel.withValue("target.state", "stopped");
+                }
+                if (after != null) {
+                    after.run();
+                } else {
+                    screen.requestRender();
+                    screen.startScan(true);
+                    if (screen.dataClean != null) screen.dataClean.refreshAsync();
+                }
+            });
+        }, "cw-stop-target").start();
+    }
+
+    /**
+     * Immediately harvests Bodyguard exit-info on foreground resume (bypassing the 20s poll
+     * throttle) so a target locked in {@code system_server} surfaces its Unlock banner at once.
+     */
+    void syncBodyguardOnResume() {
+        if (!RootShell.rootReady()) {
+            return;
+        }
+        final TargetSpec target = Targets.current();
+        final String u = uid();
+        new Thread(() -> {
+            int ingested = BodyguardExitReader.harvest(activity, target, u, true);
+            if (ingested > 0) {
+                ScreenUpdates.post(Dashboard::requestRender);
+            }
+        }, "bg-resume-sync").start();
+    }
+
+    /**
+     * Detects an in-place APK update of ClaudeWilson, ensures hook configs are freshly published,
+     * and offers a one-tap force-stop for any hooked target still running old in-memory module code.
+     */
+    private void checkSelfUpgradeAndSync() {
+        if (upgradeCheckedThisSession || !RootShell.shellReady()) {
+            return;
+        }
+        upgradeCheckedThisSession = true;
+        final String activeBgMode = BodyguardStore.mode(activity, uid());
+        final boolean ipv6Spoof = isIpv6SpoofEnabled();
+        new Thread(() -> {
+            RootActions ra = new RootActions(activity);
+            ra.syncBodyguardGuardMode(activeBgMode);
+            if (!ipv6Spoof) {
+                ra.syncIpv6Enforcement(false);
+            }
+        }, "bg-guard-sync").start();
+        String currentStamp;
+        try {
+            android.content.pm.PackageInfo pi =
+                    activity.getPackageManager().getPackageInfo(activity.getPackageName(), 0);
+            currentStamp = pi.getLongVersionCode() + ":" + pi.lastUpdateTime;
+        } catch (Throwable t) {
+            return;
+        }
+        android.content.SharedPreferences meta =
+                activity.getSharedPreferences("cw_runtime_meta", 0);
+        String prevStamp = meta.getString("last_app_stamp", "");
+        meta.edit().putString("last_app_stamp", currentStamp).apply();
+        if (!com.walter.claudewilson.model.BodyguardPolicy.isAppStampChanged(
+                prevStamp, currentStamp)) {
+            suggestDefaultBrowserScopeIfNeeded(meta);
+            return;
+        }
+        suggestDefaultBrowserScopeIfNeeded(meta);
+        new Thread(() -> {
+            try {
+                Thread.sleep(350L);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            RootActions actions = new RootActions(activity);
+            final List<TargetSpec> stale = new ArrayList<TargetSpec>();
+            for (TargetSpec spec : com.walter.claudewilson.model.TargetRegistry.all()) {
+                if (spec.hooksEnabled() && actions.targetRunning(spec)) {
+                    stale.add(spec);
+                }
+            }
+            if (stale.isEmpty()) {
+                return;
+            }
+            StringBuilder names = new StringBuilder();
+            for (int i = 0; i < stale.size(); i++) {
+                if (i > 0) names.append(" · ");
+                names.append(stale.get(i).displayName());
+            }
+            final String label = names.toString();
+            ScreenUpdates.post(screen -> {
+                if (screen.activity.isFinishing() || screen.activity.isDestroyed()) {
+                    return;
+                }
+                PersonaEditSheets.showConfirmSheet(
+                        screen.activity,
+                        Lang.t("模块已更新", "Module updated", "モジュール更新済"),
+                        label + Lang.t(" 仍在运行旧版规则",
+                                " still running old module hooks",
+                                " は旧ルールで稼働中"),
+                        Lang.t("强停生效", "Force-stop", "強制停止"),
+                        false,
+                        () -> new Thread(() -> {
+                            for (TargetSpec spec : stale) {
+                                if (com.walter.claudewilson.model.ShellQuote
+                                        .packageName(spec.packageName())) {
+                                    RootShell.run("am force-stop " + spec.packageName(),
+                                            128, 8000L);
+                                }
+                            }
+                            ScreenUpdates.post(s -> {
+                                Toast.makeText(s.activity,
+                                        label + Lang.t(" 已停止", " stopped", " 停止済"),
+                                        Toast.LENGTH_SHORT).show();
+                                s.startScan(true);
+                                if (s.dataClean != null) s.dataClean.refreshAsync();
+                            });
+                        }, "cw-stop-stale").start());
+            });
+        }, "cw-upgrade-check").start();
+    }
+
+    /**
+     * On first run (or if the user changes their default browser), dynamically queries this
+     * device's default HTTPS browser and suggests adding it to Vector/LSPosed scope so Chrome
+     * Custom Tabs login &amp; Persona KYC inherit full anti-leak protection without hardcoding.
+     */
+    private void suggestDefaultBrowserScopeIfNeeded(final android.content.SharedPreferences meta) {
+        if (!RootShell.rootReady()) {
+            return;
+        }
+        new Thread(() -> {
+            final String browserPkg = RootActions.resolveDefaultBrowserPackage(activity);
+            if (browserPkg.isEmpty()) {
+                return;
+            }
+            String prompted = meta.getString("scope_browser_prompted", "");
+            if (browserPkg.equals(prompted)) {
+                return;
+            }
+            // Only suggest when Vector/LSPosed is actually present on the device.
+            String hasFramework = RootShell.run(
+                    "if [ -d /data/adb/lspd ] || [ -d /data/adb/modules/zygisk_vector ]; then echo 1; else echo 0; fi",
+                    16, 2000L).trim();
+            if (!"1".equals(hasFramework)) {
+                return;
+            }
+            meta.edit().putString("scope_browser_prompted", browserPkg).apply();
+            String label = browserPkg;
+            try {
+                android.content.pm.PackageManager pm = activity.getPackageManager();
+                android.content.pm.ApplicationInfo ai = pm.getApplicationInfo(browserPkg, 0);
+                CharSequence cs = pm.getApplicationLabel(ai);
+                if (cs != null && cs.length() > 0) {
+                    label = cs.toString() + " (" + browserPkg + ")";
+                }
+            } catch (Throwable ignored) {
+            }
+            final String display = label;
+            ScreenUpdates.post(screen -> {
+                if (screen.activity.isFinishing() || screen.activity.isDestroyed()) {
+                    return;
+                }
+                PersonaEditSheets.showConfirmSheet(
+                        screen.activity,
+                        Lang.t("建议加入作用域", "Add Browser to Scope", "スコープ追加を推奨"),
+                        Lang.t("检测到默认浏览器 ", "Detected default browser ", "既定ブラウザを検出: ")
+                                + display
+                                + Lang.t("\n网页登录与 Persona KYC 会通过它打开，请将其勾选进 Vector/LSPosed 作用域以防 IPv6 与环境泄露。",
+                                "\nOAuth login and Persona KYC open in it; enable it in Vector/LSPosed scope to prevent IPv6 and environment leaks.",
+                                "\nログインや Persona KYC で使用されるため、Vector/LSPosed のスコープに追加してください。"),
+                        Lang.t("复制包名", "Copy package", "パッケージ名をコピー"),
+                        false,
+                        () -> {
+                            android.content.ClipboardManager cm =
+                                    (android.content.ClipboardManager) screen.activity
+                                            .getSystemService(CLIPBOARD_SERVICE);
+                            if (cm != null) {
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText(
+                                        "browser-scope", browserPkg));
+                            }
+                            Toast.makeText(screen.activity,
+                                    Lang.t("已复制: ", "Copied: ") + browserPkg,
+                                    Toast.LENGTH_SHORT).show();
+                        });
+            });
+        }, "cw-browser-scope-hint").start();
+    }
+
+    /** Redesigned 3-segment Target View: Bodyguard, Persona-Match Ledger, and 6-Dim Diagnostics. */
     private void riskSection() {
-        new RiskModelPanel(this, root, new RiskModelPanel.Actions() {
+        new TargetViewPanel(this, root, Targets.current(), uid(), new TargetViewPanel.Actions() {
             @Override public void editTargetCountryHint(String iso) {
                 editTargetCountryHintNow(iso);
             }
@@ -458,6 +862,37 @@ final class Dashboard extends UiSection {
 
             @Override public void applyRegion() {
                 chooseRegionForRisk();
+            }
+
+            @Override public void onBodyguardChanged() {
+                final TargetSpec target = Targets.current();
+                final boolean locked = BodyguardStore.isLocked(Dashboard.this, target.id());
+                final String mode = BodyguardStore.mode(Dashboard.this, uid());
+                if (RootShell.shellReady()) {
+                    new Thread(() -> {
+                        RootActions ra = new RootActions(Dashboard.this);
+                        ra.syncBodyguardGuardMode(mode);
+                        if (RootShell.rootReady()) {
+                            ra.syncBodyguardLock(target, locked);
+                        }
+                    }, "bg-lock-sync").start();
+                }
+                if (personaPanel != null && RootShell.rootReady() && regionIdx >= 0) {
+                    personaPanel.publishCurrent();
+                }
+            }
+
+            @Override public void scrubTargetResidue() {
+                final TargetSpec target = Targets.current();
+                new Thread(() -> {
+                    new RootActions(Dashboard.this).cleanupLegacyTargetFiles(target);
+                    ScreenUpdates.post(screen -> {
+                        Toast.makeText(screen,
+                                Lang.t("已清理目标旧残留", "Target residue scrubbed"),
+                                Toast.LENGTH_SHORT).show();
+                        screen.startScan(false);
+                    });
+                }, "scrub-residue").start();
             }
         }).render(riskModel);
     }
@@ -531,52 +966,31 @@ final class Dashboard extends UiSection {
                     Toast.LENGTH_SHORT).show();
             return;
         }
-        new android.app.AlertDialog.Builder(this)
-                .setTitle(Lang.t("重置本地身份", "reset local identity"))
-                .setMessage(Lang.t("会停止并清除 " + target.displayName()
+        PersonaEditSheets.showConfirmSheet(
+                this,
+                Lang.t("重置本地身份", "Reset Local Identity", "ローカル識別子をリセット"),
+                Lang.t("会停止并清除 " + target.displayName()
                                 + " 的本地数据（登录、会话、缓存）。",
-                        "This stops and clears " + target.displayName()
-                                + " local data (login, conversations, cache)."))
-                .setPositiveButton(Lang.t("重置", "reset"), (dialog, which) -> {
-                    new Thread(() -> {
-                        String result = new TargetIdentityReset().reset(this, target);
-                        ScreenUpdates.post(screen -> {
-                            Toast.makeText(screen, result, Toast.LENGTH_LONG).show();
-                            Audit.record(screen, "identity-reset", result);
-                            if (result.startsWith("ok")) {
-                                screen.riskModel = null;
-                                screen.startScan(false);
-                            }
-                        });
-                    }, "identity-reset").start();
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
+                        "Stops and clears " + target.displayName()
+                                + " local data (login, sessions, cache)."),
+                Lang.t("重置", "Reset", "リセット"),
+                true,
+                () -> new Thread(() -> {
+                    String result = new TargetIdentityReset().reset(this, target);
+                    ScreenUpdates.post(screen -> {
+                        Toast.makeText(screen, result, Toast.LENGTH_LONG).show();
+                        Audit.record(screen, "identity-reset", result);
+                        if (result.startsWith("ok")) {
+                            screen.riskModel = null;
+                            screen.startScan(false);
+                        }
+                    });
+                }, "identity-reset").start());
     }
 
-    /** Reuses the existing region transaction so a single item edit cannot invent a new path. */
+    /** Reuses the dark region picker sheet so a single item edit cannot invent a new path. */
     private void chooseRegionForRisk() {
-        final java.util.List<Regions.R> rows = Regions.ALL;
-        String[] names = new String[rows.size()];
-        for (int i = 0; i < rows.size(); i++) {
-            Regions.R r = rows.get(i);
-            names[i] = r.name + " · " + r.iso.toUpperCase(Locale.ROOT);
-        }
-        new android.app.AlertDialog.Builder(this)
-                .setTitle(Lang.t("地区写入", "region write"))
-                .setItems(names, (dialog, index) -> {
-                    Regions.R r = rows.get(index);
-                    RegionPersona.Snapshot saved = RegionPersona.of(this, uid(), r);
-                    if (index != regionIdx) {
-                        clearSimOverrides();
-                    }
-                    regionIdx = index;
-                    applyZone = saved.zone;
-                    applyLocale = saved.locale;
-                    regionApplied = false;
-                    maybeApply();
-                })
-                .show();
+        openRegionPickerSheet();
     }
 
     /**
@@ -609,9 +1023,7 @@ final class Dashboard extends UiSection {
 
     /** Updates the space chip without touching the rest of the screen. */
     void refreshSpaceLabel() {
-        if (spaceLabel != null) {
-            spaceLabel.setText(SpaceNames.name(this, uid()));
-        }
+        refreshPersona();
     }
 
     /**
@@ -642,65 +1054,246 @@ final class Dashboard extends UiSection {
         pullHolder.addView(spinner);
         root.addView(pullHolder);
 
+        // Row 1: Brand Lockup + Live Channel Pill + Circular Privacy Eye
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = txt("ClaudeWilson", 30, FG);
+        titleRow.setPadding(0, dp(this, 4), 0, dp(this, 10));
+
+        View mark = new View(this);
+        GradientDrawable markBg = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{ACCENT, SAND});
+        markBg.setCornerRadius(dp(this, 3));
+        mark.setBackground(markBg);
+        LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(dp(this, 5), dp(this, 19));
+        mlp.rightMargin = dp(this, 8);
+        mark.setLayoutParams(mlp);
+        titleRow.addView(mark);
+
+        TextView title = txt("ClaudeWilson", 21, FG);
         title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setLetterSpacing(-0.02f);
+        title.setLetterSpacing(-0.025f);
         title.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
         titleRow.addView(title);
+
+        int ch = RootShell.state();
+        String cap;
+        int capFg;
+        int capFill;
+        int capStroke;
+        boolean needGrant = false;
+        if (ch == RootShell.ST_READY && RootShell.identity() == RootShell.ID_ROOT) {
+            cap = "root";
+            capFg = GREEN;
+            capFill = CARD;
+            capStroke = 0x5C34D399;
+        } else if (ch == RootShell.ST_READY && RootShell.identity() == RootShell.ID_SHELL) {
+            cap = "Shizuku";
+            capFg = CYAN;
+            capFill = CARD;
+            capStroke = 0x5C2EC4B6;
+        } else {
+            cap = ShizukuShell.state() == ShizukuShell.ST_NO_PERM
+                    ? Lang.t("Shizuku 未授权", "Shizuku denied")
+                    : Lang.t("未授权", "No root");
+            capFg = AMBER;
+            capFill = 0x22E5A93B;
+            capStroke = 0x73E5A93B;
+            needGrant = true;
+        }
+
+        LinearLayout chanPill = new LinearLayout(this);
+        chanPill.setOrientation(LinearLayout.HORIZONTAL);
+        chanPill.setGravity(Gravity.CENTER_VERTICAL);
+        chanPill.setPadding(dp(this, 10), dp(this, 5), dp(this, 10), dp(this, 5));
+        GradientDrawable cbg = new GradientDrawable();
+        cbg.setColor(capFill);
+        cbg.setCornerRadius(dp(this, 14));
+        cbg.setStroke(dp(this, 1), capStroke);
+        chanPill.setBackground(cbg);
+
+        TextView capTv = txt(cap, 10, capFg);
+        capTv.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        capTv.setSingleLine(true);
+        chanPill.addView(capTv);
+        if (needGrant) {
+            chanPill.setOnClickListener(v -> RootShell.requestPerm(1));
+        }
+        LinearLayout.LayoutParams cplp = new LinearLayout.LayoutParams(-2, -2);
+        cplp.rightMargin = dp(this, 7);
+        chanPill.setLayoutParams(cplp);
+        titleRow.addView(chanPill);
+
         PrivacyEye eye = new PrivacyEye(this);
+        boolean hidden = Privacy.hidden();
+        GradientDrawable eyeBg = new GradientDrawable();
+        eyeBg.setShape(GradientDrawable.OVAL);
+        eyeBg.setColor(hidden ? 0x1F2EC4B6 : CARD);
+        eyeBg.setStroke(dp(this, 1), hidden ? CYAN : STROKE);
+        eye.setBackground(eyeBg);
         eye.setOnClickListener(v -> {
             Privacy.toggle(this);
             render();
         });
-        titleRow.addView(eye, new LinearLayout.LayoutParams(dp(this, 40), dp(this, 40)));
+        titleRow.addView(eye, new LinearLayout.LayoutParams(dp(this, 34), dp(this, 34)));
         root.addView(titleRow);
-        // What this machine currently lets the app do. The coloured dot carries the channel;
-        // the text only says which one it is.
-        int ch = RootShell.state();
-        String cap;
-        int capColor;
-        if (ch == RootShell.ST_READY && RootShell.identity() == RootShell.ID_ROOT) {
-            cap = Lang.t("root", "root", "root");
-            capColor = GREEN;
-        } else if (ch == RootShell.ST_READY && RootShell.identity() == RootShell.ID_SHELL) {
-            cap = Lang.t("Shizuku", "Shizuku", "Shizuku");
-            capColor = CYAN;
-        } else if (ShizukuShell.state() == ShizukuShell.ST_NO_PERM) {
-            cap = Lang.t("Shizuku 未授权 — 在 Shizuku 中允许本应用",
-                    "Shizuku not granted — allow this app",
-                    "Shizuku 未許可 — 本アプリを許可");
-            capColor = AMBER;
-        } else {
-            cap = Lang.t("root / Shizuku 未授权",
-                    "root / Shizuku not granted",
-                    "root / Shizuku 未許可");
-            capColor = AMBER;
-        }
-        LinearLayout capRow = new LinearLayout(this);
-        capRow.setOrientation(LinearLayout.HORIZONTAL);
-        capRow.setGravity(Gravity.CENTER_VERTICAL);
-        capRow.setPadding(0, dp(this, 8), 0, dp(this, 12));
-        View dot = new View(this);
-        GradientDrawable dotBg = new GradientDrawable();
-        dotBg.setShape(GradientDrawable.OVAL);
-        dotBg.setColor(capColor);
-        dot.setBackground(dotBg);
-        LinearLayout.LayoutParams dlp =
-                new LinearLayout.LayoutParams(dp(this, 6), dp(this, 6));
-        dlp.rightMargin = dp(this, 8);
-        dot.setLayoutParams(dlp);
-        capRow.addView(dot);
-        Targets.State headState = Targets.state(Targets.current());
-        String version = headState.checked && headState.installed ? headState.version : "";
-        capRow.addView(txt(version.isEmpty() ? cap : cap + " · v" + version, 11, DIM));
-        root.addView(capRow);
+
+        // Row 2: Full-width Segmented Target Switcher
         targetStrip();
-        // The header intentionally carries no status banner: state is read from the rows, not
-        // from a top-of-screen prompt.
         verdictIndex = root.getChildCount();
+    }
+
+    /** Restraint-first inline pill shown only when the target updated or emitted unseen keys. */
+    private TextView auditSentinelPill(TargetSpec spec, Targets.State state) {
+        boolean updated = state.drift == com.walter.claudewilson.model.AuditedBaselines.Drift.UPDATED;
+        int unseenCount = state.unseenKeys.size();
+        String label;
+        if (updated && unseenCount > 0) {
+            label = Lang.t("待审计 · +" + unseenCount,
+                    "audit · +" + unseenCount,
+                    "要監査 · +" + unseenCount);
+        } else if (updated) {
+            label = Lang.t("待审计", "audit", "要監査");
+        } else {
+            label = Lang.t("新字段 +" + unseenCount,
+                    "+" + unseenCount + " keys",
+                    "新キー +" + unseenCount);
+        }
+        TextView pill = txt(label, 10, AMBER);
+        pill.setTypeface(Typeface.DEFAULT_BOLD);
+        pill.setPadding(dp(this, 8), dp(this, 2), dp(this, 8), dp(this, 2));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xFF2B200B);
+        bg.setCornerRadius(dp(this, 10));
+        bg.setStroke(dp(this, 1), 0x66F59E0B);
+        pill.setBackground(bg);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.leftMargin = dp(this, 8);
+        pill.setLayoutParams(lp);
+        pill.setOnClickListener(v -> showAuditSentinelDialog(spec, state));
+        return pill;
+    }
+
+    private void showAuditSentinelDialog(TargetSpec spec, Targets.State state) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(this, 22), dp(this, 20), dp(this, 22), dp(this, 16));
+
+        TextView title = txt(spec.displayName() + " · "
+                + Lang.t("基线变更", "Baseline drift", "ベースライン差分"), 16, FG);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(title);
+
+        if (state.baseline != null) {
+            String baseVer = "v" + state.baseline.versionName()
+                    + " (" + state.baseline.versionCode() + ")";
+            String currVer = "v" + state.version
+                    + (state.versionCode > 0 ? " (" + state.versionCode + ")" : "");
+            TextView delta = txt(baseVer + "  →  " + currVer, 12, AMBER);
+            delta.setTypeface(Typeface.MONOSPACE);
+            delta.setPadding(0, dp(this, 12), 0, 0);
+            box.addView(delta);
+        }
+
+        if (!state.unseenKeys.isEmpty()) {
+            TextView keyHead = txt(Lang.t("新捕获遥测键", "Unseen telemetry keys", "未登録テレメトリキー"),
+                    11, DIM);
+            keyHead.setPadding(0, dp(this, 12), 0, dp(this, 4));
+            box.addView(keyHead);
+            StringBuilder sb = new StringBuilder();
+            int limit = Math.min(state.unseenKeys.size(), 12);
+            for (int i = 0; i < limit; i++) {
+                if (i > 0) sb.append('\n');
+                sb.append("• ").append(state.unseenKeys.get(i));
+            }
+            if (state.unseenKeys.size() > limit) {
+                sb.append("\n… +").append(state.unseenKeys.size() - limit);
+            }
+            TextView keys = txt(sb.toString(), 11, FG);
+            keys.setTypeface(Typeface.MONOSPACE);
+            box.addView(keys);
+        }
+
+        final String cmd = "python tools/target_watch/watch.py --target " + spec.id();
+        TextView cmdView = txt(cmd, 11, CYAN);
+        cmdView.setTypeface(Typeface.MONOSPACE);
+        cmdView.setPadding(dp(this, 10), dp(this, 8), dp(this, 10), dp(this, 8));
+        GradientDrawable cmdBg = new GradientDrawable();
+        cmdBg.setColor(CARD2);
+        cmdBg.setCornerRadius(dp(this, 10));
+        cmdBg.setStroke(dp(this, 1), STROKE);
+        cmdView.setBackground(cmdBg);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(-1, -2);
+        clp.topMargin = dp(this, 14);
+        cmdView.setLayoutParams(clp);
+        box.addView(cmdView);
+
+        final android.app.Dialog dialog = new android.app.Dialog(this);
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setPadding(0, dp(this, 16), 0, 0);
+
+        TextView close = txt(Lang.t("关闭", "close", "閉じる"), 11, DIM);
+        close.setGravity(Gravity.CENTER);
+        GradientDrawable outline = new GradientDrawable();
+        outline.setColor(CARD2);
+        outline.setCornerRadius(dp(this, 22));
+        outline.setStroke(dp(this, 1), STROKE);
+        close.setBackground(outline);
+        close.setPadding(0, dp(this, 9), 0, dp(this, 9));
+        LinearLayout.LayoutParams cw = new LinearLayout.LayoutParams(0, -2, 1);
+        cw.rightMargin = dp(this, 8);
+        close.setLayoutParams(cw);
+        close.setOnClickListener(v -> dialog.dismiss());
+
+        TextView copy = txt(Lang.t("复制命令", "copy cmd", "コピー"), 11, CYAN);
+        copy.setGravity(Gravity.CENTER);
+        copy.setTypeface(Typeface.DEFAULT_BOLD);
+        GradientDrawable accent = new GradientDrawable();
+        accent.setColor(0xFF0E2938);
+        accent.setCornerRadius(dp(this, 22));
+        accent.setStroke(dp(this, 1), CYAN);
+        copy.setBackground(accent);
+        copy.setPadding(0, dp(this, 9), 0, dp(this, 9));
+        LinearLayout.LayoutParams aw = new LinearLayout.LayoutParams(0, -2, 1);
+        aw.leftMargin = dp(this, 8);
+        copy.setLayoutParams(aw);
+        copy.setOnClickListener(v -> {
+            android.content.ClipboardManager cm =
+                    (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (cm != null) {
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("target-watch", cmd));
+            }
+            Toast.makeText(this, Lang.t("已复制", "copied", "コピーしました"),
+                    Toast.LENGTH_SHORT).show();
+            dialog.dismiss();
+        });
+
+        buttons.addView(close);
+        buttons.addView(copy);
+        box.addView(buttons);
+
+        dialog.setContentView(box);
+        android.view.Window window = dialog.getWindow();
+        if (window != null) {
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(CARD);
+            bg.setCornerRadius(dp(this, 20));
+            bg.setStroke(dp(this, 1), STROKE);
+            window.setBackgroundDrawable(bg);
+            window.setDimAmount(0.6f);
+            window.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        dialog.show();
+        if (window != null) {
+            int width = Math.min(getResources().getDisplayMetrics().widthPixels - dp(this, 56),
+                    dp(this, 420));
+            window.setLayout(width, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
     }
 
     private void headerVerdict() {
@@ -751,86 +1344,112 @@ final class Dashboard extends UiSection {
     }
 
     private void addVerdictBadge(String label, int color) {
-        TextView badge = txt(label, 15, Color.WHITE);
-        badge.setTypeface(Typeface.DEFAULT_BOLD);
-        badge.setGravity(Gravity.CENTER);
-        badge.setPadding(0, dp(this, 10), 0, dp(this, 10));
-        GradientDrawable g = new GradientDrawable();
-        g.setColor(color);
-        g.setCornerRadius(dp(this, 12));
-        badge.setBackground(g);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        // The tabs now sit directly above the badge; keep a little breathing room.
-        lp.topMargin = dp(this, 12);
-        lp.bottomMargin = dp(this, 10);
-        badge.setLayoutParams(lp);
-        if (verdictIndex >= 0 && verdictIndex <= root.getChildCount()) {
-            root.addView(badge, verdictIndex);
-        } else {
-            root.addView(badge);
-        }
+        // Alignment state is now shown directly inside the unified Persona workbench card.
     }
 
     private String regionQuery = "";
 
     /**
-     * Target selection and one line of state. Targets are peers: switching only changes what is
-     * inspected; it never launches the app and never rewrites the system persona.
+     * Full-width segmented Target Switcher matching Target View's segmented control DNA:
+     * displays each target's name, compact version, audit drift pill, and active-region lock.
      */
     private void targetStrip() {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, 0, 0, 0);
-        for (com.walter.claudewilson.model.TargetSpec spec
-                : com.walter.claudewilson.model.TargetRegistry.all()) {
-            boolean selected = spec == Targets.current();
-            TextView chip = txt(spec.displayName(), 12, selected ? FG : DIM);
-            chip.setTypeface(selected ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
-            chip.setGravity(Gravity.CENTER);
-            GradientDrawable bg = new GradientDrawable();
-            bg.setColor(selected ? CARD2 : CARD);
-            bg.setCornerRadius(dp(this, 18));
-            bg.setStroke(dp(this, selected ? 1 : 1), selected ? CYAN : STROKE);
-            chip.setBackground(bg);
-            chip.setPadding(dp(this, 14), dp(this, 6), dp(this, 14), dp(this, 6));
-            chip.setTag("target:" + spec.id());
-            chip.setAlpha(regionIdx >= 0 && !selected ? 0.35f : 1f);
-            chip.setOnClickListener(v -> switchTarget(spec));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
-            lp.rightMargin = dp(this, 8);
-            chip.setLayoutParams(lp);
-            row.addView(chip);
-        }
-        root.addView(row);
+        LinearLayout tray = new LinearLayout(this);
+        tray.setOrientation(LinearLayout.HORIZONTAL);
+        tray.setPadding(dp(this, 4), dp(this, 4), dp(this, 4), dp(this, 4));
+        GradientDrawable trayBg = new GradientDrawable();
+        trayBg.setColor(CARD);
+        trayBg.setCornerRadius(dp(this, 15));
+        trayBg.setStroke(dp(this, 1), STROKE);
+        tray.setBackground(trayBg);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, -2);
+        tlp.bottomMargin = dp(this, 4);
+        tray.setLayoutParams(tlp);
 
+        java.util.List<com.walter.claudewilson.model.TargetSpec> all =
+                com.walter.claudewilson.model.TargetRegistry.all();
+        for (int i = 0; i < all.size(); i++) {
+            final com.walter.claudewilson.model.TargetSpec spec = all.get(i);
+            boolean selected = spec == Targets.current();
+            boolean locked = !selected && regionIdx >= 0;
+            Targets.State st = Targets.state(spec);
+
+            LinearLayout seg = new LinearLayout(this);
+            seg.setOrientation(LinearLayout.HORIZONTAL);
+            seg.setGravity(Gravity.CENTER_VERTICAL);
+            seg.setPadding(dp(this, 10), dp(this, 8), dp(this, 10), dp(this, 8));
+            GradientDrawable segBg = new GradientDrawable();
+            segBg.setColor(selected ? CARD2 : 0x00000000);
+            segBg.setCornerRadius(dp(this, 11));
+            segBg.setStroke(dp(this, 1), selected ? 0x6B2EC4B6 : 0x00000000);
+            seg.setBackground(segBg);
+            seg.setAlpha(locked ? 0.42f : 1f);
+            seg.setTag("target:" + spec.id());
+            LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(0, -2, 1f);
+            if (i > 0) slp.leftMargin = dp(this, 4);
+            seg.setLayoutParams(slp);
+
+            LinearLayout left = new LinearLayout(this);
+            left.setOrientation(LinearLayout.HORIZONTAL);
+            left.setGravity(Gravity.CENTER_VERTICAL);
+            left.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+
+            TextView name = txt(spec.displayName(), 12, selected ? FG : DIM);
+            name.setTypeface(Typeface.DEFAULT_BOLD);
+            name.setSingleLine(true);
+            left.addView(name);
+
+            String ver = st.checked && st.installed && !st.version.isEmpty()
+                    ? compactVersion(st.version) : "";
+            if (!ver.isEmpty()) {
+                TextView vtv = txt("v" + ver, 9, selected ? DIM : MUTE);
+                vtv.setTypeface(Typeface.MONOSPACE);
+                vtv.setSingleLine(true);
+                vtv.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(-2, -2);
+                vlp.leftMargin = dp(this, 5);
+                vtv.setLayoutParams(vlp);
+                left.addView(vtv);
+            }
+            seg.addView(left);
+
+            if (locked) {
+                TextView lock = txt("🔒", 9.5f, MUTE);
+                seg.addView(lock);
+            } else if (st.checked && st.needsAudit()) {
+                TextView audit = txt(Lang.t("待审计", "audit", "要監査"), 8.5f, AMBER);
+                audit.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+                audit.setPadding(dp(this, 6), dp(this, 1), dp(this, 6), dp(this, 1));
+                GradientDrawable abg = new GradientDrawable();
+                abg.setColor(0x24E5A93B);
+                abg.setCornerRadius(dp(this, 9));
+                abg.setStroke(dp(this, 1), 0x73E5A93B);
+                audit.setBackground(abg);
+                audit.setOnClickListener(v -> showAuditSentinelDialog(spec, st));
+                LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-2, -2);
+                alp.leftMargin = dp(this, 4);
+                audit.setLayoutParams(alp);
+                seg.addView(audit);
+            }
+
+            seg.setOnClickListener(v -> switchTarget(spec));
+            tray.addView(seg);
+        }
+        root.addView(tray);
     }
 
-    /** Shows the one allowed hint in the state line, then restores it without shifting layout. */
+    private static String compactVersion(String v) {
+        if (v == null) return "";
+        String t = v.trim();
+        int dash = t.indexOf('-');
+        if (dash > 0) t = t.substring(0, dash);
+        return t.length() > 11 ? t.substring(0, 11) : t;
+    }
+
     private void showTargetLockHint() {
-        targetHintUntil = android.os.SystemClock.elapsedRealtime() + 1800L;
-        if (targetStatus != null) {
-            if (targetStatusRow != null) {
-                targetStatusRow.setVisibility(View.VISIBLE);
-            }
-            targetStatus.setVisibility(View.VISIBLE);
-            targetStatus.setText(Lang.t("请关闭地区切换", "close region switch"));
-            targetStatus.setTextColor(AMBER);
-            final TextView view = targetStatus;
-            view.postDelayed(() -> {
-                if (view == targetStatus
-                        && android.os.SystemClock.elapsedRealtime() >= targetHintUntil) {
-                    String normal = targetStateText(Targets.state(Targets.current()));
-                    view.setText(normal);
-                    view.setTextColor(MUTE);
-                    boolean empty = normal.isEmpty();
-                    view.setVisibility(empty ? View.GONE : View.VISIBLE);
-                    if (targetStatusRow != null) {
-                        targetStatusRow.setVisibility(empty ? View.GONE : View.VISIBLE);
-                    }
-                }
-            }, 1800L);
-        }
+        Toast.makeText(this, Lang.t("请先关闭当前地区伪装",
+                "Close active region first", "先に地域切替を解除"),
+                Toast.LENGTH_SHORT).show();
     }
 
     private static String targetStateText(Targets.State state) {
@@ -871,9 +1490,10 @@ final class Dashboard extends UiSection {
         riskModel = null;
         cachedEvidence = null;
         cachedEvidenceTarget = "";
-        cachedEvidenceRoot = false;
+        cachedEvidenceIdentity = RootShell.ID_UNKNOWN;
         render();
         startScan(false);
+        if (dataClean != null) dataClean.refreshAsync();
     }
 
     /** Persona-layer settings, including the opt-in "rewrite CSC after apply" flag. */
@@ -886,401 +1506,481 @@ final class Dashboard extends UiSection {
         if (personaPanel != null) personaPanel.rewriteCscIfMismatched();
     }
 
-    /**
-     * One action, no options: wipe the on-device data the target app and the browser report from.
-     * Kept next to the region card because it is the "start over" counterpart of a region switch.
-     */
-    private void cleanupSection() {
-        section(Lang.t("数据清理", "Data cleanup", "データ整理"));
-        final boolean readOnly = !Targets.current().localIdentityWrites();
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(this, 14), dp(this, 12), dp(this, 14), dp(this, 12));
-        card.setBackground(UiSection.card(this));
-        TextView name = txt(Lang.t("清除数据", "clear data", "データを消去"), 13, FG);
-        name.setTypeface(Typeface.DEFAULT_BOLD);
-        TextView sub = txt(clearTargetsLabel(), 10, DIM);
-        sub.setTypeface(Typeface.MONOSPACE);
-        sub.setPadding(0, dp(this, 3), 0, 0);
-        card.addView(name);
-        card.addView(sub);
-        if (readOnly) {
-            card.setAlpha(0.45f);
-            card.setOnClickListener(v -> Toast.makeText(this,
-                    Lang.t("此目标目前只读诊断，不做数据写入",
-                            "this target is diagnostic-only", "この対象は読取専用"),
-                    Toast.LENGTH_SHORT).show());
+    private void selectRegionByIso(String iso) {
+        if (iso == null || iso.isEmpty()) {
+            selectRegionIndex(-1);
+            return;
+        }
+        for (int i = 0; i < Regions.ALL.size(); i++) {
+            if (Regions.ALL.get(i).iso.equalsIgnoreCase(iso)) {
+                selectRegionIndex(i);
+                return;
+            }
+        }
+    }
+
+    private void selectRegionIndex(int idx) {
+        selectRegionIndex(idx, false);
+    }
+
+    private void selectRegionIndex(final int idx, boolean bypassLiveGuard) {
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (applyBusy || (!bypassLiveGuard && now - lastRegionTap < 500L)) {
+            return;
+        }
+        if (idx < 0 && regionIdx < 0) {
+            if (RootShell.state() == RootShell.ST_READY && EnvSession.hasBaseline(this)) {
+                pending = 0;
+                doRevert();
+            }
+            return;
+        }
+        if (!Targets.current().environmentWrites()) {
+            Toast.makeText(this, Lang.t("此目标目前只读诊断；切到可注入目标再改环境",
+                    "this target is diagnostic-only; switch to a hookable target",
+                    "この対象は読取専用です。注入可能な対象で環境を変更してください"),
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!bypassLiveGuard && idx != regionIdx && isTargetRunningNow()) {
+            String nextLbl = idx >= 0 && idx < Regions.ALL.size()
+                    ? Regions.ALL.get(idx).dispName()
+                    : Lang.t("原机态", "Native", "端末のまま");
+            PersonaEditSheets.showTargetRunningGuard(
+                    this, Targets.current().displayName(), nextLbl,
+                    () -> forceStopTargetNow(() -> selectRegionIndex(idx, true)),
+                    () -> selectRegionIndex(idx, true));
+            return;
+        }
+        lastRegionTap = now;
+        if (idx < 0 && RootShell.state() != RootShell.ST_READY
+                && (regionApplied || EnvSession.hasBaseline(this))) {
+            RootShell.requestPerm(1);
+            Toast.makeText(this, Lang.t("需要 root 或 Shizuku 才能复位环境",
+                    "needs root or Shizuku to restore the environment",
+                    "環境の復元には root または Shizuku が必要"), Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (idx != regionIdx) {
+            clearSimOverrides();
+        }
+        regionQuery = "";
+        regionIdx = idx;
+        if (idx >= 0) {
+            RegionPersona.Snapshot saved = RegionPersona.of(this, uid(), Regions.ALL.get(idx));
+            applyZone = saved.zone;
+            applyLocale = saved.locale;
+            regionApplied = false;
+            persistSelection();
+            if (network != null && !network.hasRecentProbe(60000L)) {
+                network.autoProbe();
+            }
+            maybeApply();
+            requestRender();
         } else {
-            card.setOnClickListener(v -> confirmClear());
-        }
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.bottomMargin = dp(this, 12);
-        card.setLayoutParams(lp);
-        root.addView(card);
-    }
-
-    /** "Claude · Chrome": what the dialog will clear, in the order it clears them. */
-    private String clearTargetsLabel() {
-        return labelOf(Targets.current().packageName());
-    }
-
-    private String labelOf(String pkg) {
-        try {
-            android.content.pm.PackageManager pm = getPackageManager();
-            CharSequence l = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0));
-            return l == null || l.length() == 0 ? pkg : l.toString();
-        } catch (Throwable t) {
-            return pkg;
+            applyAwaitingGrant = false;
+            applyZone = null;
+            applyLocale = null;
+            regionApplied = false;
+            persistSelection();
+            pending = 0;
+            if (RootShell.state() == RootShell.ST_READY) {
+                doRevert();
+            }
+            requestRender();
         }
     }
 
-    /**
-     * Dark confirmation built from the same primitives as the cards. The platform dialog renders
-     * with its own light chrome and a paragraph of text, which is not the surface this app draws.
-     */
-    private void confirmClear() {
-        // Scan the candidate locations first: the dialog then lists what is actually there
-        // instead of a fixed, guessed list.
-        new Thread(() -> {
-            final String pkg = Targets.current().packageName();
-            String scan = RootShell.runCapture(DataClean.probe(pkg));
-            final java.util.List<String> hits = DataClean.hits(scan);
-            if (hits.isEmpty()) hits.add("/data/data/" + pkg);
-            ScreenUpdates.post(screen -> screen.showClearDialog(hits));
-        }).start();
-    }
-
-    /** Dialog over the scanned paths; only what the probe found is listed. */
-    private void showClearDialog(java.util.List<String> hits) {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(this, 22), dp(this, 20), dp(this, 22), dp(this, 14));
-
-        TextView title = txt(Lang.t("清除数据", "clear data", "データを消去"), 16, FG);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        box.addView(title);
-
-        for (int i = 0; i < hits.size(); i++) {
-            TextView name = txt(hits.get(i), 11, FG);
-            name.setTypeface(Typeface.DEFAULT_BOLD);
-            name.setPadding(0, i == 0 ? dp(this, 14) : dp(this, 10), 0, 0);
-            box.addView(name);
-        }
-
-        LinearLayout buttons = new LinearLayout(this);
-        buttons.setOrientation(LinearLayout.HORIZONTAL);
-        buttons.setPadding(0, dp(this, 18), 0, 0);
-
+    /** Bottom-sheet region picker with live search, exit-IP matching, and restricted-region guard. */
+    private void openRegionPickerSheet() {
         final android.app.Dialog dialog = new android.app.Dialog(this);
         dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
 
-        TextView cancel = txt(Lang.t("取消", "cancel", "キャンセル"), 11, DIM);
-        cancel.setGravity(Gravity.CENTER);
-        GradientDrawable outline = new GradientDrawable();
-        outline.setColor(CARD2);
-        outline.setCornerRadius(dp(this, 22));
-        outline.setStroke(dp(this, 1), STROKE);
-        cancel.setBackground(outline);
-        cancel.setPadding(0, dp(this, 9), 0, dp(this, 9));
-        LinearLayout.LayoutParams cw = new LinearLayout.LayoutParams(0, -2, 1);
-        cw.rightMargin = dp(this, 8);
-        cancel.setLayoutParams(cw);
-        cancel.setOnClickListener(v -> dialog.dismiss());
+        LinearLayout sheet = new LinearLayout(this);
+        sheet.setOrientation(LinearLayout.VERTICAL);
+        sheet.setPadding(dp(this, 16), dp(this, 12), dp(this, 16), dp(this, 16));
 
-        TextView clear = txt(Lang.t("清除", "clear", "消去"), 11, RED);
-        clear.setGravity(Gravity.CENTER);
-        clear.setTypeface(Typeface.DEFAULT_BOLD);
-        GradientDrawable danger = new GradientDrawable();
-        danger.setColor(0xFF3A1218);
-        danger.setCornerRadius(dp(this, 22));
-        danger.setStroke(dp(this, 1), RED);
-        clear.setBackground(danger);
-        clear.setPadding(0, dp(this, 9), 0, dp(this, 9));
-        LinearLayout.LayoutParams dw = new LinearLayout.LayoutParams(0, -2, 1);
-        dw.leftMargin = dp(this, 8);
-        clear.setLayoutParams(dw);
-        clear.setOnClickListener(v -> {
-            dialog.dismiss();
-            if (RootShell.state() != RootShell.ST_READY) {
-                Toast.makeText(this, Lang.t("需要 root 或 Shizuku",
-                        "needs root or Shizuku", "root または Shizuku が必要"),
-                        Toast.LENGTH_SHORT).show();
-                return;
-            }
-            runClear();
-        });
+        // Handle bar
+        View handle = new View(this);
+        GradientDrawable hbg = new GradientDrawable();
+        hbg.setColor(0xFF2B454B);
+        hbg.setCornerRadius(dp(this, 2));
+        handle.setBackground(hbg);
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(dp(this, 36), dp(this, 4));
+        hlp.gravity = Gravity.CENTER_HORIZONTAL;
+        hlp.bottomMargin = dp(this, 12);
+        handle.setLayoutParams(hlp);
+        sheet.addView(handle);
 
-        buttons.addView(cancel);
-        buttons.addView(clear);
-        box.addView(buttons);
+        // Header
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = txt(Lang.t("切换地区", "Region", "地域切替"), 14, FG);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+        head.addView(title);
+        TextView close = txt("✕", 13, DIM);
+        close.setPadding(dp(this, 8), dp(this, 2), dp(this, 4), dp(this, 2));
+        close.setOnClickListener(v -> dialog.dismiss());
+        head.addView(close);
+        sheet.addView(head);
 
-        dialog.setContentView(box);
-        android.view.Window window = dialog.getWindow();
-        if (window != null) {
-            GradientDrawable bg = new GradientDrawable();
-            bg.setColor(CARD);
-            bg.setCornerRadius(dp(this, 20));
-            bg.setStroke(dp(this, 1), STROKE);
-            window.setBackgroundDrawable(bg);
-            window.setDimAmount(0.6f);
-            window.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
-        }
-        dialog.show();
-        if (window != null) {
-            int width = getResources().getDisplayMetrics().widthPixels - dp(this, 56);
-            window.setLayout(width, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
-        }
-    }
-
-    private void runClear() {
-        final String script = DataClean.command(Targets.current().packageName(), null);
-        new Thread(() -> {
-            String out = RootShell.runCapture(script);
-            boolean ok = DataClean.ok(out);
-            ScreenUpdates.post(screen -> {
-                Toast.makeText(screen, ok
-                                ? Lang.t("已清除", "cleared", "消去しました")
-                                : Lang.t("部分未清除，请查看审计", "partly failed, see audit",
-                                        "一部失敗（監査を参照）"),
-                        Toast.LENGTH_LONG).show();
-                Audit.record(screen, "clean", (ok ? "ok " : "failed ") + out);
-                screen.rescan();
-            });
-        }).start();
-    }
-    private void regionSection() {
-        section(Lang.t("地区切换", "Region switch", "地域切替"));
+        // Search box
         android.widget.EditText search = new android.widget.EditText(this);
-        search.setHint(Lang.t("搜索国家/iso/本地名…", "search country / iso / native…",
-                "国名・iso・現地名検索…"));
-        search.setHintTextColor(0x66DDE4EE);
+        search.setHint(Lang.t("搜索国家 / ISO / 运营商…", "Search country / ISO / carrier…"));
+        search.setHintTextColor(MUTE);
         search.setTextColor(FG);
         search.setTextSize(12);
         search.setSingleLine(true);
-        // The row is filtered by regionQuery, not by the EditText widget. A rebuild without
-        // restoring the text produced an empty search box over a still-filtered list.
-        search.setText(regionQuery);
-        search.setSelection(search.getText().length());
-        search.setPadding(dp(this, 10), dp(this, 4), dp(this, 10), dp(this, 4));
-        GradientDrawable sg = new GradientDrawable();
-        sg.setColor(CARD); sg.setCornerRadius(dp(this, 8));
-        sg.setStroke(dp(this, 1), 0x22FFFFFF);
-        search.setBackground(sg);
+        search.setPadding(dp(this, 11), dp(this, 8), dp(this, 11), dp(this, 8));
+        GradientDrawable sbg = new GradientDrawable();
+        sbg.setColor(CARD2);
+        sbg.setCornerRadius(dp(this, 11));
+        sbg.setStroke(dp(this, 1), STROKE);
+        search.setBackground(sbg);
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, -2);
-        slp.bottomMargin = dp(this, 6);
+        slp.topMargin = dp(this, 10);
+        slp.bottomMargin = dp(this, 10);
         search.setLayoutParams(slp);
+        sheet.addView(search);
+
+        final android.widget.ListView listView = new android.widget.ListView(this);
+        listView.setVerticalScrollBarEnabled(false);
+        listView.setDivider(null);
+        listView.setDividerHeight(dp(this, 6));
+        listView.setSelector(android.R.color.transparent);
+        int maxListH = (int) (getResources().getDisplayMetrics().heightPixels * 0.56f);
+        listView.setLayoutParams(new LinearLayout.LayoutParams(-1, maxListH));
+        sheet.addView(listView);
+
+        final com.walter.claudewilson.model.Tables tables =
+                com.walter.claudewilson.platform.TablesLoader.load(getApplicationContext());
+        final String targetId = Targets.current().id();
+        final String egressCc = NetworkPanel.lastEgressCc();
+
+        final java.util.List<Integer> baseOrder = new java.util.ArrayList<Integer>(Regions.ALL.size());
+        if (regionIdx >= 0) baseOrder.add(regionIdx);
+        int egressIdx = -1;
+        if (egressCc != null && egressCc.length() == 2) {
+            for (int i = 0; i < Regions.ALL.size(); i++) {
+                if (i != regionIdx && Regions.ALL.get(i).iso.equalsIgnoreCase(egressCc)) {
+                    egressIdx = i;
+                    baseOrder.add(i);
+                    break;
+                }
+            }
+        }
+        for (int i = 0; i < Regions.ALL.size(); i++) {
+            if (i != regionIdx && i != egressIdx) {
+                baseOrder.add(i);
+            }
+        }
+        final java.util.List<Integer> filtered = new java.util.ArrayList<Integer>();
+        final android.widget.BaseAdapter adapter = new android.widget.BaseAdapter() {
+            @Override public int getCount() { return filtered.size(); }
+            @Override public Object getItem(int pos) { return filtered.get(pos); }
+            @Override public long getItemId(int pos) { return filtered.get(pos); }
+            @Override public View getView(int pos, View convertView, android.view.ViewGroup parent) {
+                int idx = filtered.get(pos);
+                if (idx < 0) {
+                    return regionSheetRow(dialog, -1, "✕",
+                            Lang.t("原机态", "Native", "端末のまま"),
+                            Lang.t("恢复系统基线", "Restore device baseline"),
+                            regionIdx < 0, false, false, null);
+                }
+                Regions.R r = Regions.ALL.get(idx);
+                String[] net = PersonaPanel.netFor(r.iso);
+                String carrier = net != null ? net[2] : "";
+                String loc0 = r.locales.length > 0 ? r.locales[0] : "";
+                String sub = loc0 + " · " + r.dispTz() + (carrier.isEmpty() ? "" : " · " + carrier);
+                boolean banned = com.walter.claudewilson.model.SimPolicy.isRestrictedIso(tables, r.iso, targetId);
+                boolean isEgress = egressCc != null && r.iso.equalsIgnoreCase(egressCc);
+                return regionSheetRow(dialog, idx, Regions.flagOf(r.iso),
+                        r.dispName(), sub, idx == regionIdx, banned, isEgress,
+                        r.iso.toUpperCase(Locale.ROOT));
+            }
+        };
+        listView.setAdapter(adapter);
+
+        final Runnable populate = () -> {
+            filtered.clear();
+            String q = search.getText() == null ? "" : search.getText().toString().trim().toLowerCase(Locale.ROOT);
+            if (q.isEmpty() || "off".contains(q) || "native".contains(q)
+                    || "原机".contains(q) || "关".contains(q)) {
+                filtered.add(-1);
+            }
+            for (int idx : baseOrder) {
+                Regions.R r = Regions.ALL.get(idx);
+                if (!q.isEmpty()) {
+                    String[] net = PersonaPanel.netFor(r.iso);
+                    String carrier = net != null ? net[2] : "";
+                    if (!r.matches(q) && !carrier.toLowerCase(Locale.ROOT).contains(q)) {
+                        continue;
+                    }
+                }
+                filtered.add(idx);
+            }
+            adapter.notifyDataSetChanged();
+        };
+        populate.run();
         search.addTextChangedListener(new android.text.TextWatcher() {
             public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
             public void onTextChanged(CharSequence s, int a, int b, int c) {}
-            public void afterTextChanged(android.text.Editable e) {
-                regionQuery = e == null ? "" : e.toString();
-                buildFlagRow();
-            }
+            public void afterTextChanged(android.text.Editable e) { populate.run(); }
         });
-        root.addView(search);
-        HorizontalScrollView hs = new HorizontalScrollView(this);
-        hs.setHorizontalScrollBarEnabled(false);
-        flagRow = new LinearLayout(this);
-        flagRow.setOrientation(LinearLayout.HORIZONTAL);
-        hs.addView(flagRow);
-        root.addView(hs);
-        buildFlagRow();
+
+        dialog.setContentView(sheet);
+        android.view.Window w = dialog.getWindow();
+        if (w != null) {
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(CARD);
+            bg.setCornerRadii(new float[]{dp(this, 22), dp(this, 22), dp(this, 22), dp(this, 22), 0, 0, 0, 0});
+            bg.setStroke(dp(this, 1), 0xFF2B454B);
+            w.setBackgroundDrawable(bg);
+            w.setDimAmount(0.68f);
+            w.setGravity(Gravity.BOTTOM);
+            w.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        dialog.show();
     }
 
-    private void buildFlagRow() {
-        flagRow.removeAllViews();
-        flagRow.addView(flagItem(-1, "✕", Lang.t("关", "off", "解除")));
-        // The selected region stays next to "off" so it is always the first actionable item.
-        if (regionIdx >= 0 && Regions.ALL.get(regionIdx).matches(regionQuery)) {
-            Regions.R selected = Regions.ALL.get(regionIdx);
-            flagRow.addView(flagItem(regionIdx, Regions.flagOf(selected.iso),
-                    selected.dispName()));
-        }
-        for (int i = 0; i < Regions.ALL.size(); i++) {
-            if (i == regionIdx) continue;
-            Regions.R r = Regions.ALL.get(i);
-            if (!r.matches(regionQuery)) continue;
-            flagRow.addView(flagItem(i, Regions.flagOf(r.iso), r.dispName()));
-        }
-    }
+    private View regionSheetRow(final android.app.Dialog dialog, final int idx, String flag,
+                                String name, String sub, boolean selected,
+                                final boolean banned, boolean isEgress, String isoCode) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(this, 11), dp(this, 9), dp(this, 11), dp(this, 9));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(selected ? 0x152EC4B6 : CARD2);
+        bg.setCornerRadius(dp(this, 12));
+        bg.setStroke(dp(this, 1), selected ? CYAN : STROKE);
+        row.setBackground(bg);
+        if (banned) row.setAlpha(0.60f);
+        row.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, -2));
 
-    private View flagItem(final int idx, String glyph, String name) {
-        boolean sel = idx == regionIdx;
-        LinearLayout item = new LinearLayout(this);
-        item.setOrientation(LinearLayout.VERTICAL);
-        item.setGravity(Gravity.CENTER_HORIZONTAL);
-        item.setPadding(dp(this, 5), 0, dp(this, 5), 0);
-        item.setTag("region:" + idx);
+        TextView fl = txt(flag, 18, FG);
+        fl.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(dp(this, 28), -2);
+        flp.rightMargin = dp(this, 9);
+        fl.setLayoutParams(flp);
+        row.addView(fl);
 
-        TextView flag = txt(glyph, 23, sel ? FG : DIM);
-        flag.setGravity(Gravity.CENTER);
-        GradientDrawable cir = new GradientDrawable();
-        cir.setShape(GradientDrawable.OVAL);
-        cir.setColor(CARD);
-        cir.setStroke(dp(this, sel ? 2 : 1), sel ? CYAN : 0x33FFFFFF);
-        flag.setBackground(cir);
-        flag.setLayoutParams(new LinearLayout.LayoutParams(dp(this, 52), dp(this, 52)));
-        item.addView(flag);
-
-        TextView nm = txt(name, 10, sel ? CYAN : DIM);
-        nm.setGravity(Gravity.CENTER_HORIZONTAL);
+        LinearLayout mid = new LinearLayout(this);
+        mid.setOrientation(LinearLayout.VERTICAL);
+        mid.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView nm = txt(name, 12, FG);
+        nm.setTypeface(Typeface.DEFAULT_BOLD);
         nm.setSingleLine(true);
-        nm.setPadding(0, dp(this, 3), 0, 0);
-        item.addView(nm);
+        mid.addView(nm);
+        TextView sb = txt(sub, 9.5f, DIM);
+        sb.setTypeface(Typeface.MONOSPACE);
+        sb.setSingleLine(true);
+        sb.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        mid.addView(sb);
+        row.addView(mid);
 
-        item.setOnClickListener(v -> {
-            // One tap at a time. A second tap while an apply/revert is running used to queue
-            // another transaction, which could publish a region the user never waited for.
-            long now = android.os.SystemClock.elapsedRealtime();
-            if (applyBusy || now - lastRegionTap < 500L) {
+        if (banned) {
+            row.addView(sheetTag(Lang.t("禁区", "Banned"), RED, 0x24E55353, 0x66E55353));
+        } else if (isEgress) {
+            row.addView(sheetTag(Lang.t("出口匹配", "Exit"), CYAN, 0x1F2EC4B6, 0x592EC4B6));
+        } else if (isoCode != null) {
+            row.addView(sheetTag(isoCode, DIM, CARD, STROKE));
+        }
+
+        row.setOnClickListener(v -> {
+            if (banned) {
+                Toast.makeText(this, Lang.t("目标禁区地区 · 已拦截",
+                        "Restricted target region · blocked"), Toast.LENGTH_SHORT).show();
                 return;
             }
-            // Re-tapping "off" while already off is the repair path for a stale snapshot:
-            // a previous revert may have reported success before every field was restored.
-            if (idx < 0 && regionIdx < 0) {
-                if (RootShell.state() == RootShell.ST_READY && EnvSession.hasBaseline(this)) {
-                    pending = 0;
-                    doRevert();
-                }
-                return;
-            }
-            lastRegionTap = now;
-            if (!Targets.current().environmentWrites()) {
-                Toast.makeText(this, Lang.t("此目标目前只读诊断；切到可注入目标再改环境",
-                        "this target is diagnostic-only; switch to a hookable target",
-                        "この対象は読取専用です。注入可能な対象で環境を変更してください"),
-                        Toast.LENGTH_SHORT).show();
-                return;
-            }
-            if (idx != regionIdx) {
-                // Region default wins on a real region change. A same-region re-tap keeps the
-                // user's explicit MCC/MNC and carrier edits.
-                clearSimOverrides();
-            }
-            // A chosen region is the end of this search: rebuild the row unfiltered.
-            regionQuery = "";
-            regionIdx = idx;
-            if (idx >= 0) {
-                RegionPersona.Snapshot saved = RegionPersona.of(this, uid(), Regions.ALL.get(idx));
-                applyZone = saved.zone; applyLocale = saved.locale;
-                regionApplied = false;
-                persistSelection();
-                // One render: it moves the selection ring and the status line. The old path
-                // rebuilt only the persona card, so the header stayed one frame behind.
-                requestRender();
-                maybeApply();
-            } else {
-                applyZone = null;
-                applyLocale = null;
-                regionApplied = false;
-                persistSelection();
-                pending = 0;
-                requestRender();
-                if (RootShell.state() == RootShell.ST_READY) {
-                    doRevert();
-                } else {
-                    // Without the shell channel nothing can be undone, and silence reads as a bug.
-                    Toast.makeText(this, Lang.t("需要 root 或 Shizuku 才能复位环境",
-                            "needs root or Shizuku to restore the environment",
-                            "環境の復元には root または Shizuku が必要"), Toast.LENGTH_LONG).show();
-                }
-            }
+            dialog.dismiss();
+            selectRegionIndex(idx);
         });
-        return item;
+        return row;
+    }
+
+    private TextView sheetTag(String text, int fg, int fill, int stroke) {
+        TextView t = txt(text, 9, fg);
+        t.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        t.setSingleLine(true);
+        t.setPadding(dp(this, 7), dp(this, 2), dp(this, 7), dp(this, 2));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(fill);
+        bg.setCornerRadius(dp(this, 10));
+        bg.setStroke(dp(this, 1), stroke);
+        t.setBackground(bg);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.leftMargin = dp(this, 8);
+        t.setLayoutParams(lp);
+        return t;
     }
 
     /**
-     * A real region change drops the per-space MCC/MNC and carrier overrides, so the new region's
-     * defaults take effect. Re-tapping the same region keeps them.
+     * A real region change drops every country-bound per-space override (SIM, GPS pin/altitude,
+     * custom Wi-Fi SSID/BSSID, country hint, CSC) so values from the previous country never leak
+     * into the next one. Re-tapping the same region keeps them.
      */
     private void clearSimOverrides() {
         String user = uid();
         if (!com.walter.claudewilson.model.ShellQuote.numeric(user)) {
             return;
         }
-        PersonaState ps = new PersonaState(this);
-        ps.clearOp(user);
-        ps.clearCarrier(user);
+        new PersonaState(this).clearRegionBoundOverrides(user);
     }
 
     /** A manual timezone pick becomes the region's expected value too. */
     void selectionZone(String zone) {
-        if (regionIdx < 0 || zone == null || zone.isEmpty()) {
-            return;
-        }
-        applyZone = zone;
-        RegionPersona.putZone(this, uid(), Regions.ALL.get(regionIdx), zone);
-        EnvSession.setActiveZone(this, zone);
+        selectionLocaleAndZone(null, zone, true);
     }
 
-    private void persistSelection() {
+    /** Atomically updates region locale & timezone (and optionally aligns coordinates to zone). */
+    void selectionLocaleAndZone(String locale, String zone, boolean syncLocation) {
         if (regionIdx < 0) {
-            EnvSession.clearActive(this);
             return;
         }
         Regions.R r = Regions.ALL.get(regionIdx);
-        EnvSession.setActive(this, r.iso, applyZone, applyLocale, regionApplied);
+        String user = uid();
+        if (locale != null && !locale.isEmpty()) {
+            applyLocale = locale;
+        }
+        if (zone != null && !zone.isEmpty()) {
+            applyZone = zone;
+        }
+        RegionPersona.putLocaleAndZone(this, user, r, applyLocale, applyZone, syncLocation);
+        if (syncLocation && zone != null && !zone.isEmpty()) {
+            new PersonaState(this).clearLocationPoint(user);
+        }
+        EnvSession.setActive(this, user, r.iso, applyZone, applyLocale, regionApplied);
+        if (personaPanel != null) {
+            personaPanel.bindSpaceRegion(user, r.iso, applyZone, applyLocale);
+        }
+    }
+
+    private void persistSelection() {
+        String user = uid();
+        if (regionIdx < 0) {
+            EnvSession.clearActive(this);
+            if (personaPanel != null) personaPanel.clearSpaceRegion(user);
+            return;
+        }
+        Regions.R r = Regions.ALL.get(regionIdx);
+        EnvSession.setActive(this, user, r.iso, applyZone, applyLocale, regionApplied);
+        if (personaPanel != null) personaPanel.bindSpaceRegion(user, r.iso, applyZone, applyLocale);
     }
 
     /** Explicit active-state write; the apply worker must not read mutable UI fields. */
-    private void persistSelectionFor(String iso, String zone, String locale, boolean applied) {
+    private void persistSelectionFor(String user, String iso, String zone, String locale,
+                                     boolean applied) {
         if (iso == null) {
             EnvSession.clearActive(this);
+            if (personaPanel != null) personaPanel.clearSpaceRegion(user);
         } else {
-            EnvSession.setActive(this, iso, zone, locale, applied);
+            EnvSession.setActive(this, user, iso, zone, locale, applied);
+            if (personaPanel != null) personaPanel.bindSpaceRegion(user, iso, zone, locale);
         }
     }
 
     /**
-     * Restore the tab from the previous run. The zone/locale are restored instead of re-picked,
-     * so the expected values do not shuffle between launches; a selection whose region no longer
-     * exists in the table is dropped.
+     * Restore the last selected space and its bound region from the previous run. The zone,
+     * locale, and custom coordinates are restored instead of re-picked or overwritten.
      */
     private void restoreSelection() {
-        String iso = EnvSession.activeIso(this);
-        if (iso == null) {
+        if ((selectedUser == null || selectedUser.isEmpty()) && personaPanel != null) {
+            String savedUser = personaPanel.lastSelectedUser();
+            if (savedUser != null && com.walter.claudewilson.model.ShellQuote.numeric(savedUser)) {
+                selectedUser = savedUser;
+            }
+        }
+        String user = uid();
+        String iso = personaPanel != null ? personaPanel.spaceRegionIso(user) : null;
+        String zone = personaPanel != null ? personaPanel.spaceRegionZone(user) : null;
+        String locale = personaPanel != null ? personaPanel.spaceRegionLocale(user) : null;
+        if (personaPanel != null) {
+            String legacyIso = EnvSession.activeIso(this);
+            if (com.walter.claudewilson.model.PersonaSalt.shouldMigrateLegacyRegion(
+                    personaPanel.legacyRegionMigrated(),
+                    personaPanel.hasAnyBoundRegion(),
+                    iso, legacyIso)) {
+                iso = legacyIso;
+                zone = EnvSession.activeZone(this);
+                locale = EnvSession.activeLocale(this);
+                personaPanel.bindSpaceRegion(user, iso, zone, locale);
+            }
+            if (!personaPanel.legacyRegionMigrated()) {
+                personaPanel.markLegacyRegionMigrated();
+            }
+        }
+        applyRestoredRegion(user, iso, zone, locale);
+    }
+
+    private void applyRestoredRegion(String user, String iso, String zone, String locale) {
+        if (iso == null || iso.isEmpty()) {
+            regionIdx = -1;
+            applyZone = null;
+            applyLocale = null;
+            regionApplied = false;
             return;
         }
         int idx = -1;
         for (int i = 0; i < Regions.ALL.size(); i++) {
-            if (iso.equals(Regions.ALL.get(i).iso)) { idx = i; break; }
+            if (iso.equalsIgnoreCase(Regions.ALL.get(i).iso)) {
+                idx = i;
+                break;
+            }
         }
         if (idx < 0) {
             EnvSession.clearActive(this);
+            if (personaPanel != null) personaPanel.clearSpaceRegion(user);
+            regionIdx = -1;
+            applyZone = null;
+            applyLocale = null;
+            regionApplied = false;
             return;
         }
-        RegionPersona.Snapshot saved = RegionPersona.of(this, uid(), Regions.ALL.get(idx));
+        Regions.R r = Regions.ALL.get(idx);
+        RegionPersona.Snapshot saved = RegionPersona.of(this, user, r);
         regionIdx = idx;
-        String zone = EnvSession.activeZone(this);
-        String locale = EnvSession.activeLocale(this);
-        if (zone != null) {
-            RegionPersona.putZone(this, uid(), Regions.ALL.get(idx), zone);
+        boolean zoneDiff = com.walter.claudewilson.model.PersonaSalt
+                .shouldUpdateRestoredZone(zone, saved.zone);
+        boolean locDiff = locale != null && !locale.isEmpty() && !locale.equals(saved.locale);
+        if (zoneDiff || locDiff) {
+            // Never reset saved custom coordinates during a state restore (syncLocation = false).
+            RegionPersona.putLocaleAndZone(this, user, r,
+                    locDiff ? locale : null, zoneDiff ? zone : null, false);
         }
-        if (locale != null) {
-            RegionPersona.putLocale(this, uid(), Regions.ALL.get(idx), locale);
-        }
-        applyZone = zone == null ? saved.zone : zone;
-        applyLocale = locale == null ? saved.locale : locale;
-        regionApplied = EnvSession.activeApplied(this)
-                && !EnvSession.PARTIAL.equals(EnvSession.phase(this));
+        applyZone = (zone == null || zone.isEmpty()) ? saved.zone : zone;
+        applyLocale = (locale == null || locale.isEmpty()) ? saved.locale : locale;
+        regionApplied = com.walter.claudewilson.model.PersonaSalt.isRegionAppliedForSpace(
+                user, iso,
+                EnvSession.activeUser(this),
+                EnvSession.activeIso(this),
+                EnvSession.activeApplied(this),
+                EnvSession.PARTIAL.equals(EnvSession.phase(this)));
     }
 
     // ---------- root apply layer ----------
 
     private void maybeApply() {
         int st = RootShell.state();
-        if (st == RootShell.ST_READY) { doApply(); return; }
-        if (st == RootShell.ST_NO_PERM) {
+        if (st == RootShell.ST_READY) {
+            applyAwaitingGrant = false;
+            doApply();
+            return;
+        }
+        applyAwaitingGrant = true;
+        if (st == RootShell.ST_NO_PERM || ShizukuShell.state() == ShizukuShell.ST_NO_PERM) {
             applyLog = ShizukuShell.state() == ShizukuShell.ST_NO_PERM
                     ? Lang.t("在 Shizuku 中允许本应用", "allow this app in Shizuku",
                             "Shizuku で本アプリを許可")
                     : Lang.t("等待 root 或 Shizuku 授权", "awaiting root or Shizuku",
                             "root または Shizuku の許可待ち");
         } else {
-            applyLog = Lang.t("KernelSU：手动开启 ClaudeWilson；或启动 Shizuku",
-                    "KernelSU: enable ClaudeWilson; or start Shizuku",
-                    "KernelSU：ClaudeWilson を有効化、または Shizuku を起動");
+            applyLog = Lang.t("请先开启 root 或启动 Shizuku",
+                    "enable root or start Shizuku first",
+                    "先に root を有効化するか Shizuku を起動");
         }
         RootShell.requestPerm(1);
         requestRender();
@@ -1325,30 +2025,84 @@ final class Dashboard extends UiSection {
         Regions.R r = Regions.ALL.get(regionIdx);
         PersonaState ps = new PersonaState(activity);
         String user = uid();
+        com.walter.claudewilson.model.SimPolicy.Decision simDec = RegionActions.evaluateRealSim(
+                this, Targets.current().id(), ps.keepRealSim(user));
+        if (simDec.preserveRealSim) {
+            return new TelephonyReconciler.Desired(simDec.resolvedOp, simDec.resolvedIso,
+                    simDec.resolvedCarrier, regionActions.activeSub(), true);
+        }
         return new TelephonyReconciler.Desired(personaOp(ps, user, r), r.iso,
-                personaCarrier(ps, user, r), regionActions.activeSub());
+                personaCarrier(ps, user, r), regionActions.activeSub(), false);
+    }
+
+    private static volatile long lastIpv6SyncMs;
+
+    boolean isIpv6SpoofEnabled() {
+        return new PersonaState(activity).ipv6SpoofEnabled();
+    }
+
+    /**
+     * Toggles persistent device-wide IPv6 mode ({@code false} = kernel IPv6 disabled across all
+     * interfaces + watchdog + drop-only hooks; {@code true} = kernel IPv6 restored + regional
+     * spoofed IPv6 prefix). Syncs kernel, re-publishes persona payload, and repaints UI.
+     */
+    void setIpv6SpoofEnabled(final boolean enabled) {
+        new PersonaState(activity).putIpv6SpoofEnabled(enabled);
+        lastIpv6SyncMs = android.os.SystemClock.elapsedRealtime();
+        new Thread(() -> new RootActions(activity).syncIpv6Enforcement(enabled),
+                "ipv6-policy-sync").start();
+        if (personaPanel != null && regionIdx >= 0 && Targets.current().hooksEnabled()) {
+            if (enabled) {
+                personaPanel.publishRotated();
+            } else {
+                personaPanel.publishCurrent();
+            }
+        }
+        requestRender();
+    }
+
+    /** Re-enforces kernel IPv6 suppression after radio, airplane-mode, or network changes. */
+    void ensureIpv6OffEnforced(boolean force) {
+        if (!RootShell.rootReady() || isIpv6SpoofEnabled()) {
+            return;
+        }
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (!force && (now - lastIpv6SyncMs) < 1500L) {
+            return;
+        }
+        lastIpv6SyncMs = now;
+        new Thread(() -> new RootActions(activity).syncIpv6Enforcement(false),
+                "ipv6-guard-enforce").start();
+    }
+
+    void networkChanged() {
+        ensureIpv6OffEnforced(false);
     }
 
     void radioChanged() {
         telephony.request(false);
+        ensureIpv6OffEnforced(false);
     }
 
     void radioChanged(boolean force) {
         telephony.request(force);
+        ensureIpv6OffEnforced(force);
     }
 
     private void doApply() {
         if (!Targets.current().environmentWrites()) return;
         if (applyZone == null || applyLocale == null || regionIdx < 0) return;
         if (applyBusy) { pending = 1; return; }
+        reverting = false;
         applyBusy = true; applyLog = Lang.t("应用中…", "applying…", "適用中…");
         regionApplied = false;
+        requestRender();
         final String z = applyZone, l = applyLocale;
         final int appliedIdx = regionIdx;
         final Regions.R r = Regions.ALL.get(regionIdx);
         final String user = uid();
         final TargetSpec applyTarget = Targets.current();
-        final long session = EnvSession.startApply(this, r.iso, z, l);
+        final long session = EnvSession.startApply(this, user, r.iso, z, l);
         persistSelection();
         // Everything below is worker work. The old form resolved the subscription, read three
         // properties, resolved the browser package and refreshed the persona card on the UI
@@ -1357,7 +2111,9 @@ final class Dashboard extends UiSection {
             final long t0 = android.os.SystemClock.elapsedRealtime();
             PhoneReloadWatcher.awaitQuiet(3000);
             final long t1 = android.os.SystemClock.elapsedRealtime();
-            DeviceSignals.refresh();
+            if (DeviceSignals.getprop("persist.sys.timezone") == null) {
+                DeviceSignals.refresh();
+            }
             final long t2 = android.os.SystemClock.elapsedRealtime();
             regionActions.saveOriginal(user, applyTarget);
             if (!EnvSession.isCurrent(this, session)) {
@@ -1366,8 +2122,13 @@ final class Dashboard extends UiSection {
                 return;
             }
             final PersonaState ps = new PersonaState(activity);
-            final String carrier = personaCarrier(ps, user, r);
-            final String op = personaOp(ps, user, r);
+            final com.walter.claudewilson.model.SimPolicy.Decision simDec =
+                    RegionActions.evaluateRealSim(this, applyTarget.id(), ps.keepRealSim(user));
+            final boolean preserveSim = simDec.preserveRealSim;
+            final String effIso = preserveSim ? simDec.resolvedIso : r.iso;
+            final String carrier = preserveSim ? simDec.resolvedCarrier
+                    : personaCarrier(ps, user, r);
+            final String op = preserveSim ? simDec.resolvedOp : personaOp(ps, user, r);
             final int sub = regionActions.activeSub();
             // The physical card's identity, captured before this apply overwrote anything. Some
             // telephony stacks resolve the APN from these values, so the apply restores them
@@ -1378,7 +2139,8 @@ final class Dashboard extends UiSection {
             final String browser = RootShell.browserPackage(activity);
             // The device row this space simulates, resolved before the shell starts so the build
             // identity and the injected payload come from the same 14 fields.
-            final String[] device = personaPanel != null ? personaPanel.deviceValues(user) : null;
+            final String[] device = (!ps.deviceHookOnly(user) && personaPanel != null)
+                    ? personaPanel.deviceValues(user) : null;
             final String buildSig = device == null ? "" : SystemBuild.signature(device);
             final boolean buildChanged = device != null && !buildSig.isEmpty()
                     && !buildSig.equals(applyPrefs().getString("applied_build_sig", ""));
@@ -1386,8 +2148,9 @@ final class Dashboard extends UiSection {
             final Outcome outcome;
             synchronized (txLock) {
                 outcome = RootShell.applyRegion(
-                        z, l, r.iso, carrier, sub, op, browser,
-                        applyTarget.packageName(), device, buildChanged, realSim);
+                        z, l, effIso, carrier, sub, op, browser,
+                        applyTarget.packageName(), device, buildChanged, realSim, user,
+                        preserveSim);
             }
             final long t4 = android.os.SystemClock.elapsedRealtime();
             Diag.info("perf", "apply await=" + (t1 - t0) + " props=" + (t2 - t1)
@@ -1399,21 +2162,29 @@ final class Dashboard extends UiSection {
                 return;
             }
             EnvSession.finishApply(this, session, outcome.ok());
-            if (outcome.ok() && buildChanged) {
+            if (outcome.ok()) {
+                EnvSession.setSimSpoofed(this, !preserveSim);
+            }
+            if (outcome.ok() && buildChanged && !outcome.skippedSteps().contains("build-props")) {
                 applyPrefs().edit().putString("applied_build_sig", buildSig).apply();
             }
+            // Refresh the property cache on this worker before unblocking the UI so the first
+            // post-apply render immediately sees the new timezone & SIM props without flashing drift.
+            DeviceSignals.refresh();
             applyBusy = false;
-            if (regionIdx == appliedIdx && z.equals(applyZone)) {
+            if (user.equals(uid()) && regionIdx == appliedIdx && z.equals(applyZone)) {
                 regionApplied = outcome.ok();
-                persistSelectionFor(r.iso, z, l, outcome.ok());
+                persistSelectionFor(user, r.iso, z, l, outcome.ok());
             }
-            final boolean autoWanted = "chatgpt".equals(applyTarget.id());
+            final boolean autoWanted = "chatgpt".equals(applyTarget.id()) && RootShell.rootReady();
             final boolean autoStopped = autoWanted
                     && !new RootActions(this).targetRunning(applyTarget);
             final String autoResult;
-            if (outcome.ok() && regionApplied && autoWanted) {
+            if (outcome.ok() && regionApplied && "chatgpt".equals(applyTarget.id())) {
                 new PersonaState(activity).clearCountryHint(user);
-                if (autoStopped) {
+                if (!RootShell.rootReady()) {
+                    autoResult = "";
+                } else if (autoStopped) {
                     autoResult = new TargetDataEdit().setCountryHint(this, applyTarget, r.iso);
                 } else {
                     applyPrefs().edit().putString("auto_pending_iso", r.iso).apply();
@@ -1422,10 +2193,6 @@ final class Dashboard extends UiSection {
             } else {
                 autoResult = "";
             }
-            if (outcome.ok() && regionApplied) {
-                // The target's language is observed and overridden by the hook; no app-local
-                // locale configuration is written here.
-            }
             if (autoResult.startsWith("ok")) {
                 int at = autoResult.indexOf("backup ");
                 if (at >= 0) {
@@ -1433,12 +2200,23 @@ final class Dashboard extends UiSection {
                             autoResult.substring(at + 7).trim()).apply();
                 }
             }
+            String autoNote = autoResult.startsWith("ok")
+                    ? " · auto " + r.iso
+                    : autoResult.startsWith("pending") ? " · auto pending" : "";
+            applyLog = "→ " + z + " · " + l + "  " + outcome.summary()
+                    + localeSummary(outcome.output())
+                    + autoNote
+                    + RootShell.suHint(outcome.output());
+            Audit.record(this, "apply", z + " " + l + " " + r.iso + " sub=" + sub
+                    + " -> " + outcome.summary()
+                    + " " + com.walter.claudewilson.model.ShellQuote
+                            .suRcTag(outcome.output()));
             if (outcome.ok() && regionApplied) {
                 // Telephony commonly rewrites the active slot just after the shell returns. Start
                 // a bounded read/write convergence window now that the desired region is visible.
                 telephony.request(true);
-                // The Vector module reads this on the next target process start. Rendering first
-                // makes the payload reflect the just-applied region instead of the previous tab.
+                // Publish the rotated payload before triggering drainPending -> fast scan so the
+                // fast scan reads the newly written payload JSON instead of racing with it.
                 ScreenUpdates.post(screen -> {
                     if (autoWanted && screen.riskModel != null) {
                         if (autoResult.startsWith("ok")) {
@@ -1453,34 +2231,31 @@ final class Dashboard extends UiSection {
                         }
                     }
                     if (screen.personaPanel != null) {
-                        screen.render();
-                        screen.personaPanel.publishCurrent();
+                        screen.refreshPersona();
+                        screen.personaPanel.publishRotated(screen::drainPending);
+                    } else {
+                        screen.drainPending();
                     }
-                    // The item model also contains system fields just written by this apply.
-                    screen.startScan(false);
                 });
+            } else {
+                if (!outcome.ok()) {
+                    // Reset failed selection before rolling back so revertNow persists Native state
+                    // instead of leaving the UI stuck on the region that failed to apply.
+                    if (user.equals(uid()) && regionIdx == appliedIdx) {
+                        regionIdx = -1;
+                        applyZone = null;
+                        applyLocale = null;
+                        regionApplied = false;
+                        persistSelectionFor(user, null, null, null, false);
+                    }
+                    boolean reverted = revertNow(user);
+                    applyLog += reverted
+                            ? Lang.t(" · 失败，已自动回滚", " · failed, rolled back")
+                            : Lang.t(" · 失败，回滚未完成，备份保留",
+                                    " · failed, rollback incomplete, backup kept");
+                }
+                ScreenUpdates.post(Dashboard::drainPending);
             }
-            String autoNote = autoResult.startsWith("ok")
-                    ? " · auto " + r.iso
-                    : autoResult.startsWith("pending") ? " · auto pending" : "";
-            applyLog = "→ " + z + " · " + l + "  " + outcome.summary()
-                    + localeSummary(outcome.output())
-                    + autoNote
-                    + RootShell.suHint(outcome.output());
-            Audit.record(this, "apply", z + " " + l + " " + r.iso + " sub=" + sub
-                    + " -> " + outcome.summary()
-                    + " " + com.walter.claudewilson.model.ShellQuote
-                            .suRcTag(outcome.output()));
-            if (!outcome.ok()) {
-                // Automatic rollback is the user's choice, but it stays on this worker: the UI
-                // is not held on "applying…" while the phone process is restarted again.
-                boolean reverted = revertNow(uid());
-                applyLog += reverted
-                        ? Lang.t(" · 失败，已自动回滚", " · failed, rolled back")
-                        : Lang.t(" · 失败，回滚未完成，备份保留",
-                                " · failed, rollback incomplete, backup kept");
-            }
-            ScreenUpdates.post(Dashboard::drainPending);
         }).start();
     }
 
@@ -1508,13 +2283,17 @@ final class Dashboard extends UiSection {
     private void doRevert() {
         if (!Targets.current().environmentWrites()) return;
         if (applyBusy) { pending = 2; return; }
+        reverting = true;
         applyBusy = true; applyLog = Lang.t("复位中…", "reverting…", "復元中…");
+        requestRender();
         final String userId = uid();
         new Thread(() -> {
             long t0 = android.os.SystemClock.elapsedRealtime();
             revertNow(userId);
+            DeviceSignals.refresh();
             Diag.info("perf", "revert ms="
                     + (android.os.SystemClock.elapsedRealtime() - t0));
+            reverting = false;
             applyBusy = false;
             ScreenUpdates.post(Dashboard::drainPending);
         }).start();
@@ -1535,10 +2314,15 @@ final class Dashboard extends UiSection {
         synchronized (txLock) {
             result = restore.execute(restore.appliedUser());
         }
+        if (result.needsPhoneReload) {
+            // Shell channel cannot rewrite gsm.sim.operator.* directly; reload com.android.phone
+            // first so verifyBaseline below inspects the refreshed card state, not stale props.
+            PhoneReloadWatcher.runSync();
+        }
         if (result.ok && !verifyBaseline(baseline)) {
             result = new RegionActions.Result(
                     result.output + "\nVERIFY:" + verifyBaselineDetail(baseline),
-                    result.aidRestored, false, result.needsPhoneReload);
+                    result.aidRestored, false, false);
         }
         applyLog = Lang.t("复位 ", "reverted ", "復元 ") + result.output
                 + (result.aidRestored ? " aid↩" : "")
@@ -1557,7 +2341,7 @@ final class Dashboard extends UiSection {
             new PersonaState(this).clearInjected(userId);
             if (personaPanel != null) personaPanel.clearPublishedConfig();
             String backup = applyPrefs().getString("auto_backup", null);
-            if (backup != null) {
+            if (backup != null && RootShell.rootReady()) {
                 String restored = new TargetDataEdit().restorePath(this, Targets.current(),
                         backup);
                 applyLog += restored.startsWith("ok")
@@ -1572,11 +2356,6 @@ final class Dashboard extends UiSection {
             restore.clearBackup();
         } else {
             applyLog += Lang.t(" · 备份保留", " · backup kept");
-        }
-        if (result.needsPhoneReload) {
-            // The shell channel cannot rewrite gsm.sim.operator.*. Let the phone process restart
-            // itself in the background; this call returns immediately.
-            PhoneReloadWatcher.start();
         }
         EnvSession.finishRevert(this, session, result.ok);
         return result.ok;
@@ -1665,50 +2444,13 @@ final class Dashboard extends UiSection {
 
     private void personaSection() {
         section(Lang.t("人设空间", "Persona space", "ペルソナ"));
+        if (selectedUser == null || selectedUser.isEmpty()) selectedUser = currentUserId();
+        SpaceNames.ensureLoaded();
+
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(this, 14), dp(this, 12), dp(this, 14), dp(this, 12));
         card.setBackground(UiSection.card(this));
-
-        // 第一步：选空间。用户只需挑一个空间；四个系统操作降级成同一行末尾的次要按钮。
-        // 设计里的形态：一行「空间 [id] ▾」。六个操作全在 ▾ 里，界面上不再并排铺开。
-        LinearLayout r1 = new LinearLayout(this);
-        r1.setOrientation(LinearLayout.HORIZONTAL);
-        TextView step1 = chip(Lang.t("空间", "space", "空間"), CYAN);
-        if (selectedUser == null || selectedUser.isEmpty()) selectedUser = currentUserId();
-        spaceLabel = chip(SpaceNames.name(this, selectedUser), FG);
-        spaceLabel.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1));
-        spaceLabel.setOnClickListener(v -> spacePicker());
-        SpaceNames.ensureLoaded();
-        TextView bMenu = chip("▾", CYAN);
-        bMenu.setOnClickListener(v -> {
-            android.widget.PopupMenu m = new android.widget.PopupMenu(this, v);
-            String[] labels = {
-                    Lang.t("＋ 新建空间（克隆资料）", "＋ new space (clone profile)",
-                            "＋ 新規（クローン）"),
-                    Lang.t("用户列表", "user list", "一覧"),
-                    Lang.t("推装到该空间", "push into space", "この空間へ導入"),
-                    Lang.t("清空目标数据", "wipe target data", "対象データ消去"),
-                    Lang.t("启动该空间", "start space", "この空間を起動"),
-                    Lang.t("换一个 AID", "new AID", "AID 変更")};
-            for (int i = 0; i < labels.length; i++) {
-                // Grey, but deliberately still enabled: a disabled MenuItem never delivers a
-                // click, and the requirement is a "coming soon" toast even under root/Shizuku.
-                android.text.SpannableString gray =
-                        new android.text.SpannableString(labels[i]);
-                gray.setSpan(new android.text.style.ForegroundColorSpan(MUTE), 0,
-                        gray.length(), 0);
-                m.getMenu().add(0, i, i, gray);
-            }
-            m.setOnMenuItemClickListener(item -> {
-                Toast.makeText(this, "coming soon", Toast.LENGTH_SHORT).show();
-                return true;
-            });
-            m.show();
-        });
-        r1.addView(step1); r1.addView(spaceLabel);
-        r1.addView(bMenu);
-        card.addView(r1);
 
         personaFields = new LinearLayout(this);
         personaFields.setOrientation(LinearLayout.VERTICAL);
@@ -1717,12 +2459,6 @@ final class Dashboard extends UiSection {
 
         personaLog = txt(personaOut, 10, DIM);
         personaLog.setTypeface(Typeface.MONOSPACE);
-        personaLog.setPadding(0, dp(this, 6), 0, 0);
-        // Space-operation output stays internal; the card shows state, not a log.
-        TextView bSim = chip(Lang.t("SIM 管理器", "SIM manager", "SIM マネージャー"), FG);
-        bSim.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
-        bSim.setOnClickListener(v -> new Thread(RootActions::openSimManager).start());
-        card.addView(bSim);
 
         LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(-1, -2);
         clp.bottomMargin = dp(this, 12);
@@ -1734,11 +2470,12 @@ final class Dashboard extends UiSection {
         return selectedUser == null ? currentUserId() : selectedUser;
     }
 
-    /**
-     * Space selection by name, not by id: the menu lists what `pm list users` reported
-     * ("机主", "Secure Folder", ws-* clones), while the numeric id stays an internal detail
-     * the shell commands still need.
-     */
+    static String activeUserId() {
+        String u = selectedUser;
+        return u == null || u.isEmpty() ? currentUserId() : u;
+    }
+
+    /** Bottom-sheet space picker showing real Android users with each space's bound SpaceProfile region. */
     private void spacePicker() {
         Map<String, String> known = SpaceNames.all();
         List<String> ids = new ArrayList<String>(known.keySet());
@@ -1746,20 +2483,134 @@ final class Dashboard extends UiSection {
         if (!ids.contains(self)) {
             ids.add(0, self);
         }
-        String current = uid();
+        final String current = uid();
         if (!ids.contains(current)) {
             ids.add(current);
         }
-        android.widget.PopupMenu menu = new android.widget.PopupMenu(this, spaceLabel);
-        for (int i = 0; i < ids.size(); i++) {
-            menu.getMenu().add(0, i, i, SpaceNames.name(this, ids.get(i)));
+
+        final android.app.Dialog dialog = new android.app.Dialog(this);
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+
+        LinearLayout sheet = new LinearLayout(this);
+        sheet.setOrientation(LinearLayout.VERTICAL);
+        sheet.setPadding(dp(this, 16), dp(this, 12), dp(this, 16), dp(this, 16));
+
+        View handle = new View(this);
+        GradientDrawable hbg = new GradientDrawable();
+        hbg.setColor(0xFF2B454B);
+        hbg.setCornerRadius(dp(this, 2));
+        handle.setBackground(hbg);
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(dp(this, 36), dp(this, 4));
+        hlp.gravity = Gravity.CENTER_HORIZONTAL;
+        hlp.bottomMargin = dp(this, 12);
+        handle.setLayoutParams(hlp);
+        sheet.addView(handle);
+
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = txt(Lang.t("切换空间", "Space", "空間切替"), 14, FG);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+        head.addView(title);
+        TextView close = txt("✕", 13, DIM);
+        close.setPadding(dp(this, 8), dp(this, 2), dp(this, 4), dp(this, 2));
+        close.setOnClickListener(v -> dialog.dismiss());
+        head.addView(close);
+        sheet.addView(head);
+
+        LinearLayout listBox = new LinearLayout(this);
+        listBox.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(-1, -2);
+        llp.topMargin = dp(this, 10);
+        listBox.setLayoutParams(llp);
+
+        for (final String id : ids) {
+            boolean sel = id.equals(current);
+            String boundIso = personaPanel != null ? personaPanel.spaceRegionIso(id) : null;
+            Regions.R reg = null;
+            if (boundIso != null) {
+                for (Regions.R item : Regions.ALL) {
+                    if (item.iso.equalsIgnoreCase(boundIso)) {
+                        reg = item;
+                        break;
+                    }
+                }
+            }
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(this, 11), dp(this, 10), dp(this, 11), dp(this, 10));
+            GradientDrawable rbg = new GradientDrawable();
+            rbg.setColor(sel ? 0x152EC4B6 : CARD2);
+            rbg.setCornerRadius(dp(this, 12));
+            rbg.setStroke(dp(this, 1), sel ? CYAN : STROKE);
+            row.setBackground(rbg);
+            LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2);
+            rlp.bottomMargin = dp(this, 6);
+            row.setLayoutParams(rlp);
+
+            TextView fl = txt(reg != null ? Regions.flagOf(reg.iso) : "✕", 18, reg != null ? FG : DIM);
+            fl.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(dp(this, 28), -2);
+            flp.rightMargin = dp(this, 9);
+            fl.setLayoutParams(flp);
+            row.addView(fl);
+
+            LinearLayout mid = new LinearLayout(this);
+            mid.setOrientation(LinearLayout.VERTICAL);
+            mid.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+            TextView nm = txt(SpaceNames.name(this, id) + "  u" + id, 12, FG);
+            nm.setTypeface(Typeface.DEFAULT_BOLD);
+            nm.setSingleLine(true);
+            mid.addView(nm);
+            String sub = reg != null ? reg.dispName() : Lang.t("原机态", "Native", "端末のまま");
+            TextView sb = txt(sub, 9.5f, DIM);
+            sb.setTypeface(Typeface.MONOSPACE);
+            sb.setSingleLine(true);
+            mid.addView(sb);
+            row.addView(mid);
+
+            row.addView(sheetTag(
+                    reg != null ? reg.iso.toUpperCase(Locale.ROOT) : "OFF",
+                    reg != null ? CYAN : DIM,
+                    reg != null ? 0x1F2EC4B6 : CARD,
+                    reg != null ? 0x592EC4B6 : STROKE));
+
+            row.setOnClickListener(v -> {
+                dialog.dismiss();
+                if (!id.equals(uid())) {
+                    selectedUser = id;
+                    if (personaPanel != null) {
+                        personaPanel.putLastSelectedUser(id);
+                    }
+                    String iso = personaPanel != null ? personaPanel.spaceRegionIso(id) : null;
+                    String zone = personaPanel != null ? personaPanel.spaceRegionZone(id) : null;
+                    String loc = personaPanel != null ? personaPanel.spaceRegionLocale(id) : null;
+                    applyRestoredRegion(id, iso, zone, loc);
+                    render();
+                    startScan(true);
+                    if (dataClean != null) dataClean.refreshAsync();
+                }
+            });
+            listBox.addView(row);
         }
-        menu.setOnMenuItemClickListener(item -> {
-            selectedUser = ids.get(item.getItemId());
-            render();
-            return true;
-        });
-        menu.show();
+        sheet.addView(listBox);
+
+        dialog.setContentView(sheet);
+        android.view.Window w = dialog.getWindow();
+        if (w != null) {
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(CARD);
+            bg.setCornerRadii(new float[]{dp(this, 22), dp(this, 22), dp(this, 22), dp(this, 22), 0, 0, 0, 0});
+            bg.setStroke(dp(this, 1), 0xFF2B454B);
+            w.setBackgroundDrawable(bg);
+            w.setDimAmount(0.68f);
+            w.setGravity(Gravity.BOTTOM);
+            w.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        dialog.show();
     }
 
     private static String currentUserId() {
@@ -1768,7 +2619,7 @@ final class Dashboard extends UiSection {
         return String.valueOf(android.os.Process.myUid() / 100000);
     }
 
-    private void refreshPersona() {
+    void refreshPersona() {
         if (personaFields != null) personaPanel.renderInto(personaFields);
     }
 

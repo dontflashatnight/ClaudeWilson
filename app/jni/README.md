@@ -10,10 +10,19 @@ The library was built with Termux clang 21.1.8, target `aarch64-unknown-linux-an
 ```sh
 PREFIX=/data/data/com.termux/files/usr
 LD_LIBRARY_PATH=$PREFIX/lib $PREFIX/bin/clang \
-  -shared -fPIC -O2 -Wall -Wextra \
+  -c -fPIC -O2 -Wall -Wextra \
+  -mbranch-protection=standard \
   -I"$PREFIX/include" \
-  -o libcwpersona.so cwpersona.c -ldl
+  -o cwpersona.o cwpersona.c
+LD_LIBRARY_PATH=$PREFIX/lib $PREFIX/bin/ld.lld \
+  -shared -z max-page-size=16384 -z separate-loadable-segments --build-id=none \
+  -o libcwpersona.so cwpersona.o -L/system/lib64 -lc -ldl
 ```
+
+Flags:
+- `-mbranch-protection=standard`: emits `.note.gnu.property` for ARM64 BTI/PAC/GCS on Android 16–17.
+- `-z max-page-size=16384 -z separate-loadable-segments`: guarantees 16 KB `PT_LOAD` alignment for Android 15–17 devices.
+- Direct `ld.lld` link omits Termux's default `DT_RUNPATH` so zero Termux paths appear in `.dynstr`.
 
 Then copy `libcwpersona.so` to `app/libs/arm64-v8a/`.
 
@@ -27,6 +36,7 @@ Expected exports:
 
 - `native_init`
 - `Java_com_walter_claudewilson_hook_NativeHooks_configure`
+- `Java_com_walter_claudewilson_hook_NativeHooks_configureIpv6`
 - `Java_com_walter_claudewilson_hook_NativeHooks_ready`
 
 ## Load test

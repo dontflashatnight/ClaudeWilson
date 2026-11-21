@@ -19,6 +19,9 @@ public final class BuildValues {
     private final String fingerprint;
     private final String tags;
     private final String firstApiLevel;
+    private final String release;
+    private final int sdkInt;
+    private final int sdkIntFull;
     private final long time;
 
     private BuildValues(Builder b) {
@@ -34,6 +37,9 @@ public final class BuildValues {
         this.fingerprint = b.fingerprint;
         this.tags = b.tags;
         this.firstApiLevel = b.firstApiLevel;
+        this.release = b.release;
+        this.sdkInt = b.sdkInt;
+        this.sdkIntFull = b.sdkIntFull;
         this.time = b.time;
     }
 
@@ -85,6 +91,18 @@ public final class BuildValues {
         return firstApiLevel;
     }
 
+    public String release() {
+        return release;
+    }
+
+    public int sdkInt() {
+        return sdkInt;
+    }
+
+    public int sdkIntFull() {
+        return sdkIntFull;
+    }
+
     public long time() {
         return time;
     }
@@ -113,6 +131,9 @@ public final class BuildValues {
                 .fingerprint(fingerprint)
                 .tags(tags)
                 .firstApiLevel(firstApiLevel)
+                .release(release)
+                .sdkInt(sdkInt)
+                .sdkIntFull(sdkIntFull)
                 .time(time);
     }
 
@@ -129,6 +150,9 @@ public final class BuildValues {
         private String fingerprint = "";
         private String tags = "";
         private String firstApiLevel = "";
+        private String release = "";
+        private int sdkInt;
+        private int sdkIntFull;
         private long time;
 
         public Builder manufacturer(String v) {
@@ -188,6 +212,21 @@ public final class BuildValues {
 
         public Builder firstApiLevel(String v) {
             firstApiLevel = nz(v);
+            return this;
+        }
+
+        public Builder release(String v) {
+            release = nz(v);
+            return this;
+        }
+
+        public Builder sdkInt(int v) {
+            sdkInt = v;
+            return this;
+        }
+
+        public Builder sdkIntFull(int v) {
+            sdkIntFull = v;
             return this;
         }
 

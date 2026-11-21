@@ -45,7 +45,9 @@ public final class RootShell {
     private static volatile int shizukuIdentity = ID_UNKNOWN;
     private static volatile boolean rootCached;
     private static volatile boolean probing;
+    private static volatile boolean probeAgain;
     private static volatile boolean lastProbeFailed;
+    private static volatile boolean shellCarrierDenied;
     private static volatile String lastError = "";
     private static volatile int lastSuRc = Integer.MIN_VALUE;
 
@@ -53,13 +55,37 @@ public final class RootShell {
     private static volatile Runnable changeListener;
     private static volatile Subscription activeSubscription;
 
+    private static volatile String selfApk = "";
+
     private RootShell() {
+    }
+
+    static void bindSelf(android.content.Context context) {
+        if (context == null) return;
+        bindSelf(context.getPackageName());
+        try {
+            String dir = context.getApplicationInfo().sourceDir;
+            if (dir != null && dir.startsWith("/") && dir.endsWith(".apk")
+                    && dir.indexOf('\'') < 0 && dir.indexOf('"') < 0 && dir.indexOf(' ') < 0) {
+                selfApk = dir;
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     static void bindSelf(String packageName) {
         if (ShellQuote.packageName(packageName)) {
             self = packageName;
         }
+    }
+
+    private static String apkAssign() {
+        String cached = selfApk;
+        if (cached != null && !cached.isEmpty()) {
+            return "APK=" + ShellQuote.quote(cached)
+                    + "; [ -f \"$APK\" ] || APK=$(pm path " + self + " | head -n 1 | cut -d: -f2)";
+        }
+        return "APK=$(pm path " + self + " | head -n 1 | cut -d: -f2)";
     }
 
     /**
@@ -95,65 +121,87 @@ public final class RootShell {
 
     /** Probe synchronously; only call from a worker thread. */
     public static boolean probeSync() {
-        if (probing) {
-            return rootCached;
+        synchronized (RootShell.class) {
+            if (probing) {
+                probeAgain = true;
+                return state == ST_READY;
+            }
+            probing = true;
+            probeAgain = false;
         }
-        probing = true;
         try {
-            String out = RootProcess.run("id -u", 64, 30000L).trim();
-            String first = out.isEmpty() ? "" : out.split("\\s+")[0];
-            boolean root = "0".equals(first);
-            boolean denied = out.contains("Permission denied")
-                    || out.contains("permission denied")
-                    || out.contains("not allowed");
-            if (root) {
-                transport = TRANSPORT_ROOT;
-                shizukuIdentity = ID_UNKNOWN;
-                lastProbeFailed = false;
-                lastError = "";
-                state = ST_READY;
-                rootCached = true;
-                lastSuRc = 0;
-            } else {
-                int shizuku = ShizukuShell.state();
-                transport = TRANSPORT_SHIZUKU;
-                rootCached = false;
-                lastSuRc = 1;
-                if (shizuku == ShizukuShell.ST_READY) {
-                    // Shizuku can be started as root. That channel runs every command as uid 0
-                    // even though this app has no su binary, so root-only writes must stay on.
-                    shizukuIdentity = shizukuUid();
-                    state = ST_READY;
+            while (true) {
+                boolean shizukuReadyNow = ShizukuShell.ready();
+                long suTimeout = shizukuReadyNow ? 4000L : 30000L;
+                String out = RootProcess.run("id -u", 64, suTimeout).trim();
+                String first = out.isEmpty() ? "" : out.split("\\s+")[0];
+                boolean root = "0".equals(first);
+                boolean denied = out.contains("Permission denied")
+                        || out.contains("permission denied")
+                        || out.contains("not allowed");
+                if (root) {
+                    transport = TRANSPORT_ROOT;
+                    shizukuIdentity = ID_UNKNOWN;
                     lastProbeFailed = false;
                     lastError = "";
+                    state = ST_READY;
+                    rootCached = true;
+                    lastSuRc = 0;
                 } else {
-                    state = shizuku == ShizukuShell.ST_NO_PERM ? ST_NO_PERM : ST_NO_BINDER;
-                    lastProbeFailed = true;
-                    lastError = out;
+                    int shizuku = ShizukuShell.state();
+                    transport = TRANSPORT_SHIZUKU;
+                    rootCached = false;
+                    lastSuRc = 1;
+                    if (shizuku == ShizukuShell.ST_READY) {
+                        // Shizuku can be started as root. That channel runs every command as uid 0
+                        // even though this app has no su binary, so root-only writes must stay on.
+                        shizukuIdentity = shizukuUid();
+                        state = ST_READY;
+                        lastProbeFailed = false;
+                        lastError = "";
+                    } else {
+                        state = shizuku == ShizukuShell.ST_NO_PERM ? ST_NO_PERM : ST_NO_BINDER;
+                        shizukuIdentity = ID_UNKNOWN;
+                        lastProbeFailed = true;
+                        lastError = out;
+                    }
+                }
+                if (!root && state != ST_READY) {
+                    lastError = denied ? out : "no root or Shizuku";
+                }
+                com.walter.claudewilson.platform.Diag.info("root",
+                        "probe state=" + state + " transport=" + transport
+                                + " out=" + out + " err=" + lastError);
+                synchronized (RootShell.class) {
+                    if (probeAgain) {
+                        probeAgain = false;
+                        continue;
+                    }
+                    probing = false;
+                    break;
                 }
             }
-            if (!root && state != ST_READY) {
-                lastError = denied ? out : "no root or Shizuku";
-            }
-            com.walter.claudewilson.platform.Diag.info("root",
-                    "probe state=" + state + " transport=" + transport
-                            + " out=" + out + " err=" + lastError);
             notifyPermission(state == ST_READY);
             notifyChange();
             return state == ST_READY;
         } catch (Throwable t) {
+            synchronized (RootShell.class) {
+                probing = false;
+                probeAgain = false;
+            }
             lastError = t.toString();
             transport = TRANSPORT_NONE;
             state = ST_NO_BINDER;
             return false;
-        } finally {
-            probing = false;
         }
     }
 
     public static void probeAsync() {
-        if (probing) {
-            return;
+        synchronized (RootShell.class) {
+            if (probing) {
+                probeAgain = true;
+                return;
+            }
         }
         Thread worker = new Thread(RootShell::probeSync, "root-probe");
         worker.setDaemon(true);
@@ -211,14 +259,31 @@ public final class RootShell {
         }
     }
 
-    /** Forget the cached identity; the next probe re-checks {@code su}. */
+    /** Forget the cached identity; the next probe re-checks {@code su} and Shizuku. */
     public static void refreshIdentity() {
         rootCached = false;
-        transport = TRANSPORT_NONE;
         shizukuIdentity = ID_UNKNOWN;
-        state = ST_NO_BINDER;
         lastProbeFailed = false;
+        if (!ShizukuShell.ready() && transport == TRANSPORT_SHIZUKU) {
+            transport = TRANSPORT_NONE;
+            state = ShizukuShell.state() == ShizukuShell.ST_NO_PERM ? ST_NO_PERM : ST_NO_BINDER;
+        }
         probeAsync();
+    }
+
+    /** True when the ROM explicitly rejected shell-uid CarrierConfig overrides. */
+    static boolean shellCarrierDenied() {
+        return !rootReady() && shellCarrierDenied;
+    }
+
+    /** True when the live channel can override the SIM country ISO. */
+    static boolean simCountryWritable() {
+        return rootReady() || (shellReady() && !preservesMobileData() && !shellCarrierDenied);
+    }
+
+    /** True when the live channel can override the SIM/subscription carrier display name. */
+    static boolean simCarrierWritable() {
+        return rootReady() || (shellReady() && !shellCarrierDenied);
     }
 
     /** Any privileged channel (root or Shizuku shell) is usable. */
@@ -291,16 +356,19 @@ public final class RootShell {
             permissionListener = onPermission;
             changeListener = onBinder;
             shizukuPermission = (code, grantResult) -> {
+                // Re-probe and let probeSync deliver onPermission/onBinder once state and
+                // shizukuIdentity are settled; firing early raced ST_NO_BINDER.
                 refreshIdentity();
-                onPermission.accept(grantResult == PackageManager.PERMISSION_GRANTED
-                        ? PackageManager.PERMISSION_GRANTED
-                        : PackageManager.PERMISSION_DENIED);
             };
             shizukuReceived = () -> {
                 refreshIdentity();
-                onBinder.run();
             };
             shizukuDead = () -> {
+                if (transport == TRANSPORT_SHIZUKU) {
+                    transport = TRANSPORT_NONE;
+                    shizukuIdentity = ID_UNKNOWN;
+                    state = ST_NO_BINDER;
+                }
                 refreshIdentity();
                 onBinder.run();
             };
@@ -364,7 +432,7 @@ public final class RootShell {
         if (!ShellQuote.safeToken(zone)) {
             return "exc:invalid-zone";
         }
-        return run("cmd time_zone_detector set_auto_detection_enabled false; "
+        return run(autoTimeZoneCmd(false) + "; "
                 + "cmd alarm set-timezone " + zone, 512, 15000L);
     }
 
@@ -372,74 +440,125 @@ public final class RootShell {
                                       String carrier, int sub, String op,
                                       String browserPkg, String targetPkg,
                                       String[] device, boolean buildChanged,
-                                      String[] realSim) {
+                                      String[] realSim, String userId) {
+        return applyRegion(zone, locale, iso, carrier, sub, op, browserPkg, targetPkg,
+                device, buildChanged, realSim, userId, false);
+    }
+
+    public static Outcome applyRegion(String zone, String locale, String iso,
+                                      String carrier, int sub, String op,
+                                      String browserPkg, String targetPkg,
+                                      String[] device, boolean buildChanged,
+                                      String[] realSim, String userId,
+                                      boolean preserveSim) {
         if (!ShellQuote.safeToken(zone) || !ShellQuote.safeToken(locale)
                 || !ShellQuote.safeToken(iso)) {
             return Outcome.of("refused: unsafe region token");
         }
+        String userOpt = userId != null && ShellQuote.numeric(userId) && !"0".equals(userId)
+                ? " --user " + userId : "";
         boolean opSafe = op != null && op.matches("\\d{5,6}");
         boolean hasBrowser = browserPkg != null && ShellQuote.packageName(browserPkg);
         boolean root = rootReady();
+        boolean parallelBridge = root && sub >= 0 && !preserveSim && !preservesMobileData();
         Command command = Command.sh()
-                .raw("APK=$(pm path " + self + " | cut -d: -f2)")
-                .step("auto-detection",
-                        "cmd time_zone_detector set_auto_detection_enabled false")
-                .step("timezone", "cmd alarm set-timezone " + zone);
-        // Per-app locale is written on every channel. The hook still supplies the richer
-        // in-process locale, but a partially installed hook must not leave the target on the
-        // system language; the app locale is the fallback that keeps the UI language aligned.
-        if (ShellQuote.packageName(targetPkg)) {
-            command.step("locale-target",
-                    "cmd locale set-app-locales " + targetPkg + " --locales " + locale);
-            if (hasBrowser) {
-                command.step("locale-browser",
-                        "cmd locale set-app-locales " + browserPkg + " --locales " + locale);
+                .raw(apkAssign());
+        if (parallelBridge) {
+            // Overlap slow cmd binder forks (timezone + per-app locales) with Bridge ART startup.
+            // Keep auto-detection and per-app locales best-effort so an optional step never
+            // aborts timezone or triggers a false rollback of the whole region apply.
+            String userTrim = userOpt.trim();
+            String pmUser = userTrim.isEmpty() ? "" : userTrim + " ";
+            StringBuilder bg = new StringBuilder();
+            bg.append("{ ").append(autoTimeZoneCmd(false)).append(" >/dev/null 2>&1; ")
+                    .append("cmd alarm set-timezone ").append(zone).append("; CW_TZ_RC=$?; ");
+            if (ShellQuote.packageName(targetPkg)) {
+                bg.append("(pm path ").append(pmUser).append(targetPkg)
+                        .append(" >/dev/null 2>&1 && cmd locale set-app-locales ")
+                        .append(targetPkg).append(userOpt)
+                        .append(" --locales ").append(locale)
+                        .append(") >/dev/null 2>&1 || true; ");
+                if (hasBrowser) {
+                    bg.append("(pm path ").append(pmUser).append(browserPkg)
+                            .append(" >/dev/null 2>&1 && cmd locale set-app-locales ")
+                            .append(browserPkg).append(userOpt)
+                            .append(" --locales ").append(locale)
+                            .append(") >/dev/null 2>&1 || true; ");
+                }
+            }
+            bg.append("exit $CW_TZ_RC; } >/dev/null 2>&1 & CW_BG_PID=$!");
+            command.raw(bg.toString());
+        } else {
+            command.step("auto-detection", autoTimeZoneCmd(false))
+                    .step("timezone", "cmd alarm set-timezone " + zone);
+            if (ShellQuote.packageName(targetPkg)) {
+                command.step("locale-target", wrappedLocaleCall("locale-target",
+                        "cmd locale set-app-locales " + targetPkg + userOpt + " --locales " + locale,
+                        root));
+                if (hasBrowser) {
+                    command.step("locale-browser", wrappedLocaleCall("locale-browser",
+                            "cmd locale set-app-locales " + browserPkg + userOpt
+                                    + " --locales " + locale,
+                            root));
+                }
             }
         }
         if (root && device != null && buildChanged) {
             command.step("build-props", "sh -c " + ShellQuote.quote(
                     SystemBuild.applyScript(device, op, iso, carrier)));
-        } else if (root && opSafe) {
+        } else if (root && opSafe && !parallelBridge) {
             command.step("operator-props", "sh -c " + ShellQuote.quote(
                     SystemBuild.operatorScript(op, iso, carrier)));
-        } else {
+        } else if (!parallelBridge) {
             command.step("build-props", "echo SKIP:build-props shell-channel");
         }
         if (sub >= 0) {
-            if (preservesMobileData()) {
-                // Some OEM telephony stacks keep a per-subscription carrier-config override
-                // after a region switch, and they resolve the data APN from the SIM operator
-                // properties. A persona value there makes the modem request a temporary APN
-                // that does not exist, and the connection does not recover until those
-                // properties are real again. Put the physical card's values back first, then
-                // clear the override so the resulting reconnect uses the real APN.
+            if (preserveSim) {
+                command.step("sim-preserve", "echo SKIP:sim-preserve non-restricted");
+            } else if (preservesMobileData()) {
                 command.step("sim-real", root
                         ? simRealStep(realSim) : "echo SKIP:sim-real no-root");
                 command.step("carrier-clear", carrierClearStep(sub));
-                command.step("simop-clear", simopApiAbsent
-                        ? "echo SKIP:simop-clear api-absent"
-                        : "app_process -Djava.class.path=$APK /system/bin " + BRIDGE
-                                + " simop " + sub + " - -");
+                command.step("simop-clear", !root
+                        ? "echo SKIP:simop-clear no-root"
+                        : simopApiAbsent
+                                ? "echo SKIP:simop-clear api-absent"
+                                : "app_process -Djava.class.path=$APK /system/bin " + BRIDGE
+                                        + " simop " + sub + " - -");
                 if (carrier != null && !carrier.isEmpty()) {
-                    command.step("sim-alpha", simAlphaStep(carrier));
+                    command.step("carrier-name", subnameStep(sub, carrier, -1));
+                    if (root) {
+                        command.step("sim-alpha", simAlphaStep(carrier));
+                    }
                 }
                 command.step("sim-data-compat", "echo SKIP:sim-data-compat oem-apn");
+            } else if (root) {
+                StringBuilder batch = new StringBuilder();
+                batch.append("app_process -Djava.class.path=$APK /system/bin ").append(BRIDGE)
+                        .append(" batch cc ").append(sub).append(' ').append(iso).append(' ')
+                        .append(ShellQuote.quote(carrier));
+                if (carrier != null && !carrier.isEmpty()) {
+                    batch.append(" -- subname ").append(sub).append(' ')
+                            .append(ShellQuote.quote(carrier)).append(" -1");
+                }
+                if (opSafe && !simopApiAbsent) {
+                    batch.append(" -- simop ").append(sub).append(' ').append(op).append(' ')
+                            .append(ShellQuote.quote(carrier));
+                }
+                command.step("carrier", batch.toString());
+                if (opSafe) {
+                    command.step("sim-props", "sh -c " + ShellQuote.quote(
+                            SystemBuild.telephonyScript(op, iso, carrier)));
+                }
             } else {
                 command.step("carrier", carrierStep(sub, iso, carrier));
                 if (carrier != null && !carrier.isEmpty()) {
-                    command.step("carrier-name", subnameStep(sub, carrier,
-                            CarrierCommands.nameSourceUserInput()));
-                }
-                if (root && opSafe) {
-                    command.step("sim-props", "sh -c " + ShellQuote.quote(
-                            SystemBuild.telephonyScript(op, iso, carrier)));
-                    command.step("simop", simopApiAbsent
-                            ? "echo SKIP:simop api-absent"
-                            : "app_process -Djava.class.path=$APK /system/bin " + BRIDGE
-                                    + " simop " + sub + " " + op + " "
-                                    + ShellQuote.quote(carrier));
+                    command.step("carrier-name", subnameStep(sub, carrier, -1));
                 }
             }
+        }
+        if (parallelBridge) {
+            command.step("tz-locale", "wait $CW_BG_PID");
         }
         String output = run(command.done("APPLY:DONE").build());
         observeCarrierDenial(output);
@@ -455,20 +574,27 @@ public final class RootShell {
      * written on a Shizuku apply.
      */
     public static Outcome revert(int sub, String origTz, int autoFlag,
-                                 String[] origSim, String browserPkg, String targetPkg) {
+                                 String[] origSim, String browserPkg, String targetPkg,
+                                 String userId) {
         boolean root = rootReady();
+        String userOpt = userId != null && ShellQuote.numeric(userId) && !"0".equals(userId)
+                ? " --user " + userId : "";
         Command command = Command.sh()
-                .raw("APK=$(pm path " + self + " | cut -d: -f2)");
+                .raw(apkAssign());
         // The apply wrote per-app locale on every channel; the revert must clear it on every
         // channel too, not only on the shell fallback path.
         if (ShellQuote.packageName(targetPkg)) {
             command.step("locale-target-reset",
-                    "(pm path " + targetPkg + " >/dev/null 2>&1 && cmd locale set-app-locales "
-                            + targetPkg + ") || echo SKIP:locale-target-reset");
+                    "(pm path " + userOpt.trim() + (userOpt.isEmpty() ? "" : " ") + targetPkg
+                            + " >/dev/null 2>&1 && cmd locale set-app-locales "
+                            + targetPkg + userOpt
+                            + " --locales empty) || echo SKIP:locale-target-reset");
             if (browserPkg != null && ShellQuote.packageName(browserPkg)) {
                 command.step("locale-browser-reset",
-                        "(pm path " + browserPkg + " >/dev/null 2>&1 && cmd locale set-app-locales "
-                                + browserPkg + ") || echo SKIP:locale-browser-reset");
+                        "(pm path " + userOpt.trim() + (userOpt.isEmpty() ? "" : " ") + browserPkg
+                                + " >/dev/null 2>&1 && cmd locale set-app-locales "
+                                + browserPkg + userOpt
+                                + " --locales empty) || echo SKIP:locale-browser-reset");
             }
         }
         if (sub >= 0) {
@@ -480,24 +606,34 @@ public final class RootShell {
                 command.step("sim-real", root
                         ? simRealStep(origSim) : "echo SKIP:sim-real no-root");
             }
-            command.step("carrier-clear", carrierClearStep(sub));
             String restoreName = origSim != null && origSim.length > 3
                     && origSim[3] != null && !origSim[3].isEmpty()
                     ? origSim[3]
                     : origSim != null && origSim.length > 2 ? origSim[2] : "";
-            if (!restoreName.isEmpty()) {
-                int source = CarrierCommands.nameSourceUserInput();
-                if (origSim.length > 4 && origSim[4] != null
-                        && origSim[4].matches("\\d+")) {
-                    source = Integer.parseInt(origSim[4]);
-                }
-                command.step("carrier-name-restore", subnameStep(sub, restoreName, source));
+            int source = -1;
+            if (origSim != null && origSim.length > 4 && origSim[4] != null
+                    && origSim[4].matches("\\d+")) {
+                source = Integer.parseInt(origSim[4]);
             }
             if (root) {
-                command.step("simop-clear", simopApiAbsent
-                        ? "echo SKIP:simop-clear api-absent"
-                        : "app_process -Djava.class.path=$APK /system/bin " + BRIDGE
-                                + " simop " + sub + " - -");
+                StringBuilder batch = new StringBuilder();
+                batch.append("app_process -Djava.class.path=$APK /system/bin ").append(BRIDGE)
+                        .append(" batch ccclear ").append(sub);
+                if (!restoreName.isEmpty()) {
+                    batch.append(" -- subname ").append(sub).append(' ')
+                            .append(ShellQuote.quote(restoreName)).append(' ').append(source);
+                }
+                if (!simopApiAbsent) {
+                    batch.append(" -- simop ").append(sub).append(" - -");
+                }
+                command.step("carrier-clear", batch.toString());
+            } else {
+                command.step("carrier-clear", carrierClearStep(sub));
+                if (!restoreName.isEmpty()) {
+                    command.step("carrier-name-restore", subnameStep(sub, restoreName, source));
+                }
+            }
+            if (root) {
                 if (!keepReal) {
                     if (origSim != null && origSim[0] != null && !origSim[0].isEmpty()) {
                         command.step("sim-props-restore",
@@ -522,10 +658,9 @@ public final class RootShell {
             command.step("timezone-restore", "cmd alarm set-timezone " + origTz);
         }
         command.step("build-restore", root
-                ? "sh -c " + ShellQuote.quote(SystemBuild.restoreScript())
+                ? "sh -c " + ShellQuote.quote(SystemBuild.restoreScript(origSim))
                 : "echo SKIP:build-restore shell-channel");
-        command.step("auto-detection-restore",
-                "cmd time_zone_detector set_auto_detection_enabled " + (autoFlag == 1));
+        command.step("auto-detection-restore", autoTimeZoneCmd(autoFlag == 1));
         String output = run(command.done("REVERT:DONE").build());
         observeCarrierDenial(output);
         if (output.contains("SKIP:simop") && output.contains("api-absent")) {
@@ -558,8 +693,149 @@ public final class RootShell {
         if (preservesMobileData()) {
             return "echo SKIP:sim-data-compat oem-apn";
         }
-        return "APK=$(pm path " + self + " | cut -d: -f2); "
+        String script = "APK=$(pm path " + self + " | cut -d: -f2); "
                 + carrierStep(sub, iso, carrier);
+        if (carrier != null && !carrier.isEmpty()) {
+            script += "; " + subnameStep(sub, carrier, -1);
+        }
+        return script;
+    }
+
+    /** Manual SIM row write from PersonaPanel, batching Bridge Binder calls in one ART process. */
+    static String simOverrideScript(int sub, String op, String iso, String carrier) {
+        boolean root = rootReady();
+        boolean keepReal = preservesMobileData();
+        boolean opSafe = op != null && op.matches("\\d{5,6}");
+        String car = carrier == null ? "" : carrier;
+        Command cmd = Command.sh()
+                .raw(apkAssign());
+        if (root && !keepReal && opSafe && ShellQuote.safeToken(iso)) {
+            cmd.step("sim-props", "sh -c " + ShellQuote.quote(
+                    SystemBuild.telephonyScript(op, iso, car)));
+        }
+        if (sub < 0) {
+            cmd.raw("echo SKIP:carrier no-active-sub");
+            return cmd.done("SIM:DONE").build();
+        }
+        if (keepReal) {
+            if (!car.isEmpty()) {
+                cmd.step("carrier-name", subnameStep(sub, car, -1));
+                if (root) {
+                    cmd.step("sim-alpha", simAlphaStep(car));
+                }
+            } else {
+                cmd.raw("echo SKIP:sim-data-compat oem-apn");
+            }
+            return cmd.done("SIM:DONE").build();
+        }
+        if (root && ShellQuote.safeToken(iso)) {
+            StringBuilder batch = new StringBuilder();
+            batch.append("app_process -Djava.class.path=$APK /system/bin ").append(BRIDGE)
+                    .append(" batch cc ").append(sub).append(' ').append(iso).append(' ')
+                    .append(ShellQuote.quote(car));
+            if (!car.isEmpty()) {
+                batch.append(" -- subname ").append(sub).append(' ')
+                        .append(ShellQuote.quote(car)).append(" -1");
+            }
+            if (opSafe && !simopApiAbsent) {
+                batch.append(" -- simop ").append(sub).append(' ').append(op).append(' ')
+                        .append(ShellQuote.quote(car));
+            }
+            cmd.step("carrier", batch.toString());
+        } else {
+            if (ShellQuote.safeToken(iso)) {
+                cmd.step("carrier", carrierStep(sub, iso, car));
+            }
+            if (!car.isEmpty()) {
+                cmd.step("carrier-name", subnameStep(sub, car, -1));
+            }
+        }
+        return cmd.done("SIM:DONE").build();
+    }
+
+    /** Restores physical SIM props and CarrierConfig in one Bridge batch (used for keepRealSim). */
+    static String restoreRealSimScript(int sub, String[] origSim) {
+        boolean root = rootReady();
+        Command cmd = Command.sh().raw(apkAssign());
+        if (root && origSim != null && origSim.length >= 3
+                && origSim[0] != null && origSim[0].matches("\\d{5,6}")) {
+            cmd.step("sim-real", simRealStep(origSim));
+        }
+        if (root) {
+            cmd.step("net-real", "sh -c " + ShellQuote.quote(
+                    SystemBuild.restoreOperatorScript(origSim)));
+        }
+        if (sub < 0) {
+            return cmd.done("SIM:DONE").build();
+        }
+        String restoreName = origSim != null && origSim.length > 3
+                && origSim[3] != null && !origSim[3].isEmpty()
+                ? origSim[3]
+                : origSim != null && origSim.length > 2 ? origSim[2] : "";
+        int source = -1;
+        if (origSim != null && origSim.length > 4 && origSim[4] != null
+                && origSim[4].matches("\\d+")) {
+            source = Integer.parseInt(origSim[4]);
+        }
+        if (root) {
+            StringBuilder batch = new StringBuilder();
+            batch.append("app_process -Djava.class.path=$APK /system/bin ").append(BRIDGE)
+                    .append(" batch ccclear ").append(sub);
+            if (!restoreName.isEmpty()) {
+                batch.append(" -- subname ").append(sub).append(' ')
+                        .append(ShellQuote.quote(restoreName)).append(' ').append(source);
+            }
+            if (!simopApiAbsent) {
+                batch.append(" -- simop ").append(sub).append(" - -");
+            }
+            cmd.step("carrier-clear", batch.toString());
+        } else {
+            cmd.step("carrier-clear", carrierClearStep(sub));
+            if (!restoreName.isEmpty()) {
+                cmd.step("carrier-name", subnameStep(sub, restoreName, source));
+            }
+        }
+        return cmd.done("SIM:DONE").build();
+    }
+
+    /** Writes timezone and per-app locales in a single shell transaction. */
+    static String setLocaleAndTimeZone(String zone, String locale,
+                                       String targetPkg, String browserPkg, String userId) {
+        if (!shellReady()) {
+            return "exc:no-channel";
+        }
+        if (zone != null && !zone.isEmpty() && !ShellQuote.safeToken(zone)) {
+            return "exc:invalid-zone";
+        }
+        if (locale != null && !locale.isEmpty() && !ShellQuote.safeToken(locale)) {
+            return "exc:invalid-locale";
+        }
+        String userOpt = userId != null && ShellQuote.numeric(userId) && !"0".equals(userId)
+                ? " --user " + userId : "";
+        String pmUser = userOpt.trim().isEmpty() ? "" : userOpt.trim() + " ";
+        StringBuilder sb = new StringBuilder();
+        if (zone != null && !zone.isEmpty()) {
+            sb.append(autoTimeZoneCmd(false)).append(" >/dev/null 2>&1; ")
+                    .append("cmd alarm set-timezone ").append(zone).append("; ");
+        }
+        if (locale != null && !locale.isEmpty()) {
+            if (ShellQuote.packageName(targetPkg)) {
+                sb.append("(pm path ").append(pmUser).append(targetPkg)
+                        .append(" >/dev/null 2>&1 && cmd locale set-app-locales ")
+                        .append(targetPkg).append(userOpt)
+                        .append(" --locales ").append(locale)
+                        .append(") >/dev/null 2>&1 || true; ");
+            }
+            if (browserPkg != null && ShellQuote.packageName(browserPkg)) {
+                sb.append("(pm path ").append(pmUser).append(browserPkg)
+                        .append(" >/dev/null 2>&1 && cmd locale set-app-locales ")
+                        .append(browserPkg).append(userOpt)
+                        .append(" --locales ").append(locale)
+                        .append(") >/dev/null 2>&1 || true; ");
+            }
+        }
+        sb.append("echo OK");
+        return run(sb.toString(), 512, 15000L);
     }
 
     /**
@@ -614,7 +890,44 @@ public final class RootShell {
                         + " ccclear " + sub);
     }
 
+    private static String autoTimeZoneCmd(boolean enabled) {
+        return "{ cmd time_zone_detector set_auto_detection_enabled " + enabled
+                + " 2>/dev/null || settings put global auto_time_zone "
+                + (enabled ? "1" : "0") + "; }";
+    }
+
+    static String wrappedLocaleCall(String name, String call, boolean root) {
+        if (root) {
+            return call;
+        }
+        return "out=$(" + call + " 2>&1); rc=$?; "
+                + "if [ $rc -ne 0 ]; then "
+                + "case \"$out\" in "
+                + "*\"SecurityException\"*|*\"Permission Denial\"*"
+                + "|*\"Permission denied\"*|*\"permission denied\"*"
+                + "|*\"not allowed\"*|*\"CHANGE_CONFIGURATION\"*"
+                + "|*\"Operation not permitted\"*) "
+                + "echo SKIP:" + name + " permission-denied; rc=0;; "
+                + "*) echo \"$out\";; "
+                + "esac; "
+                + "else echo \"$out\"; fi; "
+                + "[ $rc -eq 0 ]";
+    }
+
     private static String wrappedCarrierCall(String name, String call) {
+        if (!rootReady()) {
+            return "out=$(" + call + " 2>&1); rc=$?; "
+                    + "if [ $rc -ne 0 ]; then "
+                    + "case \"$out\" in "
+                    + "*\"cannot be invoked by shell\"*|*\"SecurityException\"*"
+                    + "|*\"Permission Denial\"*|*\"Permission denied\"*|*\"permission denied\"*"
+                    + "|*\"not allowed\"*|*\"MODIFY_PHONE_STATE\"*|*\"Operation not permitted\"*) "
+                    + "echo SKIP:" + name + " permission-denied; rc=0;; "
+                    + "*) echo \"$out\";; "
+                    + "esac; "
+                    + "else echo \"$out\"; fi; "
+                    + "[ $rc -eq 0 ]";
+        }
         return "out=$(" + call + " 2>&1); rc=$?; "
                 + "if [ $rc -ne 0 ]; then "
                 + "case \"$out\" in "
@@ -626,8 +939,19 @@ public final class RootShell {
                 + "[ $rc -eq 0 ]";
     }
 
-    private static void observeCarrierDenial(String output) {
-        // Root does not need the shell fallback; retained for log compatibility.
+    static void observeCarrierDenial(String output) {
+        if (output == null) {
+            return;
+        }
+        if (output.contains("SKIP:carrier permission-denied")
+                || output.contains("SKIP:carrier-name permission-denied")
+                || output.contains("SKIP:carrier-clear permission-denied")
+                || output.contains("SKIP:subname no-update SecurityException")
+                || output.contains("cannot be invoked by shell")) {
+            shellCarrierDenied = true;
+        } else if (output.contains("cc set ") || output.contains("subname set ")) {
+            shellCarrierDenied = false;
+        }
     }
 
     /** Root shell runner; returns combined output, or {@code exc:}/{@code timeout:} on failure. */

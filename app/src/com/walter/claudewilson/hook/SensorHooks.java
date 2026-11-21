@@ -76,7 +76,9 @@ final class SensorHooks {
                 }
             });
             status = "ok";
-            XposedBridge.log("ClaudeWilsonHook sensors status=ok");
+            if (HookEntry.debugLog) {
+                XposedBridge.log("ClaudeWilsonHook sensors status=ok");
+            }
         } catch (Throwable t) {
             status = "error:" + t.getClass().getSimpleName();
             XposedBridge.log("ClaudeWilsonHook sensors: " + t);

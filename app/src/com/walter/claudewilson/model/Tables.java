@@ -28,6 +28,7 @@ public final class Tables {
     public static final String PERSONAS = "personas";
     public static final String MCC = "mcc";
     public static final String CARRIERS = "carriers";
+    public static final String RESTRICTED_REGIONS = "restricted-regions";
 
     public static final Tables EMPTY = parse(Collections.<String, String>emptyMap());
 
@@ -45,6 +46,7 @@ public final class Tables {
     private final List<String[]> personas;
     private final Map<String, String> mccToIso;
     private final Map<String, String> carrierKeywords;
+    private final Map<String, String> restrictedRegions;
 
     private Tables(String version, List<String> suPaths, List<String> rwDirs,
                    List<String> packageKeywords, List<String> labelKeywords,
@@ -52,7 +54,8 @@ public final class Tables {
                    List<String> rootPackages, List<String> modernPackages,
                    List<String> leakedCas, Map<String, String> vendorFamilies,
                    List<String[]> personas,
-                   Map<String, String> mccToIso, Map<String, String> carrierKeywords) {
+                   Map<String, String> mccToIso, Map<String, String> carrierKeywords,
+                   Map<String, String> restrictedRegions) {
         this.version = version;
         this.suPaths = Collections.unmodifiableList(suPaths);
         this.rwDirs = Collections.unmodifiableList(rwDirs);
@@ -67,6 +70,7 @@ public final class Tables {
         this.personas = Collections.unmodifiableList(personas);
         this.mccToIso = Collections.unmodifiableMap(mccToIso);
         this.carrierKeywords = Collections.unmodifiableMap(carrierKeywords);
+        this.restrictedRegions = Collections.unmodifiableMap(restrictedRegions);
     }
 
     public static Tables parse(Map<String, String> raw) {
@@ -84,6 +88,7 @@ public final class Tables {
         List<String[]> personas = new ArrayList<String[]>();
         Map<String, String> mccToIso = new LinkedHashMap<String, String>();
         Map<String, String> carrierKeywords = new LinkedHashMap<String, String>();
+        Map<String, String> restrictedRegions = new LinkedHashMap<String, String>();
         if (raw != null) {
             for (Map.Entry<String, String> entry : raw.entrySet()) {
                 String name = entry.getKey();
@@ -129,13 +134,23 @@ public final class Tables {
                         putPair(mccToIso, line);
                     } else if (CARRIERS.equals(name)) {
                         putPair(carrierKeywords, line);
+                    } else if (RESTRICTED_REGIONS.equals(name)) {
+                        putLowerKeyPair(restrictedRegions, line);
                     }
                 }
             }
         }
         return new Tables(version, suPaths, rwDirs, packageKeywords, labelKeywords,
                 emulatorSignatures, vendorWords, rootPackages, modernPackages, leakedCas,
-                vendorFamilies, personas, mccToIso, carrierKeywords);
+                vendorFamilies, personas, mccToIso, carrierKeywords, restrictedRegions);
+    }
+
+    private static void putLowerKeyPair(Map<String, String> target, String line) {
+        int split = line.indexOf('=');
+        if (split > 0) {
+            target.put(line.substring(0, split).trim().toLowerCase(Locale.ROOT),
+                    line.substring(split + 1).trim());
+        }
     }
 
     private static void addUnique(List<String> target, String value) {
@@ -227,10 +242,16 @@ public final class Tables {
         return carrierKeywords;
     }
 
+    /** Restricted ISO country code -> "scope|mccs|note" (from catalog/restricted-regions.txt). */
+    public Map<String, String> restrictedRegions() {
+        return restrictedRegions;
+    }
+
     /** True when no reference data was loaded; rules must then report unknown, not clean. */
     public boolean isEmpty() {
         return suPaths.isEmpty() && rwDirs.isEmpty() && mccToIso.isEmpty()
-                && carrierKeywords.isEmpty() && packageKeywords.isEmpty()
+                && carrierKeywords.isEmpty() && restrictedRegions.isEmpty()
+                && packageKeywords.isEmpty()
                 && labelKeywords.isEmpty() && emulatorSignatures.isEmpty()
                 && vendorWords.isEmpty() && rootPackages.isEmpty() && modernPackages.isEmpty()
                 && leakedCas.isEmpty() && vendorFamilies.isEmpty() && personas.isEmpty();

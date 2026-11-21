@@ -33,6 +33,8 @@ final class TelemetryHooks {
     };
     private static final BlockingQueue<String> QUEUE =
             new ArrayBlockingQueue<String>(QUEUE_CAPACITY);
+    private static final int MAX_UNSEEN_KEYS = 128;
+    private static final java.util.Set<String> UNSEEN_KEYS = new java.util.LinkedHashSet<String>();
     private static volatile boolean started;
     private static volatile File journal;
     private static volatile ClassLoader classLoader;
@@ -94,7 +96,14 @@ final class TelemetryHooks {
             if ("event_metadata".equals(table)) {
                 String name = values.getAsString("name");
                 String value = values.getAsString("value");
-                if (name == null || value == null || !allowed(name)) {
+                if (name == null) {
+                    return;
+                }
+                if (!allowed(name)) {
+                    recordUnseenKey(context, name);
+                    return;
+                }
+                if (value == null) {
                     return;
                 }
                 row.put("type", "meta");
@@ -141,6 +150,52 @@ final class TelemetryHooks {
         return false;
     }
 
+    /**
+     * Records only the key name (never its value) for allowlist misses so target-watch can detect
+     * newly added Firelog metadata keys after a target update without storing PII.
+     */
+    private static void recordUnseenKey(Context context, String rawName) {
+        String name = rawName == null ? "" : rawName.trim();
+        if (!validKeyName(name)) {
+            return;
+        }
+        boolean added;
+        synchronized (UNSEEN_KEYS) {
+            if (UNSEEN_KEYS.size() >= MAX_UNSEEN_KEYS || UNSEEN_KEYS.contains(name)) {
+                return;
+            }
+            added = UNSEEN_KEYS.add(name);
+        }
+        if (!added) {
+            return;
+        }
+        try {
+            JSONObject row = new JSONObject();
+            row.put("type", "unseen_key");
+            row.put("name", name);
+            row.put("captured", System.currentTimeMillis());
+            enqueue(context, row.toString());
+        } catch (Throwable t) {
+            XposedBridge.log("ClaudeWilsonHook telemetry unseen_key: " + t);
+        }
+    }
+
+    private static boolean validKeyName(String name) {
+        if (name.isEmpty() || name.length() > 64) {
+            return false;
+        }
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            boolean ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9')
+                    || c == '_' || c == '.' || c == ':' || c == '/' || c == '-';
+            if (!ok) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static void enqueue(Context context, String line) {
         synchronized (TelemetryHooks.class) {
             if (!started) {
@@ -151,7 +206,7 @@ final class TelemetryHooks {
                     dir.mkdirs();
                 }
                 started = true;
-                Thread writer = new Thread(TelemetryHooks::drain, "cw-telemetry-writer");
+                Thread writer = new Thread(TelemetryHooks::drain, "Binder:bg");
                 writer.setDaemon(true);
                 writer.start();
             }

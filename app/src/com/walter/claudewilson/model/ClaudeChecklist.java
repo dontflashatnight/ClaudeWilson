@@ -178,6 +178,9 @@ public final class ClaudeChecklist {
         out.add(spec("target.build_parts", TARGET,
                 "target self-check Build manufacturer/device/product/hardware/model",
                 NO, "hook-payload", false, false, null));
+        out.add(spec("target.sdk", TARGET,
+                "target self-check sdk_int/release/sdk_prop",
+                NO, "hook-payload", false, false, null));
         out.add(spec("target.su.paths", TARGET, "target self-check su paths (10)",
                 NO, "hook-payload", false, false, "0/10"));
         out.add(spec("target.su.packages", TARGET, "target self-check root packages (17)",
@@ -191,6 +194,9 @@ public final class ClaudeChecklist {
                 "target self-check ifaces/proxy", NO, "hook-payload", false, false, null));
         out.add(spec("target.network_addresses", TARGET,
                 "target self-check non-loopback interface addresses",
+                NO, "hook-payload", false, false, null));
+        out.add(spec("target.ipv6_spoof", TARGET,
+                "target self-check spoofed IPv6 address from hook",
                 NO, "hook-payload", false, false, null));
 
         out.add(spec("system.locale", SYSTEM, "getprop persist.sys.locale",
@@ -420,6 +426,7 @@ public final class ClaudeChecklist {
         boolean detailed = "2".equals(hook.get("selfcheck"));
         out.add(systemNext(item("target.build_parts"), buildParts(hook),
                 data.get("payload_build_parts"), data.get("build_parts"), live && detailed));
+        out.add(hook(item("target.sdk"), targetSdk(hook), live && detailed));
         out.add(hook(item("target.su.paths"), suCount(hook.get("su_paths")), live && detailed));
         out.add(hook(item("target.su.packages"), suCount(hook.get("su_packages")),
                 live && detailed));
@@ -428,7 +435,10 @@ public final class ClaudeChecklist {
         out.add(hook(item("target.su.mounts"), suCount(hook.get("su_mounts")),
                 live && detailed));
         out.add(networkView(item("target.network_view"), hook, live));
-        out.add(hook(item("target.network_addresses"), hook.get("iface_ips"), live && detailed));
+        out.add(hook(item("target.network_addresses"),
+                mergeNetAddresses(hook.get("iface_ips"), hook.get("link_addrs")),
+                live && detailed));
+        out.add(hook(item("target.ipv6_spoof"), hook.get("ipv6_spoof"), live && detailed));
 
         out.add(value(item("system.locale"), text(snapshot.prop("persist.sys.locale"))));
         out.add(value(item("system.product_locale"),
@@ -787,5 +797,74 @@ public final class ClaudeChecklist {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    /**
+     * Supplements interface addresses with LinkProperties addresses when active interfaces report
+     * no global IPv6 (for example on a tunnel-only active network).
+     */
+    static String mergeNetAddresses(String ifaceIps, String linkAddrs) {
+        if (hasGlobalV6(ifaceIps) || linkAddrs == null || linkAddrs.isEmpty()) {
+            return ifaceIps;
+        }
+        int sep = linkAddrs.indexOf('|');
+        String rest = sep >= 0 ? linkAddrs.substring(sep + 1) : linkAddrs;
+        if (rest.isEmpty()) {
+            return ifaceIps;
+        }
+        StringBuilder sb = new StringBuilder();
+        if (ifaceIps != null && !ifaceIps.isEmpty()) {
+            sb.append(ifaceIps);
+            if (!ifaceIps.endsWith(",")) sb.append(',');
+        }
+        for (String item : rest.split(",")) {
+            String trimmed = item.trim();
+            if (trimmed.isEmpty()) continue;
+            int slash = trimmed.indexOf('/');
+            if (slash > 0) trimmed = trimmed.substring(0, slash);
+            if (!trimmed.isEmpty()) {
+                sb.append(trimmed).append(',');
+            }
+        }
+        return sb.length() > 0 ? sb.toString() : ifaceIps;
+    }
+
+    private static boolean hasGlobalV6(String ips) {
+        if (ips == null || ips.isEmpty()) return false;
+        for (String addr : ips.split(",")) {
+            String a = addr.trim();
+            if (a.length() >= 3 && (a.charAt(0) == '2' || a.charAt(0) == '3')
+                    && a.indexOf(':') > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Target-process SDK/release summary from self-check, flagging property disagreements. */
+    static String targetSdk(java.util.Map<String, String> hook) {
+        String sdk = hook.get("sdk_int");
+        if (sdk == null || sdk.isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("API ").append(sdk);
+        String rel = hook.get("release");
+        if (rel != null && !rel.isEmpty()) {
+            sb.append(" (Android ").append(rel).append(')');
+        }
+        String full = hook.get("sdk_int_full");
+        if (full != null && !full.isEmpty()) {
+            sb.append(" full=").append(full);
+        }
+        String sdkProp = hook.get("sdk_prop");
+        if (sdkProp != null && !sdkProp.isEmpty() && !sdkProp.equals(sdk)) {
+            sb.append(" prop=").append(sdkProp);
+        }
+        String fullProp = hook.get("sdk_full_prop");
+        if (fullProp != null && !fullProp.isEmpty()) {
+            sb.append(" full_prop=").append(fullProp);
+        }
+        return sb.toString();
     }
 }

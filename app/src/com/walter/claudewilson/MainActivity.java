@@ -8,9 +8,12 @@ import android.os.Bundle;
 public final class MainActivity extends Activity {
     private static final String[] PERMISSIONS = {
             android.Manifest.permission.READ_PHONE_STATE};
+    private static final String ACTION_SERVICE_STATE = "android.intent.action.SERVICE_STATE";
+    private static final String ACTION_SIM_STATE_CHANGED = "android.intent.action.SIM_STATE_CHANGED";
     private Dashboard dashboard;
     private RootShell.Subscription rootSubscription;
     private android.content.BroadcastReceiver radio;
+    private android.net.ConnectivityManager.NetworkCallback networkCallback;
     private final android.os.Handler refreshHandler =
             new android.os.Handler(android.os.Looper.getMainLooper());
     private boolean firstResume = true;
@@ -24,6 +27,7 @@ public final class MainActivity extends Activity {
         dashboard = new Dashboard(this);
         dashboard.show();
         watchRadio();
+        watchNetworks();
         rootSubscription = RootShell.observe(
                 granted -> ScreenUpdates.post(screen -> screen.onRootPermission(granted)),
                 // Whole screen, not just the region card: the root state is exactly what a
@@ -44,22 +48,63 @@ public final class MainActivity extends Activity {
         radio = new android.content.BroadcastReceiver() {
             @Override public void onReceive(android.content.Context context,
                                             android.content.Intent intent) {
+                if (intent == null) {
+                    return;
+                }
                 String action = intent.getAction();
+                if (!android.content.Intent.ACTION_AIRPLANE_MODE_CHANGED.equals(action)
+                        && !ACTION_SERVICE_STATE.equals(action)
+                        && !android.telephony.SubscriptionManager
+                                .ACTION_DEFAULT_SUBSCRIPTION_CHANGED.equals(action)
+                        && !ACTION_SIM_STATE_CHANGED.equals(action)) {
+                    return;
+                }
                 boolean force = android.telephony.SubscriptionManager
                         .ACTION_DEFAULT_SUBSCRIPTION_CHANGED.equals(action)
-                        || "android.intent.action.SIM_STATE_CHANGED".equals(action);
+                        || ACTION_SIM_STATE_CHANGED.equals(action);
                 ScreenUpdates.post(screen -> screen.radioChanged(force));
             }
         };
         android.content.IntentFilter filter = new android.content.IntentFilter();
         filter.addAction(android.content.Intent.ACTION_AIRPLANE_MODE_CHANGED);
-        filter.addAction("android.intent.action.SERVICE_STATE");
+        filter.addAction(ACTION_SERVICE_STATE);
         filter.addAction(android.telephony.SubscriptionManager.ACTION_DEFAULT_SUBSCRIPTION_CHANGED);
-        filter.addAction("android.intent.action.SIM_STATE_CHANGED");
+        filter.addAction(ACTION_SIM_STATE_CHANGED);
+        // Protected broadcasts from PHONE_UID (1001) are dropped on Android 13 when registered
+        // with RECEIVER_NOT_EXPORTED; RECEIVER_EXPORTED + strict action whitelist in onReceive
+        // preserves delivery across Android 13-17 while ignoring unexpected actions.
         if (android.os.Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(radio, filter, android.content.Context.RECEIVER_NOT_EXPORTED);
+            registerReceiver(radio, filter, android.content.Context.RECEIVER_EXPORTED);
         } else {
             registerReceiver(radio, filter);
+        }
+    }
+
+    /** Re-enforces persistent IPv6 suppression across Wi-Fi / cellular / VPN / ethernet changes. */
+    private void watchNetworks() {
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
+                    getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
+            if (cm == null) {
+                return;
+            }
+            android.net.NetworkRequest req = new android.net.NetworkRequest.Builder().build();
+            networkCallback = new android.net.ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(android.net.Network network) {
+                    ScreenUpdates.post(Dashboard::networkChanged);
+                }
+
+                @Override public void onLinkPropertiesChanged(android.net.Network network,
+                                                              android.net.LinkProperties lp) {
+                    ScreenUpdates.post(Dashboard::networkChanged);
+                }
+
+                @Override public void onLost(android.net.Network network) {
+                    ScreenUpdates.post(Dashboard::networkChanged);
+                }
+            };
+            cm.registerNetworkCallback(req, networkCallback);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -107,6 +152,7 @@ public final class MainActivity extends Activity {
         // 2.5s self-check window. This is what turns target.* from last-launch values into the
         // current process view without a manual pull.
         refreshHandler.removeCallbacks(delayedTargetRefresh);
+        dashboard.syncBodyguardOnResume();
         dashboard.startScan(true);
         refreshHandler.postDelayed(delayedTargetRefresh, 3200L);
     }
@@ -116,11 +162,26 @@ public final class MainActivity extends Activity {
         super.onPause();
     }
 
+    @Override public void onConfigurationChanged(android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (dashboard != null) {
+            dashboard.onConfigurationChanged();
+        }
+    }
+
     @Override public void onRequestPermissionsResult(int req, String[] perms, int[] grants) {
         dashboard.rescan();
     }
 
     @Override protected void onDestroy() {
+        if (networkCallback != null) {
+            try {
+                android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
+                        getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
+                if (cm != null) cm.unregisterNetworkCallback(networkCallback);
+            } catch (Throwable ignored) {}
+            networkCallback = null;
+        }
         if (radio != null) {
             try { unregisterReceiver(radio); } catch (Throwable ignored) {}
             radio = null;

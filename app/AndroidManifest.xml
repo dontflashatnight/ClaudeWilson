@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.walter.claudewilson"
-    android:versionCode="49"
-    android:versionName="1.0.21">
+    android:versionCode="50"
+    android:versionName="1.0.22">
 
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!-- read-only network state: default proxy, VPN transport, active network.
@@ -64,11 +64,13 @@
     </queries>
 
     <application android:allowBackup="false" android:debuggable="false"
+        android:extractNativeLibs="false"
         android:usesCleartextTraffic="false"
         android:label="ClaudeWilson" android:icon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity android:name=".MainActivity" android:exported="true"
-            android:screenOrientation="portrait">
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -96,6 +98,7 @@
         <meta-data android:name="xposedmodule" android:value="true" />
         <meta-data android:name="xposeddescription"
             android:value="ClaudeWilson automatic persona module" />
-        <meta-data android:name="xposedminversion" android:value="93" />
+        <meta-data android:name="xposedminversion" android:value="82" />
+        <meta-data android:name="xposedscope" android:resource="@array/xposed_scope" />
     </application>
 </manifest>

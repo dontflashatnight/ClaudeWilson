@@ -1,7 +1,9 @@
-# catalog 2026-11-02
+# catalog 2026-11-17
 # name|iso|mcc|utc|zones(;)|locales(;)|carriers|note
 # One row per region the switcher offers. Expected hardware tags are derived from
 # the tag table in Regions, so this file stays vendor neutral.
+# Sources: pbakondy/mcc-mnc-list (CC BY-SA), IANA tzdb (PD),
+# GeoNames countryInfo (CC BY 4.0), Unicode CLDR (Unicode License).
 日本|jp|440/441|UTC+9|Asia/Tokyo|ja-JP|docomo/au/SoftBank/Rakuten|CSC=DCM/KDI/SBM/RKT；日版机 SC-*/SCG*
 韩国|kr|450|UTC+9|Asia/Seoul|ko-KR|SKT/KT/LG U+|韩版机 SM-*N；CSC=SKC/KTC/LUC/KOO
 新加坡|sg|525|UTC+8|Asia/Singapore|en-SG;zh-SG;ms-SG|Singtel/StarHub/M1/SIMBA|CSC=XSP/MM1
@@ -24,3 +26,158 @@
 土耳其|tr|286|UTC+3|Europe/Istanbul|tr-TR|Turkcell/Vodafone/TürkTelekom|CSC=TUR
 巴西|br|724|UTC-3~-5|America/Sao_Paulo;America/Manaus;America/Belem;America/Fortaleza;America/Rio_Branco|pt-BR|Claro/Vivo/TIM|CSC=ZTO/ZVV
 南非|za|655|UTC+2|Africa/Johannesburg|en-ZA|Vodacom/MTN/Cell C|CSC=XFA/XFE
+# --- curated additions (public sources, hand-reviewed carriers/locales) ---
+阿根廷|ar|722|UTC-3|America/Argentina/Buenos_Aires;America/Argentina/Cordoba;America/Argentina/Salta;America/Argentina/Jujuy;America/Argentina/Tucuman;America/Argentina/Catamarca;America/Argentina/La_Rioja|es-AR|Claro/Movistar/Personal|
+奥地利|at|232|UTC+1~UTC+2|Europe/Vienna|de-AT|A1/Magenta/Drei|
+孟加拉|bd|470|UTC+6|Asia/Dhaka|bn-BD;en-BD|Grameenphone/Robi/Banglalink/Teletalk|
+比利时|be|206/270|UTC+1~UTC+2|Europe/Brussels|nl-BE;fr-BE;de-BE|Proximus/Orange/Telenet|
+巴林|bh|426|UTC+3|Asia/Bahrain|ar-BH|Batelco/Zain/STC|
+瑞士|ch|228|UTC+1~UTC+2|Europe/Zurich|de-CH;fr-CH;it-CH|Swisscom/Sunrise/Salt|
+智利|cl|730|UTC-6~UTC-3|America/Santiago;America/Coyhaique;America/Punta_Arenas;Pacific/Easter|es-CL|Entel/Movistar/Claro/WOM|
+哥伦比亚|co|732|UTC-5|America/Bogota|es-CO|Claro/Movistar/Tigo|
+捷克|cz|230|UTC+1~UTC+2|Europe/Prague|cs-CZ|O2/T-Mobile/Vodafone|
+丹麦|dk|238|UTC+1~UTC+2|Europe/Copenhagen|da-DK|TDC/Telia/Tre|
+埃及|eg|602|UTC+2~UTC+3|Africa/Cairo|ar-EG|Vodafone/Orange/Etisalat/WE|
+西班牙|es|214|UTC+0~UTC+2|Europe/Madrid;Africa/Ceuta;Atlantic/Canary|es-ES;ca-ES;gl-ES;eu-ES|Movistar/Vodafone/Orange/MásMóvil|
+芬兰|fi|244|UTC+2~UTC+3|Europe/Helsinki|fi-FI;sv-FI|Elisa/DNA/Telia|
+加纳|gh|620|UTC+0|Africa/Accra|en-GH|MTN/Vodafone/AirtelTigo|
+希腊|gr|202|UTC+2~UTC+3|Europe/Athens|el-GR|Cosmote/Vodafone/WIND|
+匈牙利|hu|216|UTC+1~UTC+2|Europe/Budapest|hu-HU|Telekom/Vodafone/Yettel|
+爱尔兰|ie|272|UTC+0~UTC+1|Europe/Dublin|en-IE;ga-IE|Vodafone/Three/Eir|
+以色列|il|425|UTC+2~UTC+3|Asia/Jerusalem|he-IL;ar-IL;en-IL|Partner/Cellcom/Pelephone/HOT Mobile|
+意大利|it|222|UTC+1~UTC+2|Europe/Rome|it-IT|TIM/Vodafone/WindTre/Iliad|
+约旦|jo|416|UTC+3|Asia/Amman|ar-JO|Zain/Orange/Umniah|
+肯尼亚|ke|639|UTC+3|Africa/Nairobi|en-KE;sw-KE|Safaricom/Airtel/Telkom|
+科威特|kw|419|UTC+3|Asia/Kuwait|ar-KW|Zain/Ooredoo/STC|
+斯里兰卡|lk|413|UTC+5:30|Asia/Colombo|si-LK;ta-LK;en-LK|Dialog/Mobitel/Hutch/Airtel|
+摩洛哥|ma|604|UTC+0~UTC+1|Africa/Casablanca|ar-MA;fr-MA|IAM/Orange/INWI|
+墨西哥|mx|334|UTC-8~UTC-5|America/Mexico_City;America/Cancun;America/Merida;America/Monterrey;America/Matamoros;America/Chihuahua;America/Ciudad_Juarez|es-MX|Telcel/AT&T/Movistar|
+尼日利亚|ng|621|UTC+1|Africa/Lagos|en-NG;ha-NG;yo-NG;ig-NG|MTN/Airtel/Glo/9mobile|
+荷兰|nl|204|UTC+1~UTC+2|Europe/Amsterdam|nl-NL|KPN/T-Mobile/Vodafone|
+挪威|no|242|UTC+1~UTC+2|Europe/Oslo|nb-NO;nn-NO|Telenor/Telia/ICE|
+尼泊尔|np|429|UTC+5:45|Asia/Kathmandu|ne-NP|NTC/Ncell/Smart Cell|
+阿曼|om|422|UTC+4|Asia/Muscat|ar-OM|Omantel/Ooredoo|
+秘鲁|pe|716|UTC-5|America/Lima|es-PE|Claro/Movistar/Entel/Bitel|
+巴基斯坦|pk|410|UTC+5|Asia/Karachi|ur-PK;en-PK|Jazz/Telenor/Ufone/Zong|
+波兰|pl|260|UTC+1~UTC+2|Europe/Warsaw|pl-PL|Orange/T-Mobile/Plus/Play|
+葡萄牙|pt|268|UTC-1~UTC+1|Europe/Lisbon;Atlantic/Madeira;Atlantic/Azores|pt-PT|MEO/NOS/Vodafone|
+卡塔尔|qa|427|UTC+3|Asia/Qatar|ar-QA;en-QA|Ooredoo/Vodafone|
+罗马尼亚|ro|226|UTC+2~UTC+3|Europe/Bucharest|ro-RO|Vodafone/Orange/Digi/Telekom|
+沙特|sa|420|UTC+3|Asia/Riyadh|ar-SA|STC/Mobily/Zain|
+瑞典|se|240|UTC+1~UTC+2|Europe/Stockholm|sv-SE|Telia/Tele2/Tre|
+科摩罗|km|654|UTC+3|Indian/Comoro|ar-KM;fr-KM|HURI/TELCO SA|
+# --- auto-generated from public sources ---
+安道尔|ad|213|UTC+1~UTC+2|Europe/Andorra|ca-AD|Andorra Telecom|
+安提瓜|ag|344|UTC-4|America/Antigua|en-AG|APUA/Digicel/FLOW|
+阿尔巴尼亚|al|276|UTC+1~UTC+2|Europe/Tirane|sq-AL;el-AL|ONE/Vodafone/ALBtelecom|
+亚美尼亚|am|283|UTC+4|Asia/Yerevan|hy-AM|Ucom/Team/VivaCell-MTS|
+安哥拉|ao|631|UTC+1|Africa/Luanda|pt-AO|UNITEL/MOVICEL/Africell|
+阿塞拜疆|az|400|UTC+4|Asia/Baku|az-AZ;ru-AZ;hy-AZ|Azercell/Bakcell/FONEX/Nar Mobile|
+波黑|ba|218|UTC+1~UTC+2|Europe/Sarajevo|bs-BA;hr-BA;sr-BA|HT-ERONET/m:tel/BH Mobile|
+巴巴多斯|bb|342|UTC-4|America/Barbados|en-BB|FLOW/Digicel|
+布基纳法索|bf|613|UTC+0|Africa/Ouagadougou|fr-BF;mos-BF|Telmob/Orange/Telecel Faso|
+保加利亚|bg|284|UTC+2~UTC+3|Europe/Sofia|bg-BG;tr-BG|A1/Telenor/Vivacom|
+布隆迪|bi|642|UTC+2|Africa/Bujumbura|fr-BI;rn-BI|econet Leo/Onatel/Lumitel|
+贝宁|bj|616|UTC+1|Africa/Porto-Novo|fr-BJ|MTN/Moov/Celtiis|
+文莱|bn|528|UTC+8|Asia/Brunei|ms-BN;en-BN|PCSB/DST|
+玻利维亚|bo|736|UTC-4|America/La_Paz|es-BO;qu-BO;ay-BO|Viva/Entel/Tigo|
+巴哈马|bs|364|UTC-5~UTC-4|America/Nassau|en-BS|BTC/Aliv|
+不丹|bt|402|UTC+6|Asia/Thimphu|dz-BT|B-Mobile/TashiCell|
+博茨瓦纳|bw|652|UTC+2|Africa/Gaborone|en-BW;tn-BW|Mascom/Orange/beMobile|
+伯利兹|bz|702|UTC-6|America/Belize|en-BZ;es-BZ|SMART/DigiCell|
+刚果（布）|cg|629|UTC+1|Africa/Brazzaville|fr-CG;kg-CG;ln-CG|MTN/Airtel/Azur|
+科特迪瓦|ci|612|UTC+0|Africa/Abidjan|fr-CI|Moov/Orange/KoZ/MTN|
+喀麦隆|cm|624|UTC+1|Africa/Douala|en-CM;fr-CM|MTN Cameroon/Orange/Camtel/Nexttel|
+哥斯达黎加|cr|712|UTC-6|America/Costa_Rica|es-CR;en-CR|Kölbi ICE/Claro/Liberty|
+佛得角|cv|625|UTC-1|Atlantic/Cape_Verde|pt-CV|CVMOVEL/T+|
+塞浦路斯|cy|280|UTC+2~UTC+3|Asia/Nicosia;Asia/Famagusta|el-CY;tr-CY;en-CY|Cytamobile-Vodafone/Epic/PrimeTel/lemontel|
+吉布提|dj|638|UTC+3|Africa/Djibouti|fr-DJ;ar-DJ;so-DJ;aa-DJ|Evatis|
+多米尼克|dm|366|UTC-4|America/Dominica|en-DM|Digicel/FLOW|
+多米尼加|do|370|UTC-4|America/Santo_Domingo|es-DO|Altice/Claro/Viva/Wind|
+阿尔及利亚|dz|603|UTC+1|Africa/Algiers|ar-DZ|Mobilis/Djezzy/Ooredoo|
+厄瓜多尔|ec|740|UTC-6~UTC-5|America/Guayaquil;Pacific/Galapagos|es-EC|Movistar/Claro/CNT Mobile/Tuenti|
+爱沙尼亚|ee|248|UTC+2~UTC+3|Europe/Tallinn|et-EE;ru-EE|Telia/Elisa/Tele2/Top Connect|
+斐济|fj|542|UTC+12|Pacific/Fiji|en-FJ;fj-FJ|Vodafone/Digicel/TFL|
+密克罗尼西亚|fm|550|UTC+10~UTC+11|Pacific/Chuuk;Pacific/Pohnpei;Pacific/Kosrae|en-FM;chk-FM;pon-FM|FSMTC|
+加蓬|ga|628|UTC+1|Africa/Libreville|fr-GA|Libertis/Moov/Airtel|
+格林纳达|gd|352|UTC-4|America/Grenada|en-GD|Digicel/FLOW|
+格鲁吉亚|ge|282|UTC+4|Asia/Tbilisi|ka-GE;ru-GE;hy-GE;az-GE|Silknet/Cellfie/Magticom|
+冈比亚|gm|607|UTC+0|Africa/Banjul|en-GM;mnk-GM;wo-GM|Gamcel/Africell/Comium/QCell|
+几内亚|gn|611|UTC+0|Africa/Conakry|fr-GN|Orange/MTN/Cellcom|
+赤道几内亚|gq|627|UTC+1|Africa/Malabo|es-GQ;fr-GQ;pt-GQ|Orange GQ/Muni|
+危地马拉|gt|704|UTC-6|America/Guatemala|es-GT|Claro/Tigo/RED/INTELFON|
+几内亚比绍|gw|632|UTC+0|Africa/Bissau|pt-GW|MTN Bissau/Orange|
+圭亚那|gy|738|UTC-4|America/Guyana|en-GY|E-Networks/Digicel/GT&T Cellink Plus/Quark Communications Inc.|
+洪都拉斯|hn|708|UTC-6|America/Tegucigalpa|es-HN|Claro/Tigo/Hondutel|
+克罗地亚|hr|219|UTC+1~UTC+2|Europe/Zagreb|hr-HR;sr-HR|HT HR/Telemach/A1 HR|
+海地|ht|372|UTC-5~UTC-4|America/Port-au-Prince|ht-HT;fr-HT|Digicel/Natcom|
+冰岛|is|274|UTC+0|Atlantic/Reykjavik|is-IS;en-IS;de-IS;da-IS|Siminn/Nova/Vodafone|
+牙买加|jm|338|UTC-5|America/Jamaica|en-JM|FLOW/Digicel|
+吉尔吉斯斯坦|kg|437|UTC+6|Asia/Bishkek|ky-KG;uz-KG;ru-KG|Beeline/MegaCom/O!/Saima Telecom|
+柬埔寨|kh|456|UTC+7|Asia/Phnom_Penh|km-KH;fr-KH;en-KH|Smart/Cellcard/Metfone/SEATEL|
+基里巴斯|ki|545|UTC+12~UTC+14|Pacific/Tarawa;Pacific/Kanton;Pacific/Kiritimati|en-KI;gil-KI|Kiribati - ATH/Kiribati - Frigate Net|
+圣基茨|kn|356|UTC-4|America/St_Kitts|en-KN|FLOW/Digicel|
+哈萨克斯坦|kz|401|UTC+5|Asia/Almaty;Asia/Qyzylorda;Asia/Qostanay;Asia/Aqtobe;Asia/Aqtau;Asia/Atyrau;Asia/Oral|kk-KZ;ru-KZ|Beeline/Kcell/Altel/Kazakhtelecom|
+老挝|la|457|UTC+7|Asia/Vientiane|lo-LA;fr-LA;en-LA|LaoTel/ETL/Unitel/Best|
+黎巴嫩|lb|415|UTC+2~UTC+3|Asia/Beirut|ar-LB;fr-LB;en-LB;hy-LB|Alfa/Touch|
+圣卢西亚|lc|358|UTC-4|America/St_Lucia|en-LC|Digicel/FLOW|
+列支敦士登|li|295|UTC+1~UTC+2|Europe/Vaduz|de-LI|Swisscom/7acht/FL1/Cubic Telecom|
+利比里亚|lr|618|UTC+0|Africa/Monrovia|en-LR|Lonestar Cell MTN/Novafone/Orange LBR/LIBTELCO|
+莱索托|ls|651|UTC+2|Africa/Maseru|en-LS;st-LS;zu-LS;xh-LS|Vodacom/Econet Telecom|
+立陶宛|lt|246|UTC+2~UTC+3|Europe/Vilnius|lt-LT;ru-LT;pl-LT|Telia/Tele2/Bite|
+卢森堡|lu|270|UTC+1~UTC+2|Europe/Luxembourg|lb-LU;de-LU;fr-LU|POST/Orange/Tango|
+拉脱维亚|lv|247|UTC+2~UTC+3|Europe/Riga|lv-LV;ru-LV;lt-LV|LMT/Tele2/TRIATEL/Bite|
+摩纳哥|mc|212|UTC+1~UTC+2|Europe/Monaco|fr-MC;en-MC;it-MC|Monaco Telecom|
+摩尔多瓦|md|259|UTC+2~UTC+3|Europe/Chisinau|ro-MD;ru-MD;gag-MD;tr-MD|Orange/Moldcell/Moldtelecom|
+黑山|me|297|UTC+1~UTC+2|Europe/Podgorica|sr-ME;hu-ME;bs-ME;sq-ME|One/telekom.me/m:tel|
+马达加斯加|mg|646|UTC+3|Indian/Antananarivo|fr-MG;mg-MG|Airtel/Orange/Telma/BIP / blueline|
+马绍尔群岛|mh|551|UTC+12|Pacific/Majuro;Pacific/Kwajalein|mh-MH;en-MH|Marshall Islands National Telecommunications Authority (MINTA)|
+北马其顿|mk|294|UTC+1~UTC+2|Europe/Skopje|mk-MK;sq-MK;tr-MK|Telekom.mk/A1 MK/Lycamobile|
+北马里亚纳|mp|310|UTC+10|Pacific/Saipan|en-MP|IT&E Wireless/Docomo|
+毛里塔尼亚|mr|609|UTC+0|Africa/Nouakchott|ar-MR;fuc-MR;fr-MR|Mattel/Chinguitel/Moov|
+马耳他|mt|278|UTC+1~UTC+2|Europe/Malta|mt-MT;en-MT|Epic/GO/Melita|
+毛里求斯|mu|617|UTC+4|Indian/Mauritius|en-MU;bho-MU;fr-MU|my.t/MOKOZE / AZU/CHILI/Emtel|
+马尔代夫|mv|472|UTC+5|Indian/Maldives|dv-MV;en-MV|Dhiraagu/Ooredoo|
+马拉维|mw|650|UTC+2|Africa/Blantyre|en-MW;ny-MW|TNM/Access/MTL/Airtel|
+莫桑比克|mz|643|UTC+2|Africa/Maputo|pt-MZ;vmw-MZ|Vodacom/Tmcel/Movitel|
+纳米比亚|na|649|UTC+2|Africa/Windhoek|en-NA;af-NA;de-NA;hz-NA|MTC/switch/TN Mobile/Paratus Telecommunications (Pty)|
+尼日尔|ne|614|UTC+1|Africa/Niamey|fr-NE;ha-NE;kr-NE;dje-NE|SahelCom/Airtel/Moov/Orange|
+尼加拉瓜|ni|710|UTC-6|America/Managua|es-NI;en-NI|Claro/Tigo|
+瑙鲁|nr|536|UTC+12|Pacific/Nauru|na-NR;en-NR|Digicel|
+巴拿马|pa|714|UTC-5|America/Panama|es-PA;en-PA|Tigo/Cable & Wireless/+Movil|
+巴布亚新几内亚|pg|537|UTC+10~UTC+11|Pacific/Port_Moresby;Pacific/Bougainville|en-PG;ho-PG;tpi-PG|bmobile/citifon/Digicel|
+巴勒斯坦|ps|425|UTC+2~UTC+3|Asia/Gaza;Asia/Hebron|ar-PS|Jawwal/Ooredoo|
+帕劳|pw|552|UTC+9|Pacific/Palau|pau-PW;en-PW|PNCC/PT Waves/PMCI|
+巴拉圭|py|744|UTC-3|America/Asuncion|es-PY;gn-PY|VOX/Claro/Tigo/Personal|
+塞尔维亚|rs|220|UTC+1~UTC+2|Europe/Belgrade|sr-RS;hu-RS;bs-RS|Yettel/mt:s/A1 SRB/Globaltel|
+卢旺达|rw|635|UTC+2|Africa/Kigali|rw-RW;en-RW;fr-RW;sw-RW|MTN/Airtel/Olleh|
+所罗门群岛|sb|540|UTC+11|Pacific/Guadalcanal|en-SB;tpi-SB|BREEZE/BeMobile|
+塞舌尔|sc|633|UTC+4|Indian/Mahe|en-SC;fr-SC|Cable & Wireless/Airtel|
+斯洛文尼亚|si|293|UTC+1~UTC+2|Europe/Ljubljana|sl-SI|Telekom Slovenije/A1/Telemach/T-2|
+斯洛伐克|sk|231|UTC+1~UTC+2|Europe/Bratislava|sk-SK;hu-SK|Orange/Telekom/4ka/O2|
+塞拉利昂|sl|619|UTC+0|Africa/Freetown|en-SL;men-SL;tem-SL|Africell/Orange/SierraTel/Smart Mobile|
+圣马力诺|sm|292|UTC+1~UTC+2|Europe/San_Marino|it-SM|PRIMA|
+塞内加尔|sn|608|UTC+0|Africa/Dakar|fr-SN;wo-SN;fuc-SN;mnk-SN|Orange/Free/Expresso|
+苏里南|sr|746|UTC-3|America/Paramaribo|nl-SR;en-SR;srn-SR|Telesur/Digicel|
+圣多美和普林西比|st|626|UTC+0|Africa/Sao_Tome|pt-ST|CSTmovel/Unitel STP|
+萨尔瓦多|sv|706|UTC-6|America/El_Salvador|es-SV|Claro/Digicel/Tigo/Movistar|
+斯威士兰|sz|653|UTC+2|Africa/Mbabane|en-SZ;ss-SZ|Eswatini Mobile Limited/MTN Eswatini|
+乍得|td|622|UTC+1|Africa/Ndjamena|fr-TD;ar-TD|Airtel/Tawali/Tigo/Salam|
+多哥|tg|615|UTC+0|Africa/Lome|fr-TG;ee-TG|Togo Cell/Moov|
+塔吉克斯坦|tj|436|UTC+5|Asia/Dushanbe|tg-TJ;ru-TJ|Tcell/MegaFon/Babilon-M/ZET-Mobile|
+东帝汶|tl|514|UTC+9|Asia/Dili|tet-TL;pt-TL;id-TL;en-TL|Telkomcel/TT/Telemor|
+土库曼斯坦|tm|438|UTC+5|Asia/Ashgabat|tk-TM;ru-TM;uz-TM|TM-Cell/AGTS CDMA|
+突尼斯|tn|605|UTC+1|Africa/Tunis|ar-TN;fr-TN|Orange/Tunicell/Ooredoo|
+汤加|to|539|UTC+13|Pacific/Tongatapu|to-TO;en-TO|U-Call/Shoreline Communication/Digicel|
+特立尼达|tt|374|UTC-4|America/Port_of_Spain|en-TT;fr-TT;es-TT|bmobile/Digicel|
+图瓦卢|tv|553|UTC+12|Pacific/Funafuti|tvl-TV;en-TV;sm-TV;gil-TV|TTC|
+坦桑尼亚|tz|640|UTC+3|Africa/Dar_es_Salaam|sw-TZ;en-TZ;ar-TZ|tiGO/Zantel/Vodacom/Airtel|
+乌干达|ug|641|UTC+3|Africa/Kampala|en-UG;lg-UG;sw-UG;ar-UG|Airtel/Tangerine Uganda Limited/MTN/Uganda Telecom|
+乌拉圭|uy|748|UTC-3|America/Montevideo|es-UY|Antel/Movistar/Claro|
+乌兹别克斯坦|uz|434|UTC+5|Asia/Samarkand;Asia/Tashkent|uz-UZ;ru-UZ;tg-UZ|UzMobile/Beeline/Ucell/Perfectum Mobile|
+梵蒂冈|va|222|UTC+1~UTC+2|Europe/Vatican|it-VA|TIM/Vodafone/WindTre/Iliad|
+圣文森特|vc|360|UTC-4|America/St_Vincent|en-VC;fr-VC|Digicel/FLOW|
+瓦努阿图|vu|541|UTC+11|Pacific/Efate|bi-VU;en-VU;fr-VU|AIL/SMILE/Digicel/WanTok|
+萨摩亚|ws|549|UTC+13|Pacific/Apia|sm-WS;en-WS|Digicel/Vodafone|
+赞比亚|zm|645|UTC+2|Africa/Lusaka|en-ZM;bem-ZM;loz-ZM;lun-ZM|Airtel/MTN/ZAMTEL|
+津巴布韦|zw|648|UTC+2|Africa/Harare|en-ZW;sn-ZW;nr-ZW;nd-ZW|Net*One/Telecel/Econet|

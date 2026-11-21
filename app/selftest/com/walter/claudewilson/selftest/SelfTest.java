@@ -1,14 +1,23 @@
 package com.walter.claudewilson.selftest;
 
 import com.walter.claudewilson.model.Account;
+import com.walter.claudewilson.model.AppVisibilityPolicy;
+import com.walter.claudewilson.model.AtomicTextFile;
 import com.walter.claudewilson.model.AttestationFacts;
+import com.walter.claudewilson.model.AuditedBaselines;
+import com.walter.claudewilson.model.BodyguardEventCodec;
+import com.walter.claudewilson.model.BodyguardPolicy;
 import com.walter.claudewilson.model.BuildValues;
 import com.walter.claudewilson.model.CheckConstraint;
 import com.walter.claudewilson.model.CheckItem;
 import com.walter.claudewilson.model.ChatGptChecklist;
 import com.walter.claudewilson.model.ClaudeChecklist;
+import com.walter.claudewilson.model.CoordinateParser;
+import com.walter.claudewilson.model.DiagnosticClassifier;
 import com.walter.claudewilson.model.NetworkFacts;
+import com.walter.claudewilson.model.NetworkRules;
 import com.walter.claudewilson.model.PlatformFacts;
+import com.walter.claudewilson.model.PersonaSalt;
 import com.walter.claudewilson.model.PersonaSynth;
 import com.walter.claudewilson.model.TlsFacts;
 import com.walter.claudewilson.model.UserSpaces;
@@ -23,6 +32,11 @@ import com.walter.claudewilson.model.LocationPayload;
 import com.walter.claudewilson.model.LocationPlan;
 import com.walter.claudewilson.model.MapProjection;
 import com.walter.claudewilson.model.PermissionFacts;
+import com.walter.claudewilson.model.PersonaEditRules;
+import com.walter.claudewilson.model.PersonaMatchEngine;
+import com.walter.claudewilson.model.DiagnosticArchiveParser;
+import com.walter.claudewilson.model.Ipv6Policy;
+import com.walter.claudewilson.model.PreflightVerdict;
 import com.walter.claudewilson.model.ProfileIdentity;
 import com.walter.claudewilson.model.WifiProfile;
 import com.walter.claudewilson.model.Mount;
@@ -35,7 +49,9 @@ import com.walter.claudewilson.model.Report;
 import com.walter.claudewilson.model.RiskModel;
 import com.walter.claudewilson.model.RootArtifactPolicy;
 import com.walter.claudewilson.model.RootScript;
+import com.walter.claudewilson.model.SensorProfile;
 import com.walter.claudewilson.model.ShellQuote;
+import com.walter.claudewilson.model.SimPolicy;
 import com.walter.claudewilson.model.SimValues;
 import com.walter.claudewilson.model.Snapshot;
 import com.walter.claudewilson.model.Status;
@@ -250,6 +266,24 @@ public final class SelfTest {
         locationPlanStaysInsideItsRadius();
         coarseLocationSnapsAndDropsMotion();
         locationPlanRejectsImpossibleCoordinates();
+        checklistsIncludeIpv6SpoofAndLinkFallback();
+        personaSynthVaryIsIsomorphic();
+        personaSynthAlignsAcrossApi33To37();
+        fingerprintCoherenceDetectsCrossGenMismatches();
+        propCoherenceDetectsSdkAndReleaseMismatches();
+        auditedBaselinesDetectVersionDrift();
+        simPolicyEnforcesRestrictedCatalogAndDualSimSafety();
+        personaMatchEngineDetectsLeaksTaintAndDrift();
+        bodyguardPolicyAndDiagnosticClassifierWork();
+        bodyguardEventCodecBoundsAndClassifies();
+        personasCatalogAssetIsValidAndSelfConsistent();
+        personaEditRulesAndGeoCitiesWork();
+        preflightVerdictPrioritizesBlockersAndWarnings();
+        ipv6PolicyDefaultsOffAndBuildsWatchdogCommands();
+        diagnosticArchiveParserSplitsStagingCachesCleanly();
+        coordinateParserAndRadioOverridesWork();
+        personaSaltLayersAndMemoryRulesWork();
+        atomicTextFilePersistsAndReplacesCleanly();
 
         report();
     }
@@ -1017,6 +1051,12 @@ public final class SelfTest {
         check("su rc zero is not a failure", !ShellQuote.failed("SU_RC=0"), "failed");
         check("su rc non-zero is a failure", ShellQuote.failed("Permission denied\nSU_RC=1"),
                 "not failed");
+        check("shell rc zero is not a failure", !ShellQuote.failed("rc=0"), "failed");
+        check("shell rc non-zero is a failure", ShellQuote.failed("rc=1"), "not failed");
+        check("shell trailing rc non-zero is a failure",
+                ShellQuote.failed("mkdir: Permission denied\nrc=1"), "not failed");
+        check("mid-line rc token does not masquerade as exit code",
+                !ShellQuote.failed("CLEAR pkg=a.b user=0 rc=0 out=Success\nDONE"), "failed");
         check("missing marker is not a su failure", ShellQuote.suRc("plain output")
                 == Integer.MIN_VALUE, "marker found");
         check("audit tag keeps the status", "su=0".equals(ShellQuote.suRcTag("APPLY:DONE\nSU_RC=0")),
@@ -1271,13 +1311,35 @@ public final class SelfTest {
     private static void rootArtifactPolicyIsNarrow() {
         check("su binary hidden", RootArtifactPolicy.hidden("/system/bin/su"));
         check("ksu tree hidden", RootArtifactPolicy.hidden("/data/adb/ksu/bin/ksud"));
+        check("config dir hidden", RootArtifactPolicy.hidden("/data/local/tmp/claudewilson/claude.json"));
+        check("legacy config hidden", RootArtifactPolicy.hidden("/data/local/tmp/persona.json"));
+        check("legacy hookcheck hidden",
+                RootArtifactPolicy.hidden("/data/data/com.anthropic.claude/files/hookcheck.txt"));
+        check("legacy cw-hookcheck hidden",
+                RootArtifactPolicy.hidden("/sdcard/Android/data/com.anthropic.claude/files/cw-hookcheck.main.txt"));
+        check("legacy cw-telemetry hidden",
+                RootArtifactPolicy.hidden("/data/data/com.anthropic.claude/cache/cw-telemetry/events.jsonl"));
         check("lookalike path kept", !RootArtifactPolicy.hidden("/system/bin/su2"));
         check("ordinary path kept", !RootArtifactPolicy.hidden("/system/bin/sh"));
+        check("ordinary target file kept",
+                !RootArtifactPolicy.hidden("/data/data/com.anthropic.claude/files/INSTALLATION"));
         check("su command hidden", RootArtifactPolicy.isSuCommand(new String[]{"su", "-c", "id"}));
         check("which su hidden", RootArtifactPolicy.isSuCommand("which su"));
         check("absolute su hidden", RootArtifactPolicy.isSuCommand("/system/bin/su -c id"));
         check("issue is not su", !RootArtifactPolicy.isSuCommand("issue"));
         check("sudo is not su", !RootArtifactPolicy.isSuCommand("sudo -i"));
+        check("control app package hidden",
+                RootArtifactPolicy.hiddenPackage("com.walter.claudewilson"));
+        check("magisk package hidden",
+                RootArtifactPolicy.hiddenPackage("com.topjohnwu.magisk"));
+        check("lsposed package hidden",
+                RootArtifactPolicy.hiddenPackage("org.lsposed.manager"));
+        check("shizuku package hidden",
+                RootArtifactPolicy.hiddenPackage("moe.shizuku.privileged.api"));
+        check("target package kept",
+                !RootArtifactPolicy.hiddenPackage("com.anthropic.claude"));
+        check("play store package kept",
+                !RootArtifactPolicy.hiddenPackage("com.android.vending"));
     }
 
     // ---- risk model --------------------------------------------------------------------
@@ -2153,6 +2215,1459 @@ public final class SelfTest {
             rejected = true;
         }
         check("location: constructor rejects", rejected);
+    }
+
+    private static void checklistsIncludeIpv6SpoofAndLinkFallback() {
+        boolean claudeV6 = false;
+        for (CheckItem item : ClaudeChecklist.specs()) {
+            claudeV6 |= "target.ipv6_spoof".equals(item.id());
+        }
+        boolean chatgptV6 = false;
+        for (CheckItem item : ChatGptChecklist.specs()) {
+            chatgptV6 |= "target.ipv6_spoof".equals(item.id());
+        }
+        check("checklists: claude ipv6_spoof row", claudeV6);
+        check("checklists: chatgpt ipv6_spoof row", chatgptV6);
+
+        Map<String, String> data = new LinkedHashMap<String, String>();
+        data.put("target_installed", "true");
+        data.put("target_running", "true");
+        Map<String, String> hook = new LinkedHashMap<String, String>();
+        hook.put("armed", "1");
+        hook.put("iface_ips", "192.168.1.25,");
+        hook.put("link_addrs", "wlan0|192.168.1.25/24,2003:d4:8f12:3a01::7/64,");
+        hook.put("ipv6_spoof", "2003:d4:8f12:3a01::7");
+        RiskModel gptModel = ChatGptChecklist.build(
+                data, hook, base().build(), "Europe/Berlin", "DE", 1700000000000L, true);
+        CheckItem netItem = gptModel.item("target.network_addresses");
+        CheckItem spoofItem = gptModel.item("target.ipv6_spoof");
+        check("chatgpt link_addrs fallback populates global v6",
+                netItem != null && netItem.value() != null
+                        && netItem.value().contains("2003:d4:8f12:3a01::7"),
+                netItem == null ? "null" : netItem.value());
+        check("chatgpt ipv6_spoof item read",
+                spoofItem != null && "2003:d4:8f12:3a01::7".equals(spoofItem.value()),
+                spoofItem == null ? "null" : spoofItem.value());
+    }
+
+    // ---- Android 13-17 persona synthesis & cross-generation coherence ------------------
+
+    private static void personaSynthVaryIsIsomorphic() {
+        String[] pixel = {"Pixel 9", "Google", "google", "Pixel 9", "tokay", "tokay",
+                "tokay", "tokay",
+                "google/tokay/tokay:15/AP3A.241005.015/12270533:user/release-keys",
+                "AP3A.241005.015", "12270533", "15", "35", "2024-10-05"};
+        String[] oneplus = {"OnePlus 12", "OnePlus", "OnePlus", "CPH2581", "OP5959L1",
+                "CPH2581EE", "qcom", "kalama",
+                "OnePlus/CPH2581EE/OP5959L1:15/UKQ1.230924.001/R.1e31d5:user/release-keys",
+                "UKQ1.230924.001", "R.1e31d5", "15", "35", "2024-10-05"};
+        for (long seed = 1L; seed <= 25L; seed++) {
+            String[] p = PersonaSynth.cross(pixel, seed);
+            check("aosp .015 suffix stays 3 digits (seed=" + seed + ")",
+                    p[9].matches("AP3A\\.241005\\.\\d{3}"), p[9]);
+            check("pixel incremental stays 8 digits (seed=" + seed + ")",
+                    p[10].matches("[1-9]\\d{7}"), p[10]);
+
+            String[] s = PersonaSynth.cross(SAMSUNG_ROW, seed);
+            check("samsung build id preserves dots/case/digits (seed=" + seed + ")",
+                    s[9].matches("AP3A\\.240905\\.01\\d\\.[A-Z]\\d"), s[9]);
+            check("samsung incremental keeps uppercase/digit classes (seed=" + seed + ")",
+                    s[10].matches("S928BXXS5[A-Z]{3}\\d"), s[10]);
+
+            String[] op = PersonaSynth.cross(oneplus, seed);
+            check("oneplus R.1e31d5 stays lowercase hex (seed=" + seed + ")",
+                    op[10].matches("R\\.1e[0-9a-f]{4}"), op[10]);
+            check("oneplus build id keeps .001 numeric suffix (seed=" + seed + ")",
+                    op[9].matches("UKQ1\\.230924\\.\\d{3}"), op[9]);
+        }
+    }
+
+    private static void personaSynthAlignsAcrossApi33To37() {
+        String[] pixelTemplate = {"Pixel 9 Pro", "Google", "google", "Pixel 9 Pro",
+                "caiman", "caiman", "caiman", "caiman",
+                "google/caiman/caiman:15/AP3A.241005.015/12270533:user/release-keys",
+                "AP3A.241005.015", "12270533", "15", "35", "2024-10-05"};
+        int[] sdks = {33, 34, 35, 36, 37};
+        String[] releases = {"13", "14", "15", "16", "17"};
+        String[] prefixes = {"TQ3A", "AP2A", "AP3A", "BP3A", "CP1A"};
+        int[] minYears = {2023, 2024, 2024, 2025, 2026};
+        int[] maxYears = {2023, 2024, 2025, 2026, 2026};
+
+        for (int i = 0; i < sdks.length; i++) {
+            int sdk = sdks[i];
+            String rel = releases[i];
+            String[] aligned = PersonaSynth.alignToHostSdk(pixelTemplate, sdk, rel, 700L + i);
+            check("align api " + sdk + ": sdk anchored",
+                    String.valueOf(sdk).equals(aligned[12]), aligned[12]);
+            check("align api " + sdk + ": release anchored",
+                    rel.equals(aligned[11]), aligned[11]);
+            check("align api " + sdk + ": fingerprint release segment",
+                    aligned[8].contains(":" + rel + "/"), aligned[8]);
+            check("align api " + sdk + ": build prefix",
+                    aligned[9].startsWith(prefixes[i] + "."), aligned[9]);
+            check("align api " + sdk + ": security patch format",
+                    aligned[13].matches("\\d{4}-\\d{2}-\\d{2}"), aligned[13]);
+            int year = Integer.parseInt(aligned[13].substring(0, 4));
+            check("align api " + sdk + ": security patch year valid",
+                    year >= minYears[i] && year <= maxYears[i], aligned[13]);
+            String idYm = "20" + aligned[9].substring(5, 7) + "-" + aligned[9].substring(7, 9);
+            check("align api " + sdk + ": build ID and patch share YYYY-MM",
+                    aligned[13].startsWith(idYm + "-"), aligned[9] + " vs " + aligned[13]);
+
+            BuildValues bv = fromRow(aligned).toBuilder()
+                    .release(aligned[11])
+                    .sdkInt(sdk)
+                    .sdkIntFull(sdk >= 36 ? sdk * 100000 : 0)
+                    .build();
+            Snapshot snapshot = base().buildValues(bv).build();
+            expect("align api " + sdk + ": passes fingerprint coherence",
+                    new FingerprintCoherenceProbe().run(snapshot), Status.PASS, Reason.OK);
+        }
+
+        // Also verify Samsung suffix (.A2) is preserved across API remapping (e.g. 35 -> 36).
+        String[] samsung36 = PersonaSynth.alignToHostSdk(SAMSUNG_ROW, 36, "16", 99L);
+        check("samsung api 36 preserves .A2 suffix",
+                samsung36[9].startsWith("BP3A.") && samsung36[9].endsWith(".A2"), samsung36[9]);
+        check("samsung api 36 fingerprint carries :16/",
+                samsung36[8].contains(":16/BP3A."), samsung36[8]);
+    }
+
+    private static void fingerprintCoherenceDetectsCrossGenMismatches() {
+        BuildValues coherent16 = BuildValues.builder()
+                .manufacturer("Google")
+                .brand("google")
+                .model("Pixel 10 Pro")
+                .device("blazer")
+                .product("blazer")
+                .type("user")
+                .buildId("BP3A.250905.014")
+                .incremental("13873947")
+                .display("BP3A.250905.014")
+                .fingerprint("google/blazer/blazer:16/BP3A.250905.014/13873947:user/release-keys")
+                .tags("release-keys")
+                .release("16")
+                .sdkInt(36)
+                .sdkIntFull(3600000)
+                .time(1757000000000L)
+                .build();
+        expect("coherent Android 16 build passes",
+                new FingerprintCoherenceProbe().run(base().buildValues(coherent16).build()),
+                Status.PASS, Reason.OK);
+
+        // fp.release (:16/) vs Build.VERSION.RELEASE (15)
+        Snapshot fpRelMismatch = base()
+                .buildValues(coherent16.toBuilder().release("15").sdkInt(35).sdkIntFull(0).build())
+                .build();
+        expect("fingerprint release mismatch fails",
+                new FingerprintCoherenceProbe().run(fpRelMismatch),
+                Status.FAIL, Reason.INCONSISTENT);
+
+        // SDK_INT (35) vs Build.VERSION.RELEASE (16)
+        Snapshot sdkRelMismatch = base()
+                .buildValues(coherent16.toBuilder().sdkInt(35).sdkIntFull(0).build())
+                .build();
+        expect("sdk_int vs release mismatch fails",
+                new FingerprintCoherenceProbe().run(sdkRelMismatch),
+                Status.FAIL, Reason.INCONSISTENT);
+
+        // SDK_INT (35) vs SDK_INT_FULL (3600000)
+        Snapshot sdkFullMismatch = base()
+                .buildValues(coherent16.toBuilder().sdkInt(35).sdkIntFull(3600000).build())
+                .build();
+        expect("sdk_int vs sdk_int_full mismatch fails",
+                new FingerprintCoherenceProbe().run(sdkFullMismatch),
+                Status.FAIL, Reason.INCONSISTENT);
+
+        // Empty release field, but sdk_int (36) disagrees with fingerprint release (:14/)
+        Snapshot fpSdkMismatch = base()
+                .buildValues(samsung().toBuilder().sdkInt(36).build())
+                .build();
+        expect("sdk_int vs fingerprint release mismatch fails",
+                new FingerprintCoherenceProbe().run(fpSdkMismatch),
+                Status.FAIL, Reason.INCONSISTENT);
+    }
+
+    private static void propCoherenceDetectsSdkAndReleaseMismatches() {
+        BuildValues bv16 = samsung().toBuilder()
+                .release("16")
+                .sdkInt(36)
+                .sdkIntFull(3600001)
+                .build();
+        Snapshot coherent = base()
+                .buildValues(bv16)
+                .prop("ro.build.version.release", Text.of("16"))
+                .prop("ro.build.version.release_or_codename", Text.of("16"))
+                .prop("ro.build.version.sdk", Text.of("36"))
+                .prop("ro.build.version.sdk_full", Text.of("36.1"))
+                .build();
+        expect("coherent sdk/sdk_full/release props pass",
+                new PropCoherenceProbe().run(coherent), Status.PASS, Reason.OK);
+
+        // ro.build.version.sdk disagrees with Build.VERSION.SDK_INT
+        Snapshot sdkMismatch = base()
+                .buildValues(bv16)
+                .prop("ro.build.version.sdk", Text.of("35"))
+                .build();
+        expect("ro.build.version.sdk mismatch fails",
+                new PropCoherenceProbe().run(sdkMismatch), Status.FAIL, Reason.INCONSISTENT);
+
+        // ro.build.version.sdk_full disagrees with SDK_INT_FULL
+        Snapshot sdkFullMismatch = base()
+                .buildValues(bv16)
+                .prop("ro.build.version.sdk_full", Text.of("36.0"))
+                .build();
+        expect("ro.build.version.sdk_full minor mismatch fails",
+                new PropCoherenceProbe().run(sdkFullMismatch), Status.FAIL, Reason.INCONSISTENT);
+
+        // ro.build.version.sdk_full disagrees with SDK_INT when sdkIntFull is unset
+        Snapshot sdkFullVsSdk = base()
+                .buildValues(samsung().toBuilder().sdkInt(35).build())
+                .prop("ro.build.version.sdk_full", Text.of("36.0"))
+                .build();
+        expect("ro.build.version.sdk_full vs sdk_int mismatch fails",
+                new PropCoherenceProbe().run(sdkFullVsSdk), Status.FAIL, Reason.INCONSISTENT);
+
+        // ro.build.version.release_or_codename disagrees with ro.build.version.release
+        Snapshot relCodenameMismatch = base()
+                .buildValues(bv16)
+                .prop("ro.build.version.release", Text.of("16"))
+                .prop("ro.build.version.release_or_codename", Text.of("15"))
+                .build();
+        expect("ro.build.version.release_or_codename mismatch fails",
+                new PropCoherenceProbe().run(relCodenameMismatch),
+                Status.FAIL, Reason.INCONSISTENT);
+
+        // Developer preview build where codename != REL should not false-positive
+        Snapshot preview = base()
+                .buildValues(samsung().toBuilder().release("17").sdkInt(37).build())
+                .prop("ro.build.version.release", Text.of("17"))
+                .prop("ro.build.version.codename", Text.of("CinnamonBun"))
+                .prop("ro.build.version.release_or_codename", Text.of("CinnamonBun"))
+                .prop("ro.build.version.sdk", Text.of("37"))
+                .build();
+        expect("preview codename release_or_codename passes",
+                new PropCoherenceProbe().run(preview), Status.PASS, Reason.OK);
+
+        // target.sdk checklist row reads self-check fields
+        Map<String, String> hook = claudeHook();
+        hook.put("sdk_int", "36");
+        hook.put("sdk_int_full", "3600000");
+        hook.put("release", "16");
+        hook.put("sdk_prop", "36");
+        hook.put("sdk_full_prop", "36.0");
+        RiskModel claudeModel = ClaudeChecklist.build(claudeData(), hook, claudeSnapshot(),
+                "Asia/Tokyo", "JP", true);
+        CheckItem sdkItem = claudeModel.item("target.sdk");
+        check("claude target.sdk populated",
+                sdkItem != null && sdkItem.value() != null
+                        && sdkItem.value().contains("API 36 (Android 16)")
+                        && sdkItem.value().contains("full=3600000"),
+                sdkItem == null ? "null" : sdkItem.value());
+    }
+
+    private static void auditedBaselinesDetectVersionDrift() {
+        String raw = "# comment\n\nclaude=26111319|1.261113.19\nchatgpt=2600100|1.2026.272\n"
+                + "bad_line_no_eq\nbad_code=abc|1.0\nzero=0|0.0\n";
+        Map<String, AuditedBaselines.Baseline> map = AuditedBaselines.parse(raw);
+        check("audited baselines count", map.size() == 2, "got=" + map.size());
+        AuditedBaselines.Baseline claude = map.get("claude");
+        check("claude baseline parsed",
+                claude != null && claude.versionCode() == 26111319L
+                        && "1.261113.19".equals(claude.versionName()),
+                claude == null ? "null" : claude.versionCode() + "|" + claude.versionName());
+
+        check("same versionCode matches",
+                AuditedBaselines.assess(true, 26111319L, "1.261113.19", claude)
+                        == AuditedBaselines.Drift.MATCHED);
+        check("higher versionCode is UPDATED",
+                AuditedBaselines.assess(true, 26111400L, "1.261114.0", claude)
+                        == AuditedBaselines.Drift.UPDATED);
+        check("lower versionCode is OLDER",
+                AuditedBaselines.assess(true, 26111200L, "1.261112.0", claude)
+                        == AuditedBaselines.Drift.OLDER);
+        check("missing baseline is UNAUDITED",
+                AuditedBaselines.assess(true, 26111319L, "1.261113.19", null)
+                        == AuditedBaselines.Drift.UNAUDITED);
+        check("uninstalled target is UNKNOWN",
+                AuditedBaselines.assess(false, 26111319L, "1.261113.19", claude)
+                        == AuditedBaselines.Drift.UNKNOWN);
+        check("fallback versionName match when code=0",
+                AuditedBaselines.assess(true, 0L, "1.261113.19", claude)
+                        == AuditedBaselines.Drift.MATCHED);
+        check("fallback versionName mismatch when code=0 is UPDATED",
+                AuditedBaselines.assess(true, 0L, "1.261114.0", claude)
+                        == AuditedBaselines.Drift.UPDATED);
+
+        String[] s25 = PersonaSynth.socFor("samsung", "SM-S938B", "pa3q", "qcom", "sun");
+        check("S25U SoC is QTI SM8750",
+                "QTI".equals(s25[0]) && "SM8750".equals(s25[1]) && "SM-S938B".equals(s25[2]),
+                Arrays.toString(s25));
+        String[] s23 = PersonaSynth.socFor("samsung", "SM-S918B", "dm3q", "qcom", "kalama");
+        check("S23U SoC is QTI SM8550",
+                "QTI".equals(s23[0]) && "SM8550".equals(s23[1]), Arrays.toString(s23));
+        String[] s24 = PersonaSynth.socFor("samsung", "SM-S928B", "e3q", "qcom", "kalama");
+        check("S24U SoC is QTI SM8650",
+                "QTI".equals(s24[0]) && "SM8650".equals(s24[1]), Arrays.toString(s24));
+        String[] p9 = PersonaSynth.socFor("Google", "Pixel 9 Pro", "caiman", "caiman", "caiman");
+        check("Pixel 9 Pro SoC is Google Tensor G4",
+                "Google".equals(p9[0]) && "Tensor G4".equals(p9[1]) && "GR83Y".equals(p9[2]),
+                Arrays.toString(p9));
+        String[] a55 = PersonaSynth.socFor("samsung", "SM-A556E", "a55x", "s5e8845", "erd8845");
+        check("Galaxy A55 SoC is Samsung Exynos 1480",
+                "Samsung".equals(a55[0]) && "Exynos 1480".equals(a55[1]), Arrays.toString(a55));
+        String[] n2a = PersonaSynth.socFor("Nothing", "A142", "Aerodactyl", "mt6886", "mt6886");
+        check("Nothing 2a SoC is Mediatek MT6886",
+                "Mediatek".equals(n2a[0]) && "MT6886".equals(n2a[1]), Arrays.toString(n2a));
+
+        String ad1 = PersonaSynth.advertisingId("fedcba9876543210");
+        String ad1Again = PersonaSynth.advertisingId("fedcba9876543210");
+        String ad2 = PersonaSynth.advertisingId("0123456789abcdef");
+        check("advertisingId is valid UUIDv4",
+                ad1.matches("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"),
+                ad1);
+        check("advertisingId is deterministic", ad1.equals(ad1Again), ad1 + " vs " + ad1Again);
+        check("advertisingId differs across seeds", !ad1.equals(ad2), ad1 + " vs " + ad2);
+        check("advertisingId empty for blank seed", PersonaSynth.advertisingId("  ").isEmpty());
+    }
+
+    private static void simPolicyEnforcesRestrictedCatalogAndDualSimSafety() {
+        Map<String, String> raw = new LinkedHashMap<String, String>();
+        raw.put(Tables.MCC, "234=gb\n310=us\n412=af\n440=jp\n450=kr\n454=hk\n460=cn\n734=ve\n");
+        raw.put(Tables.CARRIERS, "23410=O2 - UK|giffgaff\n44010=docomo\n");
+        raw.put(Tables.RESTRICTED_REGIONS,
+                "# catalog 2026-11-19\n"
+                + "cn=all|460,461|China Mainland\n"
+                + "hk=all|454|Hong Kong\n"
+                + "ru=all|250|Russia\n"
+                + "af=claude|412|Afghanistan\n"
+                + "ve=chatgpt|734|Venezuela\n");
+        Tables tables = Tables.parse(raw);
+
+        // 1. Non-restricted UK giffgaff physical SIM -> preserved.
+        SimPolicy.Decision uk = SimPolicy.evaluate(tables, "claude", true,
+                "23410", "gb", "giffgaff", "giffgaff",
+                Collections.singletonList("23410"), Collections.singletonList("gb"));
+        check("UK giffgaff preserved", uk.preserveRealSim && uk.simEligible
+                && SimPolicy.REASON_PRESERVED.equals(uk.reason)
+                && "gb".equals(uk.resolvedIso) && "giffgaff".equals(uk.resolvedCarrier),
+                uk.reason + "/" + uk.resolvedIso + "/" + uk.resolvedCarrier);
+
+        // 2. Placeholder carrier ("No service") cleanly falls back to display name.
+        SimPolicy.Decision ukNoSvc = SimPolicy.evaluate(tables, "chatgpt", true,
+                "23410", "gb", "No service", "giffgaff",
+                Collections.singletonList("23410"), Collections.singletonList("gb"));
+        check("No-service placeholder falls back to display name",
+                ukNoSvc.preserveRealSim && "giffgaff".equals(ukNoSvc.resolvedCarrier),
+                ukNoSvc.resolvedCarrier);
+
+        // 3. Restricted China SIM (46000) with stale spoofed ISO "kr" -> STILL restricted!
+        SimPolicy.Decision cnStale = SimPolicy.evaluate(tables, "claude", true,
+                "46000", "kr", "CMCC", "CMCC",
+                Collections.singletonList("46000"), Collections.singletonList("kr"));
+        check("China MCC with stale kr ISO stays restricted",
+                !cnStale.preserveRealSim && !cnStale.simEligible
+                        && SimPolicy.REASON_RESTRICTED_SIM.equals(cnStale.reason)
+                        && "cn".equals(cnStale.resolvedIso),
+                cnStale.reason + "/" + cnStale.resolvedIso);
+
+        // 4. Dual-SIM: UK giffgaff active alongside active China CMCC -> denied (peer slot).
+        SimPolicy.Decision dualLeak = SimPolicy.evaluate(tables, "claude", true,
+                "23410", "gb", "giffgaff", "giffgaff",
+                Arrays.asList("46000", "23410"), Arrays.asList("cn", "gb"));
+        check("Dual-SIM with active CN peer denies preservation",
+                !dualLeak.preserveRealSim && !dualLeak.simEligible
+                        && SimPolicy.REASON_RESTRICTED_PEER.equals(dualLeak.reason),
+                dualLeak.reason);
+
+        // 5. Target-scoped restrictions: af restricted on claude, ve restricted on chatgpt.
+        SimPolicy.Decision afClaude = SimPolicy.evaluate(tables, "claude", true,
+                "41201", "af", "AWCC", "AWCC", null, null);
+        SimPolicy.Decision veChatgpt = SimPolicy.evaluate(tables, "chatgpt", true,
+                "73401", "ve", "Digitel", "Digitel", null, null);
+        SimPolicy.Decision veClaude = SimPolicy.evaluate(tables, "claude", true,
+                "73401", "ve", "Digitel", "Digitel", null, null);
+        check("AF restricted for claude", !afClaude.preserveRealSim
+                && SimPolicy.REASON_RESTRICTED_SIM.equals(afClaude.reason), afClaude.reason);
+        check("VE restricted for chatgpt", !veChatgpt.preserveRealSim
+                && SimPolicy.REASON_RESTRICTED_SIM.equals(veChatgpt.reason), veChatgpt.reason);
+        check("VE eligible for claude", veClaude.preserveRealSim, veClaude.reason);
+
+        // 6. User opt-out disables preservation even on an eligible SIM.
+        SimPolicy.Decision optOut = SimPolicy.evaluate(tables, "claude", false,
+                "44010", "jp", "docomo", "docomo", null, null);
+        check("Opt-out disables preservation while keeping simEligible=true",
+                !optOut.preserveRealSim && optOut.simEligible
+                        && SimPolicy.REASON_DISABLED.equals(optOut.reason),
+                optOut.reason);
+
+        // 7. Missing catalog fails closed.
+        SimPolicy.Decision noCat = SimPolicy.evaluate(Tables.EMPTY, "claude", true,
+                "23410", "gb", "giffgaff", "giffgaff", null, null);
+        check("Empty catalog fails closed",
+                !noCat.preserveRealSim && SimPolicy.REASON_MISSING_CATALOG.equals(noCat.reason),
+                noCat.reason);
+
+        // 8. No SIM fails closed.
+        SimPolicy.Decision noSim = SimPolicy.evaluate(tables, "claude", true,
+                "", "", "", "", null, null);
+        check("No SIM fails closed",
+                !noSim.preserveRealSim && SimPolicy.REASON_NO_SIM.equals(noSim.reason),
+                noSim.reason);
+    }
+
+    private static void personaMatchEngineDetectsLeaksTaintAndDrift() {
+        Map<String, String> raw = new LinkedHashMap<String, String>();
+        raw.put(Tables.MCC, "234=gb\n310=us\n460=cn\n454=hk\n");
+        raw.put(Tables.RESTRICTED_REGIONS,
+                "# catalog 2026-11-19\n"
+                + "cn=all|460,461|China Mainland\n"
+                + "hk=all|454|Hong Kong\n");
+        Tables tables = Tables.parse(raw);
+
+        PersonaMatchEngine.PersonaSnapshot expected = new PersonaMatchEngine.PersonaSnapshot(
+                1L, "claude", "0", 2000L,
+                "us", "23410", "gb", "giffgaff", true, "23410", "gb",
+                "Europe/London", 0, true, "en-GB",
+                "Pixel 9 Pro", "Google", "caiman", "caiman", "caiman",
+                "google/caiman/caiman:15/AP3A", "AP3A", "35",
+                "0123456789abcdef", "2a00:23c8::/48", "us", "London", "dig1");
+
+        // 1. Clean 100% match including keepRealSim allowing simIso ("gb") on country.
+        List<PersonaMatchEngine.UploadRecord> cleanRecs = Arrays.asList(
+                new PersonaMatchEngine.UploadRecord("country", "gb", "Firelog", 1500L, 1900L, 2, 1L),
+                new PersonaMatchEngine.UploadRecord("mcc_mnc", "23410", "Firelog", 1500L, 1900L, 2, 1L),
+                new PersonaMatchEngine.UploadRecord("locale", "en_GB", "Firelog", 1500L, 1900L, 1, 1L),
+                new PersonaMatchEngine.UploadRecord("tz_offset", "3600s", "Firelog", 1500L, 1900L, 1, 1L),
+                new PersonaMatchEngine.UploadRecord("model", "Pixel 9 Pro", "Firelog", 1500L, 1900L, 1, 1L),
+                new PersonaMatchEngine.UploadRecord("firebase_fid",
+                        "c9d4e812-7a01-4c88-b310-6f82a4e910dc", "Firebase", 1500L, 1900L, 1, 1L));
+        PersonaMatchEngine.MatchReport cleanReport = PersonaMatchEngine.evaluate(
+                tables, "claude", expected, cleanRecs);
+        check("Clean report scores 100%",
+                cleanReport.matchPercent == 100 && cleanReport.leakCount == 0
+                        && cleanReport.taintedCount == 0 && cleanReport.driftCount == 0,
+                cleanReport.matchPercent + "% leaks=" + cleanReport.leakCount
+                        + " drift=" + cleanReport.driftCount);
+
+        // 2. Historical CN leak + tainted old ID + clean rotated ID + device drift.
+        String oldFid = "8f3a1c09-4e2b-4d91-9a11-7b2c9e03f118";
+        String freshSeg = "e71a9b04-2d13-48f7-88a1-33d91f20b881";
+        List<PersonaMatchEngine.UploadRecord> mixedRecs = Arrays.asList(
+                new PersonaMatchEngine.UploadRecord("mcc_mnc", "23410", "Firelog", 3000L, 4000L, 1, 1L),
+                new PersonaMatchEngine.UploadRecord("mcc_mnc", "46000", "Firelog", 1000L, 2000L, 3, 0L),
+                new PersonaMatchEngine.UploadRecord("model", "SM-S938B", "Firelog", 1000L, 4000L, 2, 1L),
+                new PersonaMatchEngine.UploadRecord("tz_offset", "28800", "Firelog", 1000L, 4000L, 1, 1L),
+                new PersonaMatchEngine.UploadRecord("firebase_fid", oldFid, "Firebase", 1000L, 4000L, 5, 1L),
+                new PersonaMatchEngine.UploadRecord("segment_anonymous", freshSeg, "Segment", 3000L, 4000L, 1, 1L));
+        PersonaMatchEngine.MatchReport mixed = PersonaMatchEngine.evaluate(
+                tables, "claude", expected, mixedRecs);
+        check("Historical 46000 escalates mcc_mnc to RESTRICTED_LEAK",
+                mixed.leakCount == 1 && mixed.latestRestrictedLeakAt == 2000L,
+                "leaks=" + mixed.leakCount + " at=" + mixed.latestRestrictedLeakAt);
+        check("Old firebase_fid predating leak is TAINTED_IDENTITY",
+                mixed.taintedCount == 1, "tainted=" + mixed.taintedCount);
+        check("Device model + tz_offset mismatches counted as DRIFT",
+                mixed.driftCount == 2, "drift=" + mixed.driftCount);
+        check("Most severe row (RESTRICTED_LEAK) pinned first",
+                !mixed.rows.isEmpty()
+                        && PersonaMatchEngine.VERDICT_RESTRICTED_LEAK.equals(mixed.rows.get(0).verdict)
+                        && "mcc_mnc".equals(mixed.rows.get(0).fieldKey),
+                mixed.rows.isEmpty() ? "empty" : mixed.rows.get(0).fieldKey + "/" + mixed.rows.get(0).verdict);
+        check("Second row is TAINTED_IDENTITY (firebase_fid) with masked prefix",
+                mixed.rows.size() >= 2
+                        && PersonaMatchEngine.VERDICT_TAINTED_IDENTITY.equals(mixed.rows.get(1).verdict)
+                        && "8f3a1c09...".equals(mixed.rows.get(1).maskedLatestValue),
+                mixed.rows.size() < 2 ? "short" : mixed.rows.get(1).maskedLatestValue);
+
+        // 3. Exported Markdown masks full UUID when maskIds=true.
+        String mdMasked = PersonaMatchEngine.exportMarkdown(mixed, expected, true);
+        check("Masked markdown hides full UUID and includes prefix",
+                mdMasked.contains("8f3a1c09...") && !mdMasked.contains(oldFid)
+                        && mdMasked.contains("RESTRICTED_LEAK"),
+                "md len=" + mdMasked.length());
+        check("parseOffsetSeconds handles seconds and UTC strings",
+                Integer.valueOf(28800).equals(PersonaMatchEngine.parseOffsetSeconds("28800"))
+                        && Integer.valueOf(-18000).equals(PersonaMatchEngine.parseOffsetSeconds("UTC-5"))
+                        && Integer.valueOf(19800).equals(PersonaMatchEngine.parseOffsetSeconds("+05:30")),
+                "offset parse");
+    }
+
+    private static void bodyguardPolicyAndDiagnosticClassifierWork() {
+        check("Bodyguard mode defaults to OBSERVE",
+                BodyguardPolicy.MODE_OBSERVE.equals(BodyguardPolicy.normalizeMode(null))
+                        && BodyguardPolicy.MODE_OBSERVE.equals(BodyguardPolicy.normalizeMode("bogus"))
+                        && BodyguardPolicy.MODE_BLOCK_KILL.equals(
+                                BodyguardPolicy.normalizeMode(BodyguardPolicy.MODE_BLOCK_KILL)),
+                "mode normalization");
+
+        List<BodyguardPolicy.SignalEntry> entries = Arrays.asList(
+                new BodyguardPolicy.SignalEntry("meta:country", BodyguardPolicy.GATE_TELEMETRY_KEY,
+                        BodyguardPolicy.STATUS_HOOKED, "TelephonyHooks", "26111719", false),
+                new BodyguardPolicy.SignalEntry("prop:ro.ril.oem.imei", BodyguardPolicy.GATE_SYS_PROP,
+                        BodyguardPolicy.STATUS_CUSTOM, "user", "26111719", true),
+                new BodyguardPolicy.SignalEntry("api:TelephonyManager.getImei",
+                        BodyguardPolicy.GATE_TRIPWIRE_API, BodyguardPolicy.STATUS_TRIPWIRE,
+                        "BodyguardHooks", "26111719", false));
+        check("Filter CUSTOM returns only user-whitelisted entries",
+                BodyguardPolicy.filter(entries, "CUSTOM", "").size() == 1,
+                "custom filter");
+        check("Filter by query matches key case-insensitively",
+                BodyguardPolicy.filter(entries, "ALL", "IMEI").size() == 2,
+                "query filter");
+        Map<String, Integer> counts = BodyguardPolicy.gateCounts(entries);
+        check("Gate counts covers all 7 gates",
+                counts.size() == 7
+                        && Integer.valueOf(1).equals(counts.get(BodyguardPolicy.GATE_TELEMETRY_KEY))
+                        && Integer.valueOf(1).equals(counts.get(BodyguardPolicy.GATE_SYS_PROP))
+                        && Integer.valueOf(1).equals(counts.get(BodyguardPolicy.GATE_TRIPWIRE_API))
+                        && Integer.valueOf(0).equals(counts.get(BodyguardPolicy.GATE_EGRESS_HOST)),
+                counts.toString());
+
+        // Classify a real ClaudeChecklist model into 6 orthogonal dimensions.
+        RiskModel claudeModel = ClaudeChecklist.build(
+                Collections.<String, String>emptyMap(),
+                Collections.<String, String>emptyMap(),
+                base().build(), "Europe/London", "GB", false);
+        Map<String, DiagnosticClassifier.DimensionGroup> dims =
+                DiagnosticClassifier.classify(claudeModel);
+        check("DiagnosticClassifier produces all 6 dimensions",
+                dims.size() == 6
+                        && !dims.get(DiagnosticClassifier.DIM_STEALTH).entries.isEmpty()
+                        && !dims.get(DiagnosticClassifier.DIM_INTEGRITY).entries.isEmpty()
+                        && !dims.get(DiagnosticClassifier.DIM_NETLOC).entries.isEmpty()
+                        && !dims.get(DiagnosticClassifier.DIM_IDENTITY).entries.isEmpty()
+                        && !dims.get(DiagnosticClassifier.DIM_ACCOUNT).entries.isEmpty()
+                        && !dims.get(DiagnosticClassifier.DIM_PERMS).entries.isEmpty(),
+                dims.keySet().toString());
+        boolean hasExcluded = false;
+        for (DiagnosticClassifier.DimensionGroup g : dims.values()) {
+            for (DiagnosticClassifier.Entry e : g.entries) {
+                if (e.item.id().startsWith("transport.datatransport.")
+                        || "system.sim_operator".equals(e.item.id())
+                        || "target.sdk".equals(e.item.id())
+                        || "target.locale".equals(e.item.id())) {
+                    hasExcluded = true;
+                }
+            }
+        }
+        check("DiagnosticClassifier excludes duplicated region, Firelog and target preview fields",
+                !hasExcluded);
+        check("Zero-residue unread self-check items do not trigger false Stealth warnings",
+                dims.get(DiagnosticClassifier.DIM_STEALTH).warnCount == 0,
+                "stealth warns=" + dims.get(DiagnosticClassifier.DIM_STEALTH).warnCount);
+
+        // Clean stopped-process stale self-check snapshots must not trigger false amber warnings,
+        // while a genuine stale root finding must still escalate to RISK.
+        Map<String, String> cleanStaleSelf = new LinkedHashMap<String, String>();
+        cleanStaleSelf.put("su_paths", "0/10");
+        cleanStaleSelf.put("su_packages", "0/17");
+        cleanStaleSelf.put("su_props", "clean");
+        cleanStaleSelf.put("su_mounts", "0/7");
+        cleanStaleSelf.put("net_view", "clean");
+        cleanStaleSelf.put("iface_ips", "192.168.1.2");
+        cleanStaleSelf.put("ipv6_spoof", "2405:dc00:8000::1");
+        RiskModel stoppedClean = ClaudeChecklist.build(
+                Collections.<String, String>emptyMap(), cleanStaleSelf,
+                base().build(), "Australia/Melbourne", "AU", false);
+        Map<String, DiagnosticClassifier.DimensionGroup> stoppedDims =
+                DiagnosticClassifier.classify(stoppedClean);
+        check("Clean stale self-check items on stopped target stay silent without false warnings",
+                stoppedDims.get(DiagnosticClassifier.DIM_STEALTH).warnCount == 0
+                        && stoppedDims.get(DiagnosticClassifier.DIM_STEALTH).riskCount == 0
+                        && stoppedDims.get(DiagnosticClassifier.DIM_NETLOC).warnCount == 0,
+                "stealthW=" + stoppedDims.get(DiagnosticClassifier.DIM_STEALTH).warnCount
+                        + " netlocW=" + stoppedDims.get(DiagnosticClassifier.DIM_NETLOC).warnCount);
+
+        Map<String, String> dirtyStaleSelf = new LinkedHashMap<String, String>(cleanStaleSelf);
+        dirtyStaleSelf.put("su_paths", "2/10");
+        RiskModel stoppedDirty = ClaudeChecklist.build(
+                Collections.<String, String>emptyMap(), dirtyStaleSelf,
+                base().build(), "Australia/Melbourne", "AU", false);
+        Map<String, DiagnosticClassifier.DimensionGroup> dirtyDims =
+                DiagnosticClassifier.classify(stoppedDirty);
+        check("Genuine stale root finding still escalates to RISK when target is stopped",
+                dirtyDims.get(DiagnosticClassifier.DIM_STEALTH).riskCount >= 1,
+                "stealthR=" + dirtyDims.get(DiagnosticClassifier.DIM_STEALTH).riskCount);
+
+        // Language-only Firelog/datatransport locale ("en") matches full persona tag ("en-AU"),
+        // whereas language or country conflict still flags DRIFT.
+        PersonaMatchEngine.PersonaSnapshot auSnap = new PersonaMatchEngine.PersonaSnapshot(
+                1L, "claude", "0", 1000L, "au", "50502", "au", "Telstra", false,
+                "50502", "au", "Australia/Melbourne", 39600, true, "en-AU",
+                "SM-S938B", "samsung", "pa3q", "pa3qxxx", "qcom",
+                "fp", "AP3A.240905.019.Z6", "35", "aid", "", "au", "Melbourne", "d");
+        PersonaMatchEngine.MatchReport langOnlyOk = PersonaMatchEngine.evaluate(
+                null, "claude", auSnap,
+                Collections.singletonList(new PersonaMatchEngine.UploadRecord(
+                        "locale", "en", "hook-journal", 1000L, 1000L, 1, 1L)));
+        PersonaMatchEngine.MatchReport countryConflict = PersonaMatchEngine.evaluate(
+                null, "claude", auSnap,
+                Collections.singletonList(new PersonaMatchEngine.UploadRecord(
+                        "locale", "en-US", "hook-journal", 1000L, 1000L, 1, 1L)));
+        PersonaMatchEngine.MatchReport langConflict = PersonaMatchEngine.evaluate(
+                null, "claude", auSnap,
+                Collections.singletonList(new PersonaMatchEngine.UploadRecord(
+                        "locale", "ja", "hook-journal", 1000L, 1000L, 1, 1L)));
+        check("PersonaMatchEngine matches language-only locale against full BCP-47 persona tag",
+                langOnlyOk.driftCount == 0 && langOnlyOk.matchedCount == 1
+                        && countryConflict.driftCount == 1 && langConflict.driftCount == 1,
+                "ok=" + langOnlyOk.driftCount + " cc=" + countryConflict.driftCount
+                        + " lang=" + langConflict.driftCount);
+    }
+
+    private static void bodyguardEventCodecBoundsAndClassifies() {
+        byte[] encoded = BodyguardEventCodec.encode(
+                "KILLED", BodyguardPolicy.GATE_TELEMETRY_KEY,
+                "meta:device_attest_v2", "c.a.c.telemetry.k$a", "26111719");
+        check("Encoded event fits within 128-byte AMS limit", encoded.length <= 128,
+                "len=" + encoded.length);
+        check("isBodyguardSummary identifies CWBG1 frames and ignores normal SDK state bytes",
+                BodyguardEventCodec.isBodyguardSummary(encoded)
+                        && !BodyguardEventCodec.isBodyguardSummary(null)
+                        && !BodyguardEventCodec.isBodyguardSummary(new byte[0])
+                        && !BodyguardEventCodec.isBodyguardSummary(
+                                "sentry-session-123".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        BodyguardEventCodec.Event dec = BodyguardEventCodec.decode(
+                new String(encoded, java.nio.charset.StandardCharsets.UTF_8));
+        check("Decoded event matches fields",
+                dec != null && "KILLED".equals(dec.action)
+                        && BodyguardPolicy.GATE_TELEMETRY_KEY.equals(dec.gate)
+                        && "meta:device_attest_v2".equals(dec.signalKey)
+                        && "c.a.c.telemetry.k$a".equals(dec.callerShort)
+                        && "26111719".equals(dec.version),
+                dec == null ? "null" : dec.signalKey);
+
+        // Oversized key + caller still strictly <= 128 bytes.
+        byte[] huge = BodyguardEventCodec.encode(
+                "KILLED", BodyguardPolicy.GATE_SENSITIVE_PATH,
+                "path:/very/long/unknown/hardware/identifier/path/that/exceeds/one/hundred/bytes",
+                "com.extremely.deeply.nested.thirdparty.risk.sdk.CollectorImpl.readSecret",
+                "26111719");
+        check("Oversized event strictly bounded <= 128B", huge.length <= 128,
+                "len=" + huge.length);
+
+        // Hex decode path.
+        StringBuilder hex = new StringBuilder();
+        for (byte b : encoded) {
+            hex.append(String.format(java.util.Locale.ROOT, "%02x", b & 0xff));
+        }
+        BodyguardEventCodec.Event fromHex = BodyguardEventCodec.decode(hex.toString());
+        check("Hex decode recovers CWBG1 event",
+                fromHex != null && "meta:device_attest_v2".equals(fromHex.signalKey),
+                fromHex == null ? "null" : fromHex.signalKey);
+
+        // Caller attribution & gate classifiers.
+        check("Framework frames ignored; target/SDK frames attributed",
+                BodyguardEventCodec.isFrameworkFrame("android.app.ActivityThread")
+                        && BodyguardEventCodec.isFrameworkFrame("androidx.core.app.ActivityCompat")
+                        && BodyguardEventCodec.isFrameworkFrame("de.robv.android.xposed.XposedBridge")
+                        && BodyguardEventCodec.isFrameworkFrame("org.matrix.vector.legacy.LegacyDelegateImpl")
+                        && BodyguardEventCodec.isFrameworkFrame("Vector_")
+                        && BodyguardEventCodec.isFrameworkFrame("org.lsposed.lspd.hooker.Hooker")
+                        && !BodyguardEventCodec.isFrameworkFrame("com.sift.api.DeviceInfo")
+                        && !BodyguardEventCodec.isFrameworkFrame("com.anthropic.claude.Main"));
+        check("abbreviateCaller compacts package segments",
+                "c.s.a.DeviceInfo.read".equals(
+                        BodyguardEventCodec.abbreviateCaller("com.sift.api.DeviceInfo", "read")));
+        check("Sensitive prop / settings / path classifiers avoid benign noise",
+                BodyguardEventCodec.isSensitivePropKey("ro.ril.oem.imei")
+                        && !BodyguardEventCodec.isSensitivePropKey("debug.hwui.renderer")
+                        && BodyguardEventCodec.isSensitiveSettingsKey("bluetooth_address")
+                        && !BodyguardEventCodec.isSensitiveSettingsKey("default_input_method")
+                        && BodyguardEventCodec.isSensitivePath("/sys/class/net/wlan0/address")
+                        && BodyguardEventCodec.isSensitivePath("/proc/net/arp")
+                        && !BodyguardEventCodec.isSensitivePath("/data/local/tmp/foo")
+                        && !BodyguardEventCodec.isSensitivePath("relative/path"));
+        check("Builtin allowed settings cover spoofed device_name/bluetooth_name without exposing oaid/imei",
+                BodyguardEventCodec.isBuiltinAllowedSettingsKey("device_name")
+                        && BodyguardEventCodec.isBuiltinAllowedSettingsKey("bluetooth_name")
+                        && BodyguardEventCodec.isBuiltinAllowedSettingsKey("android_id")
+                        && !BodyguardEventCodec.isBuiltinAllowedSettingsKey("oaid")
+                        && !BodyguardEventCodec.isBuiltinAllowedSettingsKey("bluetooth_address")
+                        && !BodyguardEventCodec.isBuiltinAllowedSettingsKey("imei"));
+        check("Trusted dynamic loader filter allows GMS Dynamite/Chimera and flags app/SDK loaders",
+                BodyguardEventCodec.isTrustedDynamicLoaderCaller("com.google.android.gms.dynamite.DynamiteModule")
+                        && BodyguardEventCodec.isTrustedDynamicLoaderCaller("com.google.android.gms.chimera.Loader")
+                        && !BodyguardEventCodec.isTrustedDynamicLoaderCaller("com.sift.api.DynamicLoader")
+                        && !BodyguardEventCodec.isTrustedDynamicLoaderCaller("com.anthropic.claude.DexLoader"));
+        check("RootArtifactPolicy parses getprop subprocess commands cleanly",
+                "ro.build.fingerprint".equals(RootArtifactPolicy.parseGetpropCommand(
+                        Arrays.asList("/system/bin/getprop", "ro.build.fingerprint")))
+                        && "".equals(RootArtifactPolicy.parseGetpropCommand("getprop"))
+                        && "ro.csc.country_code".equals(RootArtifactPolicy.parseGetpropCommand(
+                                new String[]{"getprop", "-T", "ro.csc.country_code"}))
+                        && RootArtifactPolicy.parseGetpropCommand(
+                                Arrays.asList("/system/bin/sh", "-c", "id")) == null);
+        check("RootArtifactPolicy matches bare mount probes only",
+                RootArtifactPolicy.isMountCommand("mount")
+                        && RootArtifactPolicy.isMountCommand(Collections.singletonList("/system/bin/mount"))
+                        && !RootArtifactPolicy.isMountCommand(Arrays.asList("mount", "-o", "remount")));
+
+        // Phase 4: system_server anti-restart lock state machine.
+        check("Lock state machine handles auto-lock, persisted lock, unlock, and re-lock",
+                !BodyguardPolicy.isLockEffective(0L, 0L, 0L)
+                        && BodyguardPolicy.isLockEffective(1000L, 0L, 0L)
+                        && BodyguardPolicy.isLockEffective(0L, 1500L, 1000L)
+                        && !BodyguardPolicy.isLockEffective(1000L, 1500L, 2000L)
+                        && BodyguardPolicy.isLockEffective(2500L, 0L, 2000L));
+
+        check("isAppStampChanged detects in-place APK upgrades without firing on first run",
+                !BodyguardPolicy.isAppStampChanged("", "1:1000")
+                        && !BodyguardPolicy.isAppStampChanged(null, "1:1000")
+                        && !BodyguardPolicy.isAppStampChanged("1:1000", "1:1000")
+                        && !BodyguardPolicy.isAppStampChanged("1:1000", "")
+                        && BodyguardPolicy.isAppStampChanged("1:1000", "1:2000")
+                        && BodyguardPolicy.isAppStampChanged("1:1000", "2:2000"));
+
+        java.util.Set<String> hostAllow = new java.util.LinkedHashSet<String>(
+                Arrays.asList("anthropic.com", "claude.ai", "sentry.io"));
+        java.util.Set<String> customHostAllow = new java.util.LinkedHashSet<String>(
+                Collections.singletonList("host:custom-cdn.example.net"));
+        check("EGRESS_HOST allowlist matches exact/subdomains, rejects lookalikes & unknown trackers",
+                BodyguardPolicy.ALL_GATES.contains(BodyguardPolicy.GATE_EGRESS_HOST)
+                        && BodyguardPolicy.ALL_GATES.size() == 7
+                        && BodyguardEventCodec.isHostAllowed("api.anthropic.com", hostAllow, customHostAllow)
+                        && BodyguardEventCodec.isHostAllowed("API.CLAUDE.AI:443.", hostAllow, customHostAllow)
+                        && BodyguardEventCodec.isHostAllowed("o1158394.ingest.us.sentry.io", hostAllow, customHostAllow)
+                        && BodyguardEventCodec.isHostAllowed("sub.custom-cdn.example.net", hostAllow, customHostAllow)
+                        && BodyguardEventCodec.isHostAllowed("198.18.0.42", hostAllow, customHostAllow)
+                        && BodyguardEventCodec.isHostAllowed("[::1]", hostAllow, customHostAllow)
+                        && BodyguardEventCodec.isHostAllowed("localhost", hostAllow, customHostAllow)
+                        && BodyguardEventCodec.isHostAllowed("appassets.androidplatform.net", hostAllow, customHostAllow)
+                        && !BodyguardEventCodec.isHostAllowed("notanthropic.com", hostAllow, customHostAllow)
+                        && !BodyguardEventCodec.isHostAllowed("evil-tracker.xyz", hostAllow, customHostAllow)
+                        && !BodyguardEventCodec.isHostAllowed("anthropic.com.evil.io", hostAllow, customHostAllow)
+                        && "api.anthropic.com".equals(BodyguardEventCodec.extractHttpUrlHost("https://api.anthropic.com:443/v1/messages"))
+                        && "evil.tracker.io".equals(BodyguardEventCodec.extractHttpUrlHost("wss://u@evil.tracker.io/stream?x=1"))
+                        && BodyguardEventCodec.extractHttpUrlHost("file:///data/local/tmp/a").isEmpty()
+                        && BodyguardEventCodec.extractHttpUrlHost("jar:file:///system/a.jar!/b").isEmpty());
+    }
+
+    private static void personasCatalogAssetIsValidAndSelfConsistent() {
+        java.nio.file.Path path = java.nio.file.Paths.get("assets", "catalog", "personas.txt");
+        if (!java.nio.file.Files.isRegularFile(path)) {
+            path = java.nio.file.Paths.get("app", "assets", "catalog", "personas.txt");
+        }
+        String text = "";
+        try {
+            text = new String(java.nio.file.Files.readAllBytes(path),
+                    java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            check("personas.txt readable", false, e.toString());
+            return;
+        }
+        Map<String, String> raw = new LinkedHashMap<String, String>();
+        raw.put(Tables.PERSONAS, text);
+        List<String[]> rows = Tables.parse(raw).personas();
+        check("personas.txt contains >= 100 verified certified devices",
+                rows.size() >= 100, "count=" + rows.size());
+        Set<String> seenLabels = new LinkedHashSet<String>();
+        boolean allValid = true;
+        String badRow = "";
+        for (String[] r : rows) {
+            if (r.length != 14) {
+                allValid = false;
+                badRow = "cols=" + r.length;
+                break;
+            }
+            for (String c : r) {
+                if (c == null || c.trim().isEmpty()) {
+                    allValid = false;
+                    badRow = "empty in " + r[0];
+                    break;
+                }
+            }
+            if (!allValid) break;
+            if (!seenLabels.add(r[0].toLowerCase(java.util.Locale.ROOT))) {
+                allValid = false;
+                badRow = "dup label " + r[0];
+                break;
+            }
+            int expectedSdk = PersonaSynth.sdkForRelease(r[11]);
+            if (expectedSdk <= 0 || !String.valueOf(expectedSdk).equals(r[12])) {
+                allValid = false;
+                badRow = "sdk mismatch " + r[0] + " rel=" + r[11] + " sdk=" + r[12];
+                break;
+            }
+            if (!r[13].matches("\\d{4}-\\d{2}-\\d{2}")) {
+                allValid = false;
+                badRow = "bad patch " + r[0] + " " + r[13];
+                break;
+            }
+            String fpSuffix = ":" + r[11] + "/" + r[9] + "/" + r[10] + ":user/release-keys";
+            if (!r[8].endsWith(fpSuffix) || r[5].toLowerCase(java.util.Locale.ROOT).contains("_beta")) {
+                allValid = false;
+                badRow = "fp/beta mismatch " + r[0] + " " + r[8];
+                break;
+            }
+        }
+        check("Every personas.txt row has 14 self-consistent official release-keys fields",
+                allValid, badRow);
+
+        String sampleIpLink = "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 link/loopback\n"
+                + "10: rmnet_data1: <UP,LOWER_UP> mtu 1500 link/[530]\n"
+                + "26: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 link/ether\n"
+                + "59: netproxy: <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> mtu 9000 link/none\n"
+                + "60: myvpn0@NONE: <POINTOPOINT,UP> mtu 1500 link/none\n";
+        String sampleTunFlags = "/sys/class/net/netproxy/tun_flags\n/sys/class/net/custom_box/tun_flags\n";
+        List<String> discoveredTunnels = NetworkRules.parseTunnelInterfaces(sampleIpLink, sampleTunFlags);
+        check("parseTunnelInterfaces dynamically detects netproxy/custom TUN without hiding wlan0 or rmnet",
+                discoveredTunnels.contains("netproxy")
+                        && discoveredTunnels.contains("custom_box")
+                        && discoveredTunnels.contains("myvpn0")
+                        && !discoveredTunnels.contains("wlan0")
+                        && !discoveredTunnels.contains("rmnet_data1")
+                        && !discoveredTunnels.contains("lo"),
+                discoveredTunnels.toString());
+
+        String rawUa = "Mozilla/5.0 (Linux; Android 15; MI 6 Build/AP3A.240905.015; wv) AppleWebKit/537.36";
+        String rwUa = BodyguardEventCodec.rewriteUserAgent(rawUa, "15", "Pixel 9 Pro");
+        String reducedUa = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36";
+        check("rewriteUserAgent updates model while preserving Build suffix and Chromium K reduction",
+                rwUa.contains("Android 15; Pixel 9 Pro Build/AP3A.240905.015")
+                        && !rwUa.contains("MI 6")
+                        && BodyguardEventCodec.rewriteUserAgent(reducedUa, "15", "Pixel 9 Pro")
+                                .contains("Android 15; K)"));
+
+        check("Fail-closed guard mode kills without persona in BLOCK_KILL only",
+                BodyguardPolicy.shouldFailClosedWithoutPersona("BLOCK_KILL")
+                        && !BodyguardPolicy.shouldFailClosedWithoutPersona("OBSERVE")
+                        && !BodyguardPolicy.shouldFailClosedWithoutPersona("OFF")
+                        && !BodyguardPolicy.shouldFailClosedWithoutPersona("")
+                        && !BodyguardPolicy.shouldFailClosedWithoutPersona(null)
+                        && BodyguardPolicy.MODE_OBSERVE.equals(BodyguardPolicy.parseGuardMode("OBSERVE\n")));
+    }
+
+    private static void personaEditRulesAndGeoCitiesWork() {
+        check("validOperatorCode accepts 5-6 digits only",
+                PersonaEditRules.validOperatorCode("44020")
+                        && PersonaEditRules.validOperatorCode("310260")
+                        && !PersonaEditRules.validOperatorCode("440")
+                        && !PersonaEditRules.validOperatorCode("4402a"));
+        check("validCarrierName enforces printable length",
+                PersonaEditRules.validCarrierName("SoftBank")
+                        && !PersonaEditRules.validCarrierName("")
+                        && !PersonaEditRules.validCarrierName("bad\nname"));
+        check("mccMatchesRegion validates multi-MCC lists",
+                PersonaEditRules.mccMatchesRegion("310260", "310/311")
+                        && PersonaEditRules.mccMatchesRegion("311480", "310/311")
+                        && !PersonaEditRules.mccMatchesRegion("44020", "310/311"));
+        check("carrierIdFor resolves curated carriers",
+                PersonaEditRules.carrierIdFor("44010", "docomo") == 1185
+                        && PersonaEditRules.carrierIdFor("310260", "T-Mobile") == 1
+                        && PersonaEditRules.carrierIdFor("44020", "SoftBank") == -1);
+        String randAid = PersonaEditRules.randomAid(new java.util.Random(42L));
+        check("randomAid generates valid 16-hex lowercase id",
+                PersonaEditRules.validAid(randAid)
+                        && !PersonaEditRules.validAid("ZZZZZZZZZZZZZZZZ")
+                        && !PersonaEditRules.validAid("1234"));
+        long epoch = 1700000000000L;
+        check("tzOffsetDiffers detects cross-zone offsets accurately",
+                PersonaEditRules.tzOffsetDiffers("America/New_York", "America/Los_Angeles", epoch)
+                        && !PersonaEditRules.tzOffsetDiffers("Asia/Tokyo", "Asia/Tokyo", epoch)
+                        && !PersonaEditRules.tzOffsetDiffers("Asia/Tokyo", "Asia/Seoul", epoch));
+        GeoTable gt = GeoTable.parse(
+                "us||39.8|-98.5|\n"
+                + "us|New York|40.71|-74.00|America/New_York\n"
+                + "us|Los Angeles|34.05|-118.24|America/Los_Angeles\n"
+                + "jp|Tokyo|35.67|139.65|Asia/Tokyo\n");
+        List<GeoTable.Point> usCities = gt.citiesForIso("US");
+        check("GeoTable.citiesForIso returns city rows only",
+                usCities.size() == 2 && "New York".equals(usCities.get(0).city)
+                        && "Los Angeles".equals(usCities.get(1).city));
+    }
+
+    private static void preflightVerdictPrioritizesBlockersAndWarnings() {
+        // Clean ready state (stopped)
+        PreflightVerdict ready = PreflightVerdict.evaluate(new PreflightVerdict.Input(
+                true, "JP", 0, false, false, true, "JP", false, false, false, "JP"));
+        check("Clean JP persona evaluates READY with NONE action",
+                ready.level == PreflightVerdict.Level.READY
+                        && !ready.targetRunning
+                        && ready.issues.isEmpty()
+                        && ready.primaryAction == PreflightVerdict.PrimaryAction.NONE);
+
+        // Clean running state (target already launched under applied KR persona) must NOT block
+        PreflightVerdict runningClean = PreflightVerdict.evaluate(new PreflightVerdict.Input(
+                true, "KR", 0, false, true, true, "KR", false, false, false, "KR"));
+        check("Clean running KR persona evaluates READY without TARGET_RUNNING blocker",
+                runningClean.level == PreflightVerdict.Level.READY
+                        && runningClean.targetRunning
+                        && runningClean.issues.isEmpty()
+                        && runningClean.primaryAction == PreflightVerdict.PrimaryAction.NONE);
+
+        // Clean running state with unprobed exit evaluates CAUTION (not BLOCKED)
+        PreflightVerdict runningUnprobed = PreflightVerdict.evaluate(new PreflightVerdict.Input(
+                true, "KR", 0, false, true, false, "", false, false, false, "KR"));
+        check("Clean running KR persona with unprobed exit evaluates CAUTION, not BLOCKED",
+                runningUnprobed.level == PreflightVerdict.Level.CAUTION
+                        && runningUnprobed.blockerCount == 0
+                        && runningUnprobed.primaryAction == PreflightVerdict.PrimaryAction.PROBE_NETWORK);
+
+        // Running target under active network leak blocks with STOP_TARGET
+        PreflightVerdict runningLeak = PreflightVerdict.evaluate(new PreflightVerdict.Input(
+                true, "KR", 0, false, true, true, "KR", false, false, true, "KR"));
+        check("Running target with active network leak blocks and prioritizes STOP_TARGET",
+                runningLeak.level == PreflightVerdict.Level.BLOCKED
+                        && runningLeak.blockerCount == 1
+                        && runningLeak.primaryAction == PreflightVerdict.PrimaryAction.STOP_TARGET);
+
+        // Target running with drifted persona beats all other blockers/warnings
+        PreflightVerdict running = PreflightVerdict.evaluate(new PreflightVerdict.Input(
+                true, "JP", 2, false, true, true, "US", false, true, false, "US"));
+        check("Running drifted target evaluates BLOCKED and prioritizes STOP_TARGET",
+                running.level == PreflightVerdict.Level.BLOCKED
+                        && running.blockerCount == 2
+                        && running.primaryAction == PreflightVerdict.PrimaryAction.STOP_TARGET);
+
+        // Native restricted SIM blocks and suggests PICK_REGION
+        PreflightVerdict nativeBan = PreflightVerdict.evaluate(new PreflightVerdict.Input(
+                false, "", 0, true, false, false, "", false, false, false, ""));
+        check("Native restricted SIM evaluates BLOCKED with PICK_REGION",
+                nativeBan.level == PreflightVerdict.Level.BLOCKED
+                        && nativeBan.primaryAction == PreflightVerdict.PrimaryAction.PICK_REGION);
+
+        // Caution: datacenter IP + store mismatch + egress mismatch
+        PreflightVerdict caution = PreflightVerdict.evaluate(new PreflightVerdict.Input(
+                true, "JP", 0, false, false, true, "US", false, true, false, "US"));
+        check("Egress mismatch + datacenter + store evaluates CAUTION with ALIGN_EGRESS",
+                caution.level == PreflightVerdict.Level.CAUTION
+                        && caution.warningCount == 3
+                        && caution.primaryAction == PreflightVerdict.PrimaryAction.ALIGN_EGRESS);
+
+        // Unprobed exit on active persona recommends PROBE_NETWORK
+        PreflightVerdict unprobed = PreflightVerdict.evaluate(new PreflightVerdict.Input(
+                true, "JP", 0, false, false, false, "", false, false, false, "JP"));
+        check("Unprobed exit evaluates CAUTION with PROBE_NETWORK",
+                unprobed.level == PreflightVerdict.Level.CAUTION
+                        && unprobed.primaryAction == PreflightVerdict.PrimaryAction.PROBE_NETWORK);
+    }
+
+    private static void ipv6PolicyDefaultsOffAndBuildsWatchdogCommands() {
+        check("Ipv6Policy defaults null/empty/unknown modes to off",
+                Ipv6Policy.MODE_OFF.equals(Ipv6Policy.parseMode(null))
+                        && Ipv6Policy.MODE_OFF.equals(Ipv6Policy.parseMode(""))
+                        && Ipv6Policy.MODE_OFF.equals(Ipv6Policy.parseMode("unknown"))
+                        && Ipv6Policy.isDisabled(null)
+                        && Ipv6Policy.isDisabled("off"));
+        check("Ipv6Policy parses spoof/on/true as enabled",
+                Ipv6Policy.MODE_SPOOF.equals(Ipv6Policy.parseMode("spoof"))
+                        && Ipv6Policy.MODE_SPOOF.equals(Ipv6Policy.parseMode("ON"))
+                        && !Ipv6Policy.isDisabled("spoof"));
+        String offCmd = Ipv6Policy.shellSyncCommand(false);
+        check("Ipv6Policy disable command writes off mode, disables all/default/per-iface IPv6, preserves lo, and starts monitor watchdog",
+                offCmd.contains(Ipv6Policy.MODE_PATH)
+                        && offCmd.contains("mv -f ")
+                        && offCmd.contains("conf/default/disable_ipv6")
+                        && offCmd.contains("conf/all/disable_ipv6")
+                        && offCmd.contains("conf/lo/disable_ipv6")
+                        && offCmd.contains("ip -6 monitor address link")
+                        && offCmd.contains("ip -6 addr flush dev")
+                        && offCmd.contains(Ipv6Policy.GUARD_PID_PATH));
+        String onCmd = Ipv6Policy.shellSyncCommand(true);
+        check("Ipv6Policy restore command stops all watchdogs and restores disable_ipv6=0",
+                onCmd.contains(Ipv6Policy.MODE_SPOOF)
+                        && onCmd.contains(Ipv6Policy.GUARD_PID_PATH)
+                        && onCmd.contains("ipv6-guard\\.sh")
+                        && onCmd.contains("echo 0 > /proc/sys/net/ipv6/conf/default/disable_ipv6")
+                        && onCmd.contains("echo 0 > /proc/sys/net/ipv6/conf/all/disable_ipv6"));
+    }
+
+    private static void diagnosticArchiveParserSplitsStagingCachesCleanly() {
+        Map<String, String> raw = new LinkedHashMap<String, String>();
+        raw.put("sentry_breadcrumbs",
+                "BINHDR  {\"timestamp\":\"2026-11-20T14:42:51.756Z\",\"category\":\"network.event\","
+                        + "\"data\":{\"vpn_active\":false,\"network_type\":\"wifi\"}}  "
+                        + "\u0001{{\"timestamp\":\"2026-11-20T14:42:52.683Z\",\"category\":\"http\",\"type\":\"http\","
+                        + "\"data\":{\"http.start_timestamp\":1795185772034,\"http.end_timestamp\":1795185772683,"
+                        + "\"status_code\":200,\"method\":\"GET\",\"cf_ray\":\"a5d8394ccb12eaa3-ICN\","
+                        + "\"request_id\":\"req_011ChEMepnb7qYyhumhRPvGU\","
+                        + "\"url\":\"https://claude.ai/bootstrap?secret=do_not_keep\"}} "
+                        + "{\"category\":\"Analytics Event\",\"message\":\"claudeai.networking.cronet.request_success\","
+                        + "\"data\":{\"endpoint\":\"/bootstrap\",\"protocol\":\"h2\",\"tls_diverted\":\"false\"}} "
+                        + "{\"category\":\"Analytics Event\",\"message\":\"claudeai.app.process_started\","
+                        + "\"data\":{\"sign_in_browser\":\"chrome\",\"webview_package\":\"com.android.webview\",\"webview_version\":\"152.0\"}}");
+        raw.put("sentry_tags_full", "{\"active_screen\":\"Welcome\",\"app_start_destination\":\"login_app\"}");
+        raw.put("sentry_envelopes", "2\n");
+        raw.put("datadog_view",
+                "   HDR{\"date\":1795185781697,\"os\":{\"name\":\"Android\"},\"application\":{\"current_locale\":\"ko-KR\"},"
+                        + "\"service\":\"claude-android\",\"view\":{\"name\":\"Background\","
+                        + "\"error\":{\"count\":0},\"crash\":{\"count\":0},\"resource\":{\"count\":5}}}");
+        raw.put("bootstrap_cache",
+                "{\"response\":{\"growthbook\":{\"features\":{"
+                        + "\"k1\":{\"defaultValue\":true,\"rules\":[{\"id\":\"r1\"}]},"
+                        + "\"k2\":{\"defaultValue\":false}},\"hashing_algorithm\":\"sha256\"}},"
+                        + "\"cachedAtMillis\":1795185772687}");
+
+        DiagnosticArchiveParser.Bundle b = DiagnosticArchiveParser.parse("claude", raw, 1795185800000L);
+        check("DiagnosticArchiveParser extracts HTTP event with query stripped, POP, and cronet enrichment",
+                b.httpEvents.size() == 1
+                        && "GET".equals(b.httpEvents.get(0).method)
+                        && "claude.ai".equals(b.httpEvents.get(0).host)
+                        && "/bootstrap".equals(b.httpEvents.get(0).path)
+                        && !b.httpEvents.get(0).path.contains("secret")
+                        && b.httpEvents.get(0).statusCode == 200
+                        && b.httpEvents.get(0).durationMs == 649L
+                        && "ICN".equals(b.httpEvents.get(0).edgePop)
+                        && "h2".equals(b.httpEvents.get(0).protocol)
+                        && "false".equals(b.httpEvents.get(0).tlsDiverted));
+        check("DiagnosticArchiveParser extracts Datadog current_locale",
+                "ko-KR".equals(b.datadogLocale));
+
+        Map<String, String> sigMap = new LinkedHashMap<String, String>();
+        for (DiagnosticArchiveParser.DimSignal s : b.dimSignals) {
+            sigMap.put(s.signalKey, s.signalValue);
+        }
+        check("DiagnosticArchiveParser extracts multi-dim staging signals across network/runtime/datadog/response/crash",
+                "false".equals(sigMap.get("vpn_active"))
+                        && "wifi".equals(sigMap.get("network_type"))
+                        && "ICN".equals(sigMap.get("cf_edge_pop"))
+                        && "chrome".equals(sigMap.get("sign_in_browser"))
+                        && "ko-KR".equals(sigMap.get("datadog_locale"))
+                        && "Background".equals(sigMap.get("datadog_view"))
+                        && "1/2 on · 1 rules".equals(sigMap.get("bootstrap_features"))
+                        && "2".equals(sigMap.get("pending_envelopes")));
+
+        StringBuilder md = new StringBuilder();
+        DiagnosticArchiveParser.appendMarkdown(md, b.httpEvents, b.dimSignals);
+        String mdText = md.toString();
+        check("DiagnosticArchiveParser Markdown export includes HTTP and staging sections without query secrets",
+                mdText.contains("## Target HTTP Response Archive")
+                        && mdText.contains("## Target Staging Diagnostics")
+                        && mdText.contains("/bootstrap")
+                        && !mdText.contains("do_not_keep"));
+    }
+
+    private static void coordinateParserAndRadioOverridesWork() {
+        CoordinateParser.LatLng plain = CoordinateParser.parse("35.6895, 139.6917");
+        check("CoordinateParser parses plain decimal pair",
+                plain != null && Math.abs(plain.latitude - 35.6895) < 1e-6
+                        && Math.abs(plain.longitude - 139.6917) < 1e-6);
+
+        CoordinateParser.LatLng gmaps = CoordinateParser.parse(
+                "https://www.google.com/maps/place/Tokyo/@35.6762,139.6503,14z/data=!3m1!4b1");
+        check("CoordinateParser parses Google Maps @lat,lng URL",
+                gmaps != null && Math.abs(gmaps.latitude - 35.6762) < 1e-6
+                        && Math.abs(gmaps.longitude - 139.6503) < 1e-6);
+
+        CoordinateParser.LatLng g3d4d = CoordinateParser.parse(
+                "https://www.google.com/maps/place/x/@35.0,139.0,12z/data=!3d37.7749!4d-122.4194");
+        check("CoordinateParser prefers !3d!4d pin over viewport center",
+                g3d4d != null && Math.abs(g3d4d.latitude - 37.7749) < 1e-6
+                        && Math.abs(g3d4d.longitude + 122.4194) < 1e-6);
+
+        CoordinateParser.LatLng geo = CoordinateParser.parse("geo:51.5074,-0.1278?z=15");
+        check("CoordinateParser parses geo: URI",
+                geo != null && Math.abs(geo.latitude - 51.5074) < 1e-6
+                        && Math.abs(geo.longitude + 0.1278) < 1e-6);
+
+        CoordinateParser.LatLng dms = CoordinateParser.parse("35\u00B041'22\"N 139\u00B041'30\"E");
+        check("CoordinateParser parses DMS notation",
+                dms != null && dms.latitude > 35.68 && dms.latitude < 35.70
+                        && dms.longitude > 139.68 && dms.longitude < 139.70);
+
+        check("CoordinateParser rejects out-of-range coordinates",
+                CoordinateParser.parse("95.0, 200.0") == null
+                        && CoordinateParser.parse("not a coord") == null);
+
+        check("WifiProfile validates MAC addresses",
+                WifiProfile.isValidMac("3C:84:6A:12:34:56")
+                        && WifiProfile.isValidMac(WifiProfile.randomMac(42L))
+                        && !WifiProfile.isValidMac("3C:84:6A:ZZ:34:56")
+                        && !WifiProfile.isValidMac("invalid"));
+
+        List<WifiProfile.Ap> baseWifi = WifiProfile.forRegion(35.6762, 139.6503, "Tokyo", 123L, 6);
+        List<WifiProfile.Ap> overriddenWifi = WifiProfile.applyOverrides(
+                baseWifi, "Shinjuku-5G", "ac:84:c6:11:22:33");
+        check("WifiProfile.applyOverrides replaces connected SSID and uppercases BSSID",
+                !overriddenWifi.isEmpty()
+                        && "Shinjuku-5G".equals(overriddenWifi.get(0).ssid)
+                        && "AC:84:C6:11:22:33".equals(overriddenWifi.get(0).bssid));
+
+        List<BleProfile.Device> baseBle = BleProfile.forRegion(123L, 4);
+        List<BleProfile.Device> renamedBle = BleProfile.applyOverrides(baseBle, "AirPods Pro 2", false);
+        List<BleProfile.Device> emptyBle = BleProfile.applyOverrides(baseBle, "AirPods Pro 2", true);
+        check("BleProfile.applyOverrides supports bonded rename and clean empty mode",
+                !renamedBle.isEmpty() && "AirPods Pro 2".equals(renamedBle.get(0).name)
+                        && emptyBle.isEmpty());
+
+        SensorProfile night = SensorProfile.forPreset(
+                123L, 35.6762, 139.6503, 14, null, SensorProfile.PRESET_INDOOR_NIGHT, 50.0);
+        SensorProfile outdoor = SensorProfile.forPreset(
+                123L, 35.6762, 139.6503, 2, null, SensorProfile.PRESET_OUTDOOR_DAY, 1500.0);
+        double gNight = Math.sqrt(night.accelerometer[0] * night.accelerometer[0]
+                + night.accelerometer[1] * night.accelerometer[1]
+                + night.accelerometer[2] * night.accelerometer[2]);
+        check("SensorProfile.forPreset preserves gravity magnitude, lighting, and barometric physics",
+                Math.abs(gNight - 9.81) < 0.25
+                        && night.light < 50.0f
+                        && outdoor.light > 2000.0f
+                        && outdoor.pressure < night.pressure);
+
+        String locJson = LocationPayload.json(true, 35.6762, 139.6503, 7L, "Tokyo", "coarse", 45.0);
+        check("LocationPayload serializes accuracyMode and altitude",
+                locJson.contains("\"accuracyMode\":\"coarse\"")
+                        && locJson.contains("\"altitude\":45.0"));
+
+        // AppVisibilityPolicy invariants: root always hidden, essentials always visible
+        Set<String> allow = new LinkedHashSet<String>(Arrays.asList(
+                "com.google.android.youtube", "me.weishu.kernelsu"));
+        check("AppVisibilityPolicy ALLOWLIST keeps target, GMS, Chrome and allowlisted apps visible",
+                !AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_ALLOWLIST, allow,
+                        "com.anthropic.claude", "com.anthropic.claude")
+                        && !AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_ALLOWLIST, allow,
+                        "com.google.android.gms", "com.anthropic.claude")
+                        && !AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_ALLOWLIST, allow,
+                        "com.android.chrome", "com.anthropic.claude")
+                        && !AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_ALLOWLIST, allow,
+                        "com.google.android.youtube", "com.anthropic.claude"));
+        check("AppVisibilityPolicy ALLOWLIST hides unlisted apps and ALWAYS hides root/control apps",
+                AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_ALLOWLIST, allow,
+                        "com.tencent.mm", "com.anthropic.claude")
+                        && AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_ALLOWLIST, allow,
+                        "me.weishu.kernelsu", "com.anthropic.claude")
+                        && AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_ALLOWLIST, allow,
+                        "com.walter.claudewilson", "com.anthropic.claude"));
+        Set<String> deny = new LinkedHashSet<String>(Arrays.asList(
+                "com.tencent.mm", "com.android.vending"));
+        check("AppVisibilityPolicy DENYLIST hides selected apps but protects essential Play Store",
+                AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_DENYLIST, deny,
+                        "com.tencent.mm", "com.anthropic.claude")
+                        && !AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_DENYLIST, deny,
+                        "com.android.vending", "com.anthropic.claude")
+                        && !AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_DENYLIST, deny,
+                        "com.spotify.music", "com.anthropic.claude"));
+        check("AppVisibilityPolicy flags proxy/domestic/root packages as sensitive",
+                AppVisibilityPolicy.isSensitivePackage("com.github.kr328.clash")
+                        && AppVisibilityPolicy.isSensitivePackage("com.tencent.mm")
+                        && !AppVisibilityPolicy.isSensitivePackage("com.spotify.music"));
+        check("AppVisibilityPolicy HMA excludeSystemApps keeps OEM system apps visible but hides user & forced-hidden apps",
+                !AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_ALLOWLIST, allow, true,
+                        "com.qualcomm.qti.telephonyservice", true, "com.anthropic.claude")
+                        && AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_ALLOWLIST, allow, false,
+                        "com.qualcomm.qti.telephonyservice", true, "com.anthropic.claude")
+                        && AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_ALLOWLIST, allow, true,
+                        "com.tencent.mm", false, "com.anthropic.claude")
+                        && AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_ALLOWLIST, allow, true,
+                        "com.tsng.hidemyapplist", true, "com.anthropic.claude")
+                        && AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_ALLOWLIST, allow, true,
+                        "com.rifsxd.ksunext", false, "com.anthropic.claude"));
+        check("AppVisibilityPolicy categorizes root/proxy/domestic/dev packages cleanly",
+                AppVisibilityPolicy.categoryOf("com.tsng.hidemyapplist") == AppVisibilityPolicy.CAT_ROOT
+                        && AppVisibilityPolicy.categoryOf("com.follow.clash") == AppVisibilityPolicy.CAT_PROXY
+                        && AppVisibilityPolicy.categoryOf("com.tencent.mm") == AppVisibilityPolicy.CAT_DOMESTIC
+                        && AppVisibilityPolicy.categoryOf("com.termux") == AppVisibilityPolicy.CAT_DEV
+                        && AppVisibilityPolicy.categoryOf("com.spotify.music") == AppVisibilityPolicy.CAT_NONE);
+        check("AppVisibilityPolicy.extractPackageFromPath parses data/user/external/apk paths safely",
+                "com.tencent.mm".equals(AppVisibilityPolicy.extractPackageFromPath("/data/data/com.tencent.mm/shared_prefs"))
+                        && "com.tencent.mm".equals(AppVisibilityPolicy.extractPackageFromPath("/data/user/0/com.tencent.mm"))
+                        && "com.follow.clash".equals(AppVisibilityPolicy.extractPackageFromPath("/storage/emulated/0/Android/data/com.follow.clash/files"))
+                        && "com.follow.clash".equals(AppVisibilityPolicy.extractPackageFromPath("/sdcard/Android/obb/com.follow.clash/a.obb"))
+                        && "com.tencent.mm".equals(AppVisibilityPolicy.extractPackageFromPath("/data/app/~~abc123==/com.tencent.mm-xyz==/base.apk"))
+                        && AppVisibilityPolicy.extractPackageFromPath("/system/bin/sh") == null
+                        && AppVisibilityPolicy.extractPackageFromPath("/proc/self/maps") == null);
+        check("AppVisibilityPolicy.isHiddenPmCommand blocks pm list and hidden pm path probes",
+                AppVisibilityPolicy.isHiddenPmCommand("pm list packages",
+                        AppVisibilityPolicy.MODE_ALLOWLIST, allow, true, "com.anthropic.claude")
+                        && AppVisibilityPolicy.isHiddenPmCommand(new String[]{"cmd", "package", "list", "packages"},
+                        AppVisibilityPolicy.MODE_ALLOWLIST, allow, true, "com.anthropic.claude")
+                        && AppVisibilityPolicy.isHiddenPmCommand(new String[]{"sh", "-c", "pm list packages -3"},
+                        AppVisibilityPolicy.MODE_DEFAULT, allow, true, "com.anthropic.claude")
+                        && AppVisibilityPolicy.isHiddenPmCommand("pm path com.tencent.mm",
+                        AppVisibilityPolicy.MODE_ALLOWLIST, allow, true, "com.anthropic.claude")
+                        && !AppVisibilityPolicy.isHiddenPmCommand("pm path com.google.android.youtube",
+                        AppVisibilityPolicy.MODE_ALLOWLIST, allow, true, "com.anthropic.claude")
+                        && !AppVisibilityPolicy.isHiddenPmCommand("ls /sdcard",
+                        AppVisibilityPolicy.MODE_ALLOWLIST, allow, true, "com.anthropic.claude"));
+
+        Set<String> extra = new LinkedHashSet<String>(Arrays.asList(
+                "org.lineageos.updater", "com.android.vending"));
+        check("AppVisibilityPolicy extraHidden hides Custom ROM system apps even when excludeSystemApps=true, while protecting essentials",
+                AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_ALLOWLIST, allow, extra, true,
+                        "org.lineageos.updater", true, "com.anthropic.claude")
+                        && !AppVisibilityPolicy.isHidden(AppVisibilityPolicy.MODE_ALLOWLIST, allow, extra, true,
+                        "com.android.vending", true, "com.anthropic.claude")
+                        && AppVisibilityPolicy.isRootManagerPackage("com.sukisu.ultra")
+                        && AppVisibilityPolicy.isDetectorPackage("io.github.vvb2060.mahoshojo")
+                        && AppVisibilityPolicy.isCustomRomPackage("org.lineageos.aperture")
+                        && AppVisibilityPolicy.isSuspiciousPackage("com.follow.clash"));
+        String filteredImes = AppVisibilityPolicy.filterEnabledInputMethods(
+                "com.sohu.inputmethod.sogou/.SogouIME:com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME",
+                AppVisibilityPolicy.MODE_ALLOWLIST, allow, extra, true, "com.anthropic.claude");
+        check("AppVisibilityPolicy sanitizes Settings.Secure IME lists and default IME",
+                !filteredImes.contains("sogou")
+                        && filteredImes.contains("com.google.android.inputmethod.latin")
+                        && AppVisibilityPolicy.FALLBACK_IME.equals(
+                        AppVisibilityPolicy.sanitizeDefaultInputMethod(
+                                "com.sohu.inputmethod.sogou/.SogouIME",
+                                AppVisibilityPolicy.MODE_ALLOWLIST, allow, extra, true, "com.anthropic.claude")));
+
+        check("NetworkRules.uidInRanges parses VPN UidRanges and catches excluded target UID",
+                !NetworkRules.uidInRanges(10229, "[0-10228, 10230-99999]")
+                        && NetworkRules.uidInRanges(10228, "[0-10228, 10230-99999]")
+                        && NetworkRules.uidInRanges(10229, "{0-99999}")
+                        && NetworkRules.uidInRanges(10229, "10229"));
+        check("NetworkRules detects Private DNS DoT tunnel bypass and domestic resolvers",
+                NetworkRules.isPrivateDnsBypassRisk("hostname", "dns.alidns.com")
+                        && NetworkRules.isDomesticPrivateDns("dns.alidns.com")
+                        && !NetworkRules.isPrivateDnsBypassRisk("off", "dns.alidns.com")
+                        && !NetworkRules.isPrivateDnsBypassRisk("opportunistic", "one.one.one.one"));
+        check("NetworkRules.classifyV6 catches local leaks AND dual-stack v4/v6 cross-country mismatches",
+                NetworkRules.classifyV6("none", "", "", "JP", false) == NetworkRules.V6_CLEAN_NONE
+                        && NetworkRules.classifyV6("240e:123::1", "CN", "wlan0=240e:123::1", "JP", true)
+                                == NetworkRules.V6_LEAK_LOCAL
+                        && NetworkRules.classifyV6("2a06:98c0::1", "HK", "wlan0=240e:123::1", "JP", true)
+                                == NetworkRules.V6_LEAK_CROSS_COUNTRY
+                        && NetworkRules.classifyV6("2606:4700::1", "US", "", "JP", false)
+                                == NetworkRules.V6_LEAK_CROSS_COUNTRY
+                        && NetworkRules.classifyV6("2400:2410::1", "JP", "", "JP", false)
+                                == NetworkRules.V6_TUNNEL_ALIGNED);
+        check("NetworkRules.isDatacenterOrg combines geoip hosting flag and ASN keywords",
+                NetworkRules.isDatacenterOrg("AS2516 KDDI", false, true)
+                        && NetworkRules.isDatacenterOrg("AS13335 Cloudflare", false, false)
+                        && !NetworkRules.isDatacenterOrg("AS2516 KDDI", false, false));
+
+        java.util.Map<String, java.util.List<String>> testOui =
+                new java.util.LinkedHashMap<String, java.util.List<String>>();
+        testOui.put("EFM", java.util.Collections.singletonList("64:E5:99"));
+        testOui.put("AVM", java.util.Collections.singletonList("00:1C:4A"));
+        testOui.put("SERCOMM", java.util.Collections.singletonList("24:7F:20"));
+        testOui.put("BOSE", java.util.Collections.singletonList("04:52:C7"));
+        testOui.put("GOOGLE", java.util.Collections.singletonList("F4:F5:D8"));
+        testOui.put("GENERIC", java.util.Collections.singletonList("B0:BE:76"));
+        java.util.List<WifiProfile.Template> krTpls = Arrays.asList(
+                new WifiProfile.Template("iptime-{H4}", "WPA2", 5, 5),
+                new WifiProfile.Template("FRITZ!Box 7590 {H3}", "WPA3", 5, 5),
+                new WifiProfile.Template("JioFiber-{H4}_5G", "WPA3", 5, 5));
+        Set<String> primaryPrefixes = new LinkedHashSet<String>();
+        boolean wifiUniqueAndOuiOk = true;
+        for (long s = 1; s <= 12; s++) {
+            java.util.List<WifiProfile.Ap> aps = WifiProfile.forRegion(
+                    37.5665, 126.9780, "Seoul", s * 7919L, 6, krTpls, testOui);
+            if (!aps.isEmpty()) {
+                primaryPrefixes.add(aps.get(0).ssid.split("[- ]")[0]);
+            }
+            Set<String> seenSsid = new LinkedHashSet<String>();
+            for (WifiProfile.Ap ap : aps) {
+                if (!seenSsid.add(ap.ssid)) wifiUniqueAndOuiOk = false;
+                if (ap.ssid.startsWith("iptime") && !ap.bssid.startsWith("64:E5:99:")) wifiUniqueAndOuiOk = false;
+                if (ap.ssid.startsWith("FRITZ!Box") && !ap.bssid.startsWith("00:1C:4A:")) wifiUniqueAndOuiOk = false;
+                if (ap.ssid.startsWith("JioFiber") && !ap.bssid.startsWith("24:7F:20:")) wifiUniqueAndOuiOk = false;
+            }
+        }
+        check("WifiProfile varies primary connected AP, deduplicates SSIDs, and maps regional OUIs",
+                wifiUniqueAndOuiOk && primaryPrefixes.size() >= 2);
+
+        java.util.List<BleProfile.Template> bleTpls = Arrays.asList(
+                new BleProfile.Template("Bose QuietComfort Ultra", -2, 4),
+                new BleProfile.Template("Pixel Buds Pro 2", -1, 4),
+                new BleProfile.Template("Sony WH-1000XM5", -2, 4),
+                new BleProfile.Template("GARMIN Forerunner 265", -3, 4));
+        java.util.List<BleProfile.Device> bleDevs = BleProfile.forRegion(42L, 4, bleTpls, testOui);
+        Set<String> seenBleNames = new LinkedHashSet<String>();
+        boolean bleOk = !bleDevs.isEmpty();
+        for (BleProfile.Device d : bleDevs) {
+            if (!seenBleNames.add(d.name)) bleOk = false;
+            if (d.name.contains("Bose") && !d.address.startsWith("04:52:C7:")) bleOk = false;
+            if (d.name.contains("Pixel") && !d.address.startsWith("F4:F5:D8:")) bleOk = false;
+        }
+        check("BleProfile deduplicates device names and maps expanded brand OUIs", bleOk);
+    }
+
+    private static void personaSaltLayersAndMemoryRulesWork() {
+        // 1. Default model (modelSeed == 0L) across two distinct spaces must not collide in PersonaSynth.cross.
+        long spaceA = 0x1122334455667788L;
+        long spaceB = 0x8877665544332211L;
+        long crossA = PersonaSalt.deviceCrossSeed(spaceA, 0L);
+        long crossB = PersonaSalt.deviceCrossSeed(spaceB, 0L);
+        check("deviceCrossSeed is non-zero and isolates spaces even when modelSeed=0",
+                crossA != 0L && crossB != 0L && crossA != crossB);
+
+        String[] pixelTemplate = {
+                "Google Pixel 8", "Google", "google", "Pixel 8", "shiba", "shiba",
+                "shiba", "shiba",
+                "google/shiba/shiba:15/AP3A.241005.015/12366759:user/release-keys",
+                "AP3A.241005.015", "12366759", "15", "35", "2024-10-05"
+        };
+        String[] variantA = PersonaSynth.cross(pixelTemplate, crossA);
+        String[] variantB = PersonaSynth.cross(pixelTemplate, crossB);
+        check("PersonaSynth.cross diverges between two spaces on default model",
+                !variantA[8].equals(variantB[8]) || !variantA[10].equals(variantB[10]));
+        check("PersonaSynth.cross is deterministic for same spaceSeed",
+                Arrays.equals(variantA, PersonaSynth.cross(pixelTemplate, crossA)));
+
+        // 2. profileSeed must mix region ISO (case-insensitive) and isolate across regions/spaces/models.
+        long saltM1 = 0x55AA55AA12345678L;
+        long saltM2 = 0xAA55AA5587654321L;
+        long profJpA = PersonaSalt.profileSeed(crossA, saltM1, "jp");
+        long profJpUpperA = PersonaSalt.profileSeed(crossA, saltM1, "JP");
+        long profUsA = PersonaSalt.profileSeed(crossA, saltM1, "us");
+        long profJpB = PersonaSalt.profileSeed(crossB, saltM1, "jp");
+        long profJpM2 = PersonaSalt.profileSeed(crossA, saltM2, "jp");
+        check("profileSeed is deterministic and case-insensitive on ISO",
+                profJpA != 0L && profJpA == profJpUpperA);
+        check("profileSeed isolates across region switches (JP vs US)", profJpA != profUsA);
+        check("profileSeed isolates across spaces (spaceA vs spaceB)", profJpA != profJpB);
+        check("profileSeed isolates across model identities", profJpA != profJpM2);
+
+        // 3. Domain separation for Wi-Fi, BLE, and initial region pick seeds.
+        long wifi0 = PersonaSalt.wifiSeed(profJpA, 0L);
+        long wifi1 = PersonaSalt.wifiSeed(profJpA, 1L);
+        long ble0 = PersonaSalt.bleSeed(profJpA, 0L);
+        long ble1 = PersonaSalt.bleSeed(profJpA, 1L);
+        check("wifiSeed and bleSeed are domain-separated and respond to reroll steps",
+                wifi0 != ble0 && wifi0 != wifi1 && ble0 != ble1 && wifi1 != ble1);
+
+        long pickJpA = PersonaSalt.regionPickSeed(spaceA, "jp");
+        long pickJpB = PersonaSalt.regionPickSeed(spaceB, "jp");
+        long pickUsA = PersonaSalt.regionPickSeed(spaceA, "us");
+        check("regionPickSeed is space- and region-specific",
+                pickJpA != pickJpB && pickJpA != pickUsA);
+
+        // 4. Legacy EnvSession migration must never contaminate blank Native spaces.
+        check("legacy migration runs once on clean upgrade",
+                PersonaSalt.shouldMigrateLegacyRegion(false, false, null, "jp"));
+        check("legacy migration blocked when already migrated",
+                !PersonaSalt.shouldMigrateLegacyRegion(true, false, null, "jp"));
+        check("legacy migration blocked when another space already has a bound region",
+                !PersonaSalt.shouldMigrateLegacyRegion(false, true, null, "jp"));
+        check("legacy migration skipped when current space already has region",
+                !PersonaSalt.shouldMigrateLegacyRegion(false, false, "us", "jp"));
+        check("legacy migration skipped when legacy ISO is absent",
+                !PersonaSalt.shouldMigrateLegacyRegion(false, false, null, null));
+
+        // 5. regionApplied must match both active user and ISO, preventing cross-space false greens.
+        check("regionApplied true for matching space user and ISO",
+                PersonaSalt.isRegionAppliedForSpace("10", "jp", "10", "JP", true, false));
+        check("regionApplied false when another space applied the same ISO",
+                !PersonaSalt.isRegionAppliedForSpace("0", "jp", "10", "jp", true, false));
+        check("regionApplied false when session is partial",
+                !PersonaSalt.isRegionAppliedForSpace("10", "jp", "10", "jp", true, true));
+        check("regionApplied backward-compatible when legacy activeUser is missing",
+                PersonaSalt.isRegionAppliedForSpace("0", "jp", null, "jp", true, false));
+
+        // 6. Restored zone matches saved zone -> do not overwrite saved custom coordinates.
+        check("shouldUpdateRestoredZone skips identical zone",
+                !PersonaSalt.shouldUpdateRestoredZone("Asia/Tokyo", "Asia/Tokyo"));
+        check("shouldUpdateRestoredZone detects actual zone change",
+                PersonaSalt.shouldUpdateRestoredZone("America/Los_Angeles", "America/New_York"));
+        check("shouldUpdateRestoredZone ignores blank restored zone",
+                !PersonaSalt.shouldUpdateRestoredZone("", "Asia/Tokyo"));
+
+        // 7. Salt version pinning: legacy spaces stay v1 across upgrades, brand-new spaces get v2.
+        check("resolveSaltVersion keeps legacy space on v1 and assigns fresh space v2",
+                PersonaSalt.resolveSaltVersion(0, true) == PersonaSalt.SALT_V1
+                        && PersonaSalt.resolveSaltVersion(0, false) == PersonaSalt.SALT_V2
+                        && PersonaSalt.resolveSaltVersion(PersonaSalt.SALT_V1, false) == PersonaSalt.SALT_V1
+                        && PersonaSalt.resolveSaltVersion(PersonaSalt.SALT_V2, true) == PersonaSalt.SALT_V2);
+        check("v1 salt formulas remain byte-for-byte compatible with legacy spaces",
+                PersonaSalt.deviceCrossSeed(PersonaSalt.SALT_V1, spaceA, 0L) == 0L
+                        && PersonaSalt.profileSeed(PersonaSalt.SALT_V1, 0L, saltM1, "au") == saltM1
+                        && PersonaSalt.profileSeed(PersonaSalt.SALT_V1, 0L, saltM1, "jp") == saltM1
+                        && PersonaSalt.wifiSeed(PersonaSalt.SALT_V1, saltM1, 2L)
+                                == (saltM1 ^ (2L * 0x9E3779B97F4A7C15L))
+                        && PersonaSalt.bleSeed(PersonaSalt.SALT_V1, saltM1, 2L)
+                                == (saltM1 ^ (2L * 0xBF58476D1CE4E5B9L)));
+
+        // 8. Build-pin freezing & legacy historical adoption.
+        String[] s25Base = {
+                "samsung SM-S938B", "samsung", "samsung", "SM-S938B", "pa3q", "pa3qxxx",
+                "qcom", "sun",
+                "samsung/pa3qxxx/pa3q:15/AP3A.240905.015.A2/S938BXXS1AYC2_OXM1AYC2:user/release-keys",
+                "AP3A.240905.015.A2", "S938BXXS1AYC2", "15", "35", "2025-03-01"
+        };
+        String legacyFp = "samsung/pa3qxxx/pa3q:15/AP3A.240905.01Y.QN/S938BXXS1L939:user/release-keys";
+        String[] adopted = PersonaSalt.applyBuildPin(s25Base, legacyFp, "AP3A.240905.01Y.QN", "", "");
+        check("applyBuildPin adopts matching historical fingerprint and extracts incremental + patch",
+                adopted != null
+                        && legacyFp.equals(adopted[8])
+                        && "AP3A.240905.01Y.QN".equals(adopted[9])
+                        && "S938BXXS1L939".equals(adopted[10])
+                        && "2024-09-05".equals(adopted[13]));
+        check("applyBuildPin rejects cross-model or cross-release pin",
+                PersonaSalt.applyBuildPin(pixelTemplate, legacyFp, "AP3A.240905.01Y.QN", "", "") == null
+                        && PersonaSalt.applyBuildPin(s25Base,
+                                "samsung/pa3qxxx/pa3q:16/BP3A.250905.010/S938BXXS2ABC1:user/release-keys",
+                                "BP3A.250905.010", "", "") == null);
+    }
+
+    private static void atomicTextFilePersistsAndReplacesCleanly() {
+        java.io.File dir = null;
+        try {
+            dir = java.nio.file.Files.createTempDirectory("cw-atomic-test-").toFile();
+            java.io.File target = new java.io.File(dir, "persona-state.json");
+            java.io.File tmp = new java.io.File(dir, "persona-state.json.tmp");
+            check("AtomicTextFile returns null for missing file",
+                    AtomicTextFile.readUtf8(target) == null);
+
+            String payload1 = "{\"space_iso.0\":\"jp\",\"root_space_seed.0\":\"123456789\"}";
+            AtomicTextFile.writeUtf8(target, payload1);
+            check("AtomicTextFile round-trips initial UTF-8 payload",
+                    payload1.equals(AtomicTextFile.readUtf8(target)) && !tmp.exists());
+
+            String payload2 = "{\"space_iso.10\":\"us\",\"note\":\"utf8-ok\"}";
+            AtomicTextFile.writeUtf8(target, payload2);
+            check("AtomicTextFile atomically replaces existing file with shorter payload",
+                    payload2.equals(AtomicTextFile.readUtf8(target)) && !tmp.exists());
+            check("NetworkRules parses Android 15 angle-bracketed Uids ranges",
+                    NetworkRules.uidInRanges(10391, "<{0-10371, 10390-10393, 20595-99999}>")
+                            && !NetworkRules.uidInRanges(10372, "<{0-10371, 10390-10393}>"));
+            check("NetworkRules covers modern proxy TUN prefixes without matching WiFi/cellular",
+                    NetworkRules.isKnownTunnelPrefix("tun0")
+                            && NetworkRules.isKnownTunnelPrefix("Meta")
+                            && NetworkRules.isKnownTunnelPrefix("sing-box0")
+                            && NetworkRules.isKnownTunnelPrefix("awg0")
+                            && NetworkRules.isKnownTunnelPrefix("flclash")
+                            && NetworkRules.isKnownTunnelPrefix("netproxy")
+                            && !NetworkRules.isKnownTunnelPrefix("wlan0")
+                            && !NetworkRules.isKnownTunnelPrefix("rmnet_data0")
+                            && !NetworkRules.isKnownTunnelPrefix("metadata0"));
+            check("NetworkRules.isTunnelPeerOrPrivateDns flags sing-box/mihomo/v2ray/tailscale DNS only",
+                    NetworkRules.isTunnelPeerOrPrivateDns(new byte[]{(byte) 172, 19, 0, 2})
+                            && NetworkRules.isTunnelPeerOrPrivateDns(new byte[]{(byte) 198, 18, 0, 2})
+                            && NetworkRules.isTunnelPeerOrPrivateDns(new byte[]{10, 10, 14, 2})
+                            && NetworkRules.isTunnelPeerOrPrivateDns(new byte[]{26, 26, 26, 2})
+                            && NetworkRules.isTunnelPeerOrPrivateDns(new byte[]{100, 100, 100, 100})
+                            && !NetworkRules.isTunnelPeerOrPrivateDns(new byte[]{1, 1, 1, 1})
+                            && !NetworkRules.isTunnelPeerOrPrivateDns(new byte[]{8, 8, 8, 8}));
+            String rawNc = "[ Transports: WIFI|VPN Capabilities: NOT_METERED&INTERNET&TRUSTED&VALIDATED "
+                    + "TransportInfo: <VpnTransportInfo{type=1, sessionId=FlClash, bypassable=true}> OwnerUid: 10049 ]";
+            String cleanNc = NetworkRules.sanitizeCapabilitiesString(rawNc);
+            check("NetworkRules.sanitizeCapabilitiesString strips VPN transport and VpnTransportInfo",
+                    cleanNc.contains("Transports: WIFI ")
+                            && cleanNc.contains("NOT_VPN")
+                            && !cleanNc.contains("WIFI|VPN")
+                            && !cleanNc.contains("VpnTransportInfo")
+                            && !cleanNc.contains("FlClash"),
+                    cleanNc);
+            String rawNi = "[type: VPN[], state: CONNECTED/CONNECTED, extra: VPN:com.follow.clash, failover: false]";
+            String cleanNi = NetworkRules.sanitizeNetworkInfoString(rawNi);
+            check("NetworkRules.sanitizeNetworkInfoString rewrites VPN type and strips proxy package",
+                    cleanNi.contains("type: WIFI[")
+                            && !cleanNi.contains("VPN:")
+                            && !cleanNi.contains("com.follow.clash"),
+                    cleanNi);
+            check("AppVisibilityPolicy detects modern proxy clients including SFA, NekoBox, WARP, NetProxy",
+                    AppVisibilityPolicy.categoryOf("io.nekohasekai.sfa") == AppVisibilityPolicy.CAT_PROXY
+                            && AppVisibilityPolicy.categoryOf("moe.nb4a") == AppVisibilityPolicy.CAT_PROXY
+                            && AppVisibilityPolicy.categoryOf("com.follow.clash") == AppVisibilityPolicy.CAT_PROXY
+                            && AppVisibilityPolicy.categoryOf("com.cloudflare.onedotonedotonedotone") == AppVisibilityPolicy.CAT_PROXY
+                            && AppVisibilityPolicy.categoryOf("com.netproxy.app") == AppVisibilityPolicy.CAT_PROXY
+                            && AppVisibilityPolicy.categoryOf("com.anthropic.claude") == AppVisibilityPolicy.CAT_NONE
+                            && AppVisibilityPolicy.categoryOf("com.android.chrome") == AppVisibilityPolicy.CAT_NONE);
+        } catch (Exception e) {
+            check("AtomicTextFile I/O succeeded", false, e.toString());
+        } finally {
+            if (dir != null) {
+                java.io.File[] children = dir.listFiles();
+                if (children != null) {
+                    for (java.io.File c : children) {
+                        c.delete();
+                    }
+                }
+                dir.delete();
+            }
+        }
     }
 
     // ---- harness -----------------------------------------------------------------------

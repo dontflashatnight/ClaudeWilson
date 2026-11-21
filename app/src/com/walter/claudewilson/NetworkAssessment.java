@@ -1,229 +1,353 @@
 package com.walter.claudewilson;
 
 import android.content.SharedPreferences;
-import java.util.Locale;
 
-/** Interpret the existing Bridge text protocol; performs no network I/O. */
+import com.walter.claudewilson.model.NetworkRules;
+import com.walter.claudewilson.model.SimPolicy;
+import com.walter.claudewilson.model.Tables;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+/** Interprets Bridge + connectivity/iptables probe output into structured verdicts; zero network I/O. */
 final class NetworkAssessment {
-    private static final String[] DC_ASN = {
-        "amazon", "aws", "google", "microsoft", "azure", "digitalocean",
-        "vultr", "linode", "akamai", "cloudflare", "ovh", "hetzner",
-        "alibaba", "aliyun", "tencent", "oracle", "datacamp", "m247",
-        "choopa", "contabo", "leaseweb", "astrix", "hosting", "datacenter",
-        "data center", "server", "cdn", "gsl", "gsl networks"};
 
     static final class Result {
         final String text, vpn;
-        /** Package configured as always-on in the VPN settings, or null when the switch is off. */
+        /** Package configured as always-on in VPN settings, or empty when off. */
         final String alwaysOn;
-        /** Egress facts, kept structured so the card can render them as a table. */
-        final String egIp, egCc, egOrg;
+        final String egIp, egCc, egCity, egTz, egOrg;
         /** 1 = matches the selected region, 0 = differs, -1 = nothing to compare. */
         final int egState;
-        /** True when the egress organisation looks like a datacenter rather than a home line. */
         final boolean egDatacenter;
-        /** -1 unread, 0 leaked, 1 not leaked. */
-        final int dnsState, v6State, udpState, tgtState;
-        Result(String text, String vpn, String alwaysOn, String egIp, String egCc, String egOrg,
-               int egState, boolean egDatacenter,
-               int dnsState, int v6State, int udpState, int tgtState) {
-            this.text = text; this.vpn = vpn; this.alwaysOn = alwaysOn;
-            this.egIp = egIp; this.egCc = egCc; this.egOrg = egOrg;
-            this.egState = egState; this.egDatacenter = egDatacenter;
-            this.dnsState = dnsState; this.v6State = v6State;
-            this.udpState = udpState; this.tgtState = tgtState;
+        /** True when egCc appears in catalog/restricted-regions.txt for this target. */
+        final boolean egRestricted;
+        /** True when kernel transparent proxy (iptables REDIRECT/TPROXY/DNS-53) is active without VpnService. */
+        final boolean tproxyDetected;
+        /** True when global Settings.Global.http_proxy is set and may leak proxy metadata. */
+        final boolean globalProxySet;
+        /** True when custom Private DNS (mode=hostname) is bypassing tunnel DNS interception. */
+        final boolean privateDnsBypass;
+        final String privateDnsSpec;
+        /** Non-empty when egress IP flipped compared to previous scan ("old -> new"). */
+        final String ipFlip;
+        /** -1 unread/neutral, 0 leaked/bad, 1 clean/aligned. */
+        final int dnsState, v6State, udpState, routeState;
+        final String dnsLabel, dnsDetail;
+        final String v6Label, v6Detail;
+        final String udpLabel, udpDetail;
+        final String routeLabel, routeDetail;
+
+        Result(String text, String vpn, String alwaysOn,
+               String egIp, String egCc, String egCity, String egTz, String egOrg,
+               int egState, boolean egDatacenter, boolean egRestricted,
+               boolean tproxyDetected, boolean globalProxySet,
+               boolean privateDnsBypass, String privateDnsSpec, String ipFlip,
+               int dnsState, String dnsLabel, String dnsDetail,
+               int v6State, String v6Label, String v6Detail,
+               int udpState, String udpLabel, String udpDetail,
+               int routeState, String routeLabel, String routeDetail) {
+            this.text = text;
+            this.vpn = vpn;
+            this.alwaysOn = alwaysOn;
+            this.egIp = egIp;
+            this.egCc = egCc;
+            this.egCity = egCity;
+            this.egTz = egTz;
+            this.egOrg = egOrg;
+            this.egState = egState;
+            this.egDatacenter = egDatacenter;
+            this.egRestricted = egRestricted;
+            this.tproxyDetected = tproxyDetected;
+            this.globalProxySet = globalProxySet;
+            this.privateDnsBypass = privateDnsBypass;
+            this.privateDnsSpec = privateDnsSpec;
+            this.ipFlip = ipFlip;
+            this.dnsState = dnsState;
+            this.dnsLabel = dnsLabel;
+            this.dnsDetail = dnsDetail;
+            this.v6State = v6State;
+            this.v6Label = v6Label;
+            this.v6Detail = v6Detail;
+            this.udpState = udpState;
+            this.udpLabel = udpLabel;
+            this.udpDetail = udpDetail;
+            this.routeState = routeState;
+            this.routeLabel = routeLabel;
+            this.routeDetail = routeDetail;
         }
     }
 
     private NetworkAssessment() {}
 
     static Result evaluate(String raw, SharedPreferences p, String exp, String targetName) {
-        java.util.Map<String, String> eg = kv(raw, "EGRESS");
-        java.util.Map<String, String> v6 = kv(raw, "V6");
-        java.util.Map<String, String> ud = kv(raw, "UDP");
-        java.util.Map<String, String> lk = kv(raw, "LOCK");
+        return evaluate(raw, p, exp, targetName, Tables.EMPTY, "");
+    }
+
+    static Result evaluate(String raw, SharedPreferences p, String exp,
+                           String targetName, Tables tables, String targetId) {
+        Map<String, String> eg = kv(raw, "EGRESS");
+        Map<String, String> v6 = kv(raw, "V6");
+        Map<String, String> ud = kv(raw, "UDP");
+        Map<String, String> lk = kv(raw, "LOCK");
+        Map<String, String> rt = kv(raw, "ROUTE");
         StringBuilder s = new StringBuilder();
-        String egIp = eg.get("ip"), egCc = eg.get("cc"),
-               egOrg = eg.get("org");
-        boolean dcAsn = false;
-        // With no region selected there is nothing to compare the egress country against. That is
-        // "not compared", not a match: the old expression treated exp == null as agreement and
-        // printed a green tick for a comparison that never happened.
-        boolean hasCc = egCc != null && !egCc.isEmpty();
+
+        String egIp = nn(eg.get("ip"));
+        String egCc = nn(eg.get("cc")).toUpperCase(Locale.ROOT);
+        String egCity = nn(eg.get("city")).replace('_', ' ').trim();
+        String egTz = nn(eg.get("tz")).trim();
+        String egOrg = nn(eg.get("org")).trim();
+        boolean hostingFlag = "1".equals(nn(eg.get("hosting")));
+        boolean proxyFlag = "1".equals(nn(eg.get("proxy")));
+        boolean hasCc = !egCc.isEmpty();
         boolean hasRegion = exp != null && !exp.isEmpty();
         boolean matches = hasCc && hasRegion && egCc.equalsIgnoreCase(exp);
-        s.append(!hasCc || !hasRegion ? "— " : matches ? "✓ " : "✗ ")
-         .append(Lang.t("出口", "egress", "出口")).append(' ')
-         .append(egIp == null || egIp.isEmpty() ? "?" : egIp).append(' ')
-         .append(hasCc ? egCc : "?")
-         .append(hasRegion ? " vs " + exp
-                 : Lang.t(" (未选区·不比对)", " (no region selected)",
-                         " (地域未選択)"))
-         .append('\n');
-        if (egOrg != null && !egOrg.isEmpty()) {
-            // The organisation is already a column in the table; keep the datacenter verdict for
-            // Result.egDatacenter, but do not repeat the name in the prose below it.
-            String ol = egOrg.toLowerCase(Locale.ROOT);
-            for (String k : DC_ASN) if (ol.contains(k)) { dcAsn = true; break; }
-        }        if (egIp != null && !egIp.isEmpty()) {
+        boolean egRestricted = hasCc && SimPolicy.isRestrictedIso(tables, egCc, targetId);
+        boolean dcAsn = NetworkRules.isDatacenterOrg(egOrg, proxyFlag, hostingFlag);
+
+        String ipFlip = "";
+        if (!egIp.isEmpty()) {
             String hist = p.getString("net_iphist", "");
             String last = hist.isEmpty() ? "" : hist.split(",")[0];
-            if (!last.isEmpty() && !last.equals(egIp))
+            if (!last.isEmpty() && !last.equals(egIp)) {
+                ipFlip = last + " → " + egIp;
                 s.append("⚠ ").append(Lang.t("IP 翻转 ", "IP flip ", "IP変化 "))
-                 .append(last).append("→").append(egIp).append('\n');
-            java.util.List<String> hl = new java.util.ArrayList<>(
-                    hist.isEmpty() ? new java.util.ArrayList<String>()
-                            : java.util.Arrays.asList(hist.split(",")));
-            hl.remove(egIp); hl.add(0, egIp);
+                        .append(ipFlip).append('\n');
+            }
+            List<String> hl = new ArrayList<String>(
+                    hist.isEmpty() ? new ArrayList<String>() : Arrays.asList(hist.split(",")));
+            hl.remove(egIp);
+            hl.add(0, egIp);
             if (hl.size() > 8) hl = hl.subList(0, 8);
-            p.edit().putString("net_iphist",
-                    android.text.TextUtils.join(",", hl)).apply();
+            p.edit().putString("net_iphist", android.text.TextUtils.join(",", hl)).apply();
         }
-        java.util.Map<String, String> df = kv(raw, "DNSFAKE");
+
+        String lapp = cleanNull(lk.get("app"));
+        String lastVpn = cleanNull(lk.get("vpn"));
+        String pdnsMode = cleanNull(lk.get("pdns"));
+        String pdnsSpec = cleanNull(lk.get("pdnsspec"));
+        boolean privateDnsBypass = NetworkRules.isPrivateDnsBypassRisk(pdnsMode, pdnsSpec);
+
+        int dns53Count = parseIntSafe(lk.get("dns53"));
+        int tptcpCount = parseIntSafe(lk.get("tptcp"));
+        boolean tproxyDns = dns53Count > 0;
+        boolean tproxyDetected = lastVpn.isEmpty() && (dns53Count > 0 || tptcpCount > 0);
+
+        String gproxy = cleanNull(lk.get("gproxy"));
+        boolean globalProxySet = !gproxy.isEmpty() && !":0".equals(gproxy);
+
+        // 1. DNS evaluation (Private DNS bypass > Fake-IP > TProxy DNS-53 > VPN redir-host > Direct leak)
+        Map<String, String> df = kv(raw, "DNSFAKE");
         int dnsState = -1;
-        if (!df.isEmpty()) {
+        String dnsLabel = "—";
+        String dnsDetail = Lang.t("未获取到 DNS 解析样本", "no DNS sample", "DNS 観測なし");
+        if (privateDnsBypass) {
+            dnsState = 0;
+            boolean cnDot = NetworkRules.isDomesticPrivateDns(pdnsSpec);
+            dnsLabel = cnDot ? Lang.t("国产 DoT", "CN DoT", "国内 DoT")
+                    : Lang.t("私有DNS绕过", "DoT bypass", "DoT 迂回");
+            dnsDetail = "private_dns=" + pdnsSpec
+                    + Lang.t(" · 绕过隧道 DNS 拦截", " · bypasses tunnel DNS");
+        } else if (!df.isEmpty()) {
             int total = 0, fake = 0, failed = 0;
-            for (java.util.Map.Entry<String, String> e : df.entrySet()) {
+            for (Map.Entry<String, String> e : df.entrySet()) {
                 if (!e.getKey().contains(".")) continue;
                 String value = e.getValue();
-                // `err` is a failed lookup, not a real-IP answer. Counting it as leaked was a
-                // false positive: one transient resolver failure made the whole row red.
                 if (value == null || value.isEmpty() || value.startsWith("err")) {
                     failed++;
                     continue;
                 }
                 total++;
-                if (value.contains("198.18.") || value.contains("198.19.")) fake++;
+                boolean allFake = true;
+                for (String addr : value.split("\\+")) {
+                    if (addr.isEmpty()) continue;
+                    if (!NetworkRules.isFakeIp(addr)) {
+                        allFake = false;
+                        break;
+                    }
+                }
+                if (allFake) fake++;
             }
-            boolean real = total > 0 && fake < total;
-            dnsState = total == 0 ? -1 : real ? 0 : failed > 0 ? -1 : 1;
-            s.append(total == 0 ? "— dns·"
-                    : real ? "✗ dns·" : failed > 0 ? "— dns·" : "✓ dns·")
-             .append(Lang.t("国外路径 ", "foreign ", "国外 "))
-             .append(fake).append('/').append(total)
-             .append(failed > 0 ? " err=" + failed : "")
-             .append(real
-                     ? Lang.t(" ←有域返回真实 IP=fake-ip 未覆盖,该域或直连",
-                             " ←real IP returned=fake-ip uncovered or "
-                             + "direct-routed", " ←実IP返却")
-                     : failed > 0
-                             ? Lang.t(" ←部分域解析失败,不能判泄漏",
-                                     " ←some lookups failed; not a verdict",
-                                     " ←一部解決失敗")
-                             : Lang.t(" 全 fake-ip=国外域零外部解析(节点侧解析)",
-                                     " all fake-ip=zero external lookup "
-                                     + "(resolved node-side)",
-                                     " 全 fake-ip=外部解無し"))
-             .append('\n');
+            if (total == 0) {
+                dnsState = -1;
+                dnsLabel = "—";
+                dnsDetail = "dns err=" + failed;
+            } else if (fake == total) {
+                dnsState = 1;
+                dnsLabel = "Fake-IP";
+                dnsDetail = fake + "/" + total + " (198.18.x / fc00::)"
+                        + (failed > 0 ? " err=" + failed : "");
+            } else if (tproxyDns) {
+                dnsState = 1;
+                dnsLabel = Lang.t("透明代理", "TProxy", "透過");
+                dnsDetail = "iptables 53 · redir-host (dns53=" + dns53Count + ")";
+            } else if (!lastVpn.isEmpty() && !egRestricted) {
+                dnsState = 1;
+                dnsLabel = Lang.t("隧道解析", "Tunnel DNS", "トンネル");
+                dnsDetail = "redir-host · " + Lang.t("无私有 DNS 绕过", "no Private DNS bypass")
+                        + " (" + total + "/" + total + ")";
+            } else {
+                dnsState = 0;
+                dnsLabel = Lang.t("直连解析", "Direct DNS", "直接解決");
+                dnsDetail = Lang.t("未检测到隧道 DNS 接管（Fake-IP ", "unproxied DNS (fake-ip ")
+                        + fake + "/" + total + ")";
+            }
         }
-        String v6ip = v6.get("ip");
+
+        // 2. IPv6 egress evaluation (local leak + v4/v6 cross-country mismatch)
+        String v6ip = nn(v6.get("ip"));
+        String v6cc = nn(v6.get("cc")).toUpperCase(Locale.ROOT);
+        StringBuilder localV6Blob = new StringBuilder();
+        for (Map.Entry<String, String> e : v6.entrySet()) {
+            if (!"ip".equals(e.getKey()) && !"cc".equals(e.getKey()) && e.getValue() != null) {
+                localV6Blob.append(e.getValue()).append(' ');
+            }
+        }
+        boolean v6Restricted = !v6cc.isEmpty() && SimPolicy.isRestrictedIso(tables, v6cc, targetId);
+        int v6Class = NetworkRules.classifyV6(v6ip, v6cc, localV6Blob.toString(), egCc, v6Restricted);
         int v6State;
-        if ("none".equals(v6ip) || v6ip == null || v6ip.isEmpty()) {
+        String v6Label;
+        String v6Detail;
+        if (v6Class == NetworkRules.V6_CLEAN_NONE) {
             v6State = 1;
-            s.append("✓ v6 ").append(Lang.t("无出口(隧道截断或本地无 v6)",
-                    "no egress (tunnel-dropped or no v6)",
-                    "出口無し")).append('\n');
+            v6Label = Lang.t("无泄露", "Clean", "漏洩なし");
+            v6Detail = Lang.t("无真实 v6 出口（隧道截断或本地无 v6）",
+                    "no v6 egress (tunnel-dropped)", "v6 出口なし");
+        } else if (v6Class == NetworkRules.V6_LEAK_LOCAL) {
+            v6State = 0;
+            v6Label = Lang.t("本机泄露", "Leaked", "実址漏洩");
+            v6Detail = v6ip + Lang.t(" ← 本机真实地址", " ← real device addr", " ← 実アドレス");
+        } else if (v6Class == NetworkRules.V6_LEAK_CROSS_COUNTRY) {
+            v6State = 0;
+            v6Label = v6Restricted ? Lang.t("禁区 v6", "Banned v6") : Lang.t("跨国错位", "v6 Mismatch");
+            v6Detail = "v6 " + (v6cc.isEmpty() ? "?" : v6cc)
+                    + " ≠ v4 " + (egCc.isEmpty() ? "?" : egCc) + " · " + v6ip;
         } else {
-            boolean isLocal = false;
-            for (java.util.Map.Entry<String, String> e : v6.entrySet())
-                if (!"ip".equals(e.getKey()) && e.getValue() != null
-                        && e.getValue().contains(v6ip)) isLocal = true;
-            v6State = isLocal ? 0 : 1;
-            s.append(isLocal ? "✗ v6 " : "✓ v6 ").append(v6ip);
-            if (isLocal) s.append(Lang.t(" ←本机真实地址泄漏",
-                    " ←real device addr leaked", " ←実アドレス漏洩"));
-            s.append('\n');
+            v6State = 1;
+            v6Label = v6cc.isEmpty() ? Lang.t("无泄露", "Clean", "漏洩なし")
+                    : Lang.t("双栈同国", "Aligned", "同国 v6");
+            v6Detail = Lang.t("隧道 v6 ", "tunnel v6 ")
+                    + (v6cc.isEmpty() ? "" : "(" + v6cc + ") ") + v6ip;
         }
-        String uip = ud.get("ip"), ucc = ud.get("cc"), uvia = ud.get("via");
-        if (uip == null) s.append("— udp err\n");
-        else if ("timeout".equals(uip) || "err".equals(uip))
-            s.append("✓ udp·stun ").append(uip)
-             .append(Lang.t(" ←出站 UDP 不通=无泄面(语音可能不可用)",
-                     " ←UDP blocked=no leak surface (voice may fail)",
-                     " ←UDP 遮断")).append('\n');
-        else if (uip.equals(egIp))
-            s.append("✓ udp·stun ").append(uip)
-             .append(Lang.t(" 与 TCP 同出口", " same egress as TCP",
-                     " TCP と同出口")).append('\n');
-        else {
-            boolean same = ucc != null && egCc != null
-                    && ucc.equalsIgnoreCase(egCc);
-            s.append(same ? "✓ udp·stun " : "✗ udp·stun ")
-             .append(uip).append(' ')
-             .append(ucc == null ? "?" : ucc)
-             .append(same ? "" : Lang.t(
-                     " ←STUN 见真出口(语音 srflx 带真 IP)",
-                     " ←STUN sees real egress (voice srflx=real IP)",
-                     " ←STUN 実出口"))
-             .append(uvia == null || uvia.isEmpty() ? ""
-                     : " [" + uvia + "]").append('\n');
-        }
+
+        // 3. UDP / STUN evaluation
+        String uip = ud.get("ip");
+        String ucc = nn(ud.get("cc")).toUpperCase(Locale.ROOT);
+        String uvia = nn(ud.get("via"));
         int udpState;
-        if (uip == null) udpState = -1;
-        else if ("timeout".equals(uip) || "err".equals(uip)) udpState = 1;
-        else if (uip.equals(egIp)) udpState = 1;
-        else {
-            boolean same = ucc != null && egCc != null
-                    && ucc.equalsIgnoreCase(egCc);
+        String udpLabel;
+        String udpDetail;
+        if (uip == null || uip.isEmpty()) {
+            udpState = -1;
+            udpLabel = "—";
+            udpDetail = "STUN unread";
+        } else if ("timeout".equals(uip) || "err".equals(uip)) {
+            udpState = 1;
+            udpLabel = Lang.t("已阻断", "Blocked", "遮断");
+            udpDetail = "STUN " + uip + Lang.t(" · 无 UDP 泄露面", " · no UDP leak surface", " · 漏洩なし");
+        } else if (uip.equals(egIp)) {
+            udpState = 1;
+            udpLabel = Lang.t("同出口", "Aligned", "同出口");
+            udpDetail = "STUN " + uip + (ucc.isEmpty() ? "" : " (" + ucc + ")");
+        } else {
+            boolean same = !ucc.isEmpty() && !egCc.isEmpty() && ucc.equalsIgnoreCase(egCc);
             udpState = same ? 1 : 0;
+            udpLabel = same ? Lang.t("同国出口", "Same CC", "同国")
+                    : Lang.t("跨国泄露", "Leaked", "実出口");
+            udpDetail = "STUN " + uip + (ucc.isEmpty() ? "" : " (" + ucc + ")")
+                    + (uvia.isEmpty() ? "" : " [" + uvia + "]");
         }
-        java.util.List<String> cl = new java.util.ArrayList<>();
-        for (String line : raw.split("\n"))
-            if (line.startsWith("TGT "))
-                cl.add(line.substring(4).trim());
-        int tgtState = cl.isEmpty() ? -1 : 1;
-        if (!cl.isEmpty()) {
-            s.append("✓ ").append(targetName).append(Lang.t(" 域→", " domains→", " ドメイン→"))
-                    .append(cl.size()).append(Lang.t(" 条规则命中: ", " rules: ", " 件: "));
-            StringBuilder g = new StringBuilder();
-            for (String e : cl) {
-                int i = e.lastIndexOf(',');
-                String grp = (i > 0 ? e.substring(i + 1) : e)
-                        .replace("\"", "").trim();
-                if (g.indexOf(grp) < 0)
-                    g.append(g.length() > 0 ? "/" : "").append(grp);
+
+        // 4. Target App Route Verification (real VPN UidRanges / iptables TProxy UID check)
+        int targetUid = parseIntSafe(rt.get("uid"));
+        int uidBypass = parseIntSafe(rt.get("uidbypass"));
+        String uidRanges = cleanNull(rt.get("uidranges"));
+        int routeState;
+        String routeLabel;
+        String routeDetail;
+        if (!lastVpn.isEmpty()) {
+            if (targetUid > 0 && !uidRanges.isEmpty()) {
+                boolean covered = NetworkRules.uidInRanges(targetUid, uidRanges);
+                routeState = covered ? 1 : 0;
+                routeLabel = covered ? Lang.t("已入隧道", "In VPN", "VPN 内")
+                        : Lang.t("绕过 VPN", "Bypassed", "VPN 迂回");
+                routeDetail = targetName + " (uid=" + targetUid + ") "
+                        + (covered ? Lang.t("已纳入 VPN 路由", "routed via ") + " · " + lastVpn
+                        : Lang.t("被 VPN 分应用排除！", "excluded from VPN UidRanges!"));
+            } else {
+                routeState = 1;
+                routeLabel = Lang.t("VPN 接管", "VPN On", "VPN 有効");
+                routeDetail = targetName + " · " + lastVpn
+                        + (targetUid > 0 ? " (uid=" + targetUid + ")" : "");
             }
-            s.append(g).append(Lang.t("(fake-ip=无外部解析)",
-                    " (fake-ip=no external lookup)",
-                    " (fake-ip=外部解無し)")).append('\n');
+        } else if (tproxyDetected) {
+            if (uidBypass > 0) {
+                routeState = 0;
+                routeLabel = Lang.t("绕过代理", "Bypassed", "迂回");
+                routeDetail = targetName + " (uid=" + targetUid + ") "
+                        + Lang.t("命中 iptables RETURN 放行规则！", "excluded by iptables owner RETURN!");
+            } else {
+                routeState = 1;
+                routeLabel = Lang.t("透明代理", "TProxy", "透過代理");
+                routeDetail = targetName + (targetUid > 0 ? " (uid=" + targetUid + ")" : "")
+                        + " · REDIRECT/TProxy (tcp=" + tptcpCount + ", dns53=" + dns53Count + ")";
+            }
+        } else {
+            boolean directRisk = egRestricted || (hasCc && hasRegion && !matches);
+            routeState = directRisk ? 0 : -1;
+            routeLabel = directRisk ? Lang.t("直连裸奔", "Direct", "直通")
+                    : Lang.t("无隧道", "No tunnel", "トンネル無");
+            routeDetail = targetName + Lang.t(" 未检测到 VPN 或内核透明代理",
+                    " no VpnService or kernel TProxy detected");
         }
-        String lapp = lk.get("app"), ldown = lk.get("down");
-        // `settings get` prints the literal string "null" for an unset key.
-        if ("null".equals(lapp)) lapp = "";
-        if ("null".equals(ldown)) ldown = "";
-        String lastVpn = lk.get("vpn");
-        String vpnName = lastVpn == null || lastVpn.isEmpty()
-                ? (lapp == null || lapp.isEmpty() ? "?" : lapp) : lastVpn;
-        boolean locked = "1".equals(ldown);
-        s.append(locked ? "✓ " : "⚠ ")
-         .append(Lang.t("始终开启 VPN: ", "always-on VPN: ", "常時 VPN: "))
-         .append(vpnName)
-         .append(Lang.t(" · 阻止非 VPN 连接 ", " · block non-VPN ",
-                 " · 非 VPN 遮断 "))
-         .append(locked ? Lang.t("开", "on", "ON") : Lang.t("关", "off", "OFF"))
-         .append(Lang.t(" · 应用可绕过 VPN ", " · app can bypass ",
-                 " · アプリ迂回 "))
-         .append("true".equals(lk.get("bypass"))
-                 ? Lang.t("是", "yes", "可") : Lang.t("否", "no", "不可"))
-         .append('\n');
-        return new Result(s.toString(), lastVpn,
-                lapp == null ? "" : lapp,
-                egIp == null ? "" : egIp,
-                egCc == null ? "" : egCc,
-                egOrg == null ? "" : egOrg,
+
+        return new Result(
+                s.toString(), lastVpn, lapp,
+                egIp, egCc, egCity, egTz, egOrg,
                 !hasCc || !hasRegion ? -1 : matches ? 1 : 0,
-                dcAsn, dnsState, v6State, udpState, tgtState);
+                dcAsn, egRestricted, tproxyDetected, globalProxySet,
+                privateDnsBypass, pdnsSpec, ipFlip,
+                dnsState, dnsLabel, dnsDetail,
+                v6State, v6Label, v6Detail,
+                udpState, udpLabel, udpDetail,
+                routeState, routeLabel, routeDetail);
     }
 
-    /** parse "KEY k=v k=v" line → map (local='a b' keeps spaces via last k=v). */
-    private static java.util.Map<String, String> kv(String raw, String key) {
-        java.util.Map<String, String> m = new java.util.LinkedHashMap<>();
+    private static String nn(String v) {
+        return v == null ? "" : v;
+    }
+
+    private static String cleanNull(String v) {
+        if (v == null) return "";
+        String t = v.trim();
+        return "null".equalsIgnoreCase(t) ? "" : t;
+    }
+
+    private static int parseIntSafe(String v) {
+        if (v == null || v.trim().isEmpty()) return 0;
+        try {
+            return Integer.parseInt(v.trim());
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
+    /** Parses "KEY k=v k=v" line -> map (keeps spaces inside the last k=v value). */
+    private static Map<String, String> kv(String raw, String key) {
+        Map<String, String> m = new LinkedHashMap<String, String>();
+        if (raw == null) return m;
         for (String line : raw.split("\n")) {
             if (!line.startsWith(key + " ")) continue;
             for (String tok : line.substring(key.length() + 1).split(" ")) {
                 int eq = tok.indexOf('=');
-                if (eq > 0) m.put(tok.substring(0, eq), tok.substring(eq + 1));
-                else if (!m.isEmpty()) {
+                if (eq > 0) {
+                    m.put(tok.substring(0, eq), tok.substring(eq + 1));
+                } else if (!m.isEmpty()) {
                     String lastK = null;
                     for (String k : m.keySet()) lastK = k;
                     if (lastK != null) m.put(lastK, m.get(lastK) + " " + tok);

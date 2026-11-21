@@ -10,11 +10,18 @@ ClaudeWilson 是一个可逆的环境观测与对齐工具。它把目标应用�
 
 <p align="center">
   <a href="README.md"><b>简体中文</b></a> ·
-  <a href="README.en.md">English</a>
+  <a href="README.en.md">English</a> ·
+  <a href="https://dontflashatnight.github.io/ClaudeWilson/"><b>在线交互体验（官网）</b></a>
 </p>
 
 <p align="center">
-  <img src="docs/App_Preview/preview.png" width="820" alt="ClaudeWilson 界面总览">
+  <img src="docs/App_Preview/preview.png" width="920" alt="ClaudeWilson 核心界面总览">
+</p>
+
+<p align="center">
+  <a href="https://x.com/i/chat/group_join/g2118665695424864750/bFuy8UtwS7">
+    <img src="docs/App_Preview/x-group-zh.svg" width="580" alt="加入 ClaudeWilson X 交流群">
+  </a>
 </p>
 
 ---
@@ -84,11 +91,11 @@ Claude 和 ChatGPT 都会从 Android 读取大量环境信号。它们不只看 
 
 | 项目 | 要求 |
 |---|---|
-| 系统 | Android 15（API 35）或更新 |
+| 系统 | Android 13–17（API 33–37） |
 | 目标 | 已安装 Claude 或 ChatGPT |
-| 特权通道 | root（KernelSU / Magisk）**或** Shizuku |
-| 注入 | root + Zygisk + Vector 2.x（Xposed 模块管理器） |
-| 本应用 | `com.walter.claudewilson`，无 `INTERNET` 权限 |
+| 特权通道 | root（KernelSU / Magisk / APatch）**或** Shizuku |
+| 注入 | root + Zygisk + Vector 2.x（LSPosed / Xposed 模块管理器） |
+| 本应用 | `com.walter.claudewilson`，无 `INTERNET` 权限，零目标目录残留 |
 
 ### 两种通道
 
@@ -160,15 +167,16 @@ Shizuku 第一次使用：在 Shizuku 应用里允许 ClaudeWilson；如果顶�
 
 从上到下是固定的顺序：
 
-1. **目标**：Claude / ChatGPT。切换只改变诊断对象，不启动应用。
-2. **人设空间**：字段、期望值、实际值。`✓` 一致，`✗` 不一致，`○` 边界，`—` 不比较或当前通道做不到。“定位”行显示目标应看到的城市，点开可开关模拟并查看坐标。
-3. **地区切换**：选地区；`✕` 关闭并恢复。
-4. **网络**：VPN、IP 出口、线路、DNS、IPv6、UDP、节点。
-5. **数据清理**：清除目标本地数据。
-6. **检查项**：目标自己的观测行，按身份 / 账号 / 完整性 / 传输 / 目标 / 系统 / 权限 / 定位分组。
-7. **账号层**：账号边界和本地账号记录。
+1. **目标切换 & 飞行前门禁（Preflight Bar）**：顶部在 **Claude** / **ChatGPT** 之间切换（仅切诊断对象，不启动目标）；门禁条即时给出 `就绪`、`安全运行中` 或 `禁止启动 · N 项阻断`（处于禁区/漂移/泄露态时阻断）。
+2. **人设空间（6 宫格工作台）**：内置 100+ 地区一键切换与 `✕` 还原，集中管理 **SIM 与网络**、**语言与时区**、**GPS 定位地图**、**Wi‑Fi / BLE / 传感器拟态**、**设备机型与 IPv6 策略**（默认持久关闭 + 内核 `ip -6 monitor` 零轮询防回弹看门狗）、**商店与账号边界**；点任意卡片呼出底部配置抽屉。
+3. **网络检测 & 现代代理内核隐身**：Shell 侧一键探测 VPN、出口地区/ASN、住宅/机房线路、DNS（Fake-IP / TProxy / 私有 DNS 绕过）、IPv6 泄露、UDP/QUIC 一致性与目标 UID 路由；进程内通过内核 `tun_flags` + `POINTOPOINT` 自动隐藏隧道接口，并泛化改写 `LinkProperties` IPv4/DNS/MTU/路由、`VpnTransportInfo`、`NET_CAPABILITY_NOT_VPN` 与 `NetworkInfo`，兼容 `sing-box (SFA)`、`mihomo / FlClash`、`v2rayNG / Xray`、`NekoBox`、`Surfboard`、`WireGuard / AmneziaWG`、`Tailscale`、`WARP`、`NetProxy` 等现代代理内核。
+4. **应用可见性（HMA 预设）& 分档数据清理**：按分组（Root 管理器 / 现代代理客户端 / 环境探测器 / 第三方 ROM 包）隐藏敏感包名并自动保活 OAuth 与 Play Billing；数据清理支持轻量清缓存与全用户深度重置。
+5. **目标视角（保镖 / 报表 / 6 维诊断）**：
+   - **保镖（Bodyguard）**：提供 `OFF` / `OBSERVE`（仅记录观察）/ `BLOCK_KILL`（强阻断熔断）三档。开启 `BLOCK_KILL` 后，若未对齐人设误点目标、或目标新版读取基线外陌生采集信号，保镖直接强杀并锁定目标进程，防止真实设备信息发出；内置可搜索的已审计基线（Claude 167 项 / ChatGPT 154 项）、可逆用户白名单与 6 门禁校验。
+   - **报表（Ledger）**：只读提取目标暂存区（Sentry breadcrumbs/tags/envelopes、Datadog `last_view_event`、Bootstrap / Model / Statsig 缓存）与保镖 HTTP 响应记录，结构化落盘至本地 SQLite `ledger.db` 并自动比对历史上传漂移，支持折叠查看与一键导出 Markdown 报表（零目标目录残留）。
+   - **诊断（6 维健康矩阵）**：按隐身 / 完整性 / 网络定位 / 身份链 / 账号会话 / 权限传感 6 个维度汇总观测项与底层验证结果。
 
-标题右边的小眼睛会遮住敏感值（AID、SIM、机型、指纹、账号标识）。它只影响显示，不影响写入和判定。
+标题右边的小眼睛会遮住敏感值（AID、SIM、机型、指纹、IP、账号标识）。它只影响显示，不影响写入和判定。
 
 ### 权限与定位观测
 
@@ -344,26 +352,28 @@ KernelSU 默认不弹窗。到 KernelSU → 超级用户里搜索 `ClaudeWilson`
 
 ```
 app/src/com/walter/claudewilson/
-├── MainActivity.java            生命周期、权限、广播
+├── MainActivity.java            生命周期、权限、网络回调与广播
 ├── Dashboard.java               页面编排、apply/revert 事务、扫描调度
-├── PersonaPanel.java            人设表、地区写入、机型/CSC/时区编辑
-├── NetworkPanel.java            网络卡与 scan/fix
-├── RiskModelPanel.java          目标检查项渲染
-├── AccountLayerPanel.java       账号层
+├── PreflightBar.java            飞行前门禁条（就绪 / 安全运行 / 阻断）
+├── PersonaPanel.java            6 宫格人设工作台、地区写入、IPv6 策略同步
+├── PersonaEditSheets.java       机型 / SIM / GPS 地图 / IPv6 底部配置抽屉
+├── NetworkPanel.java            网络检测卡与一键修复
+├── DataCleanPanel.java          分档数据清理 UI（配合 DataClean.java）
+├── AppVisibilitySheet.java      应用可见性（HMA 预设分组）
+├── TargetViewPanel.java         目标视角、HTTP 响应与 5 维暂存诊断报表
+├── LedgerDb.java / LedgerIngestor.java  SQLite v2 诊断与上报台账
 ├── RegionActions.java           baseline 快照、订阅、恢复
 ├── EnvSession.java              地区事务状态（phase/token/baseline）
-├── RootShell.java              root / Shizuku 统一命令通道
-├── ShizukuShell.java           Shizuku 进程通道
-├── SystemBuild.java            构建属性与运营商属性脚本
-├── DataClean.java              按用户清理目标数据
-├── TargetIdentityReset.java    本地身份重置
-├── TargetDataEdit.java         ChatGPT DataStore 单字段可逆写入
-├── Geo.java                    地区坐标资产加载
-├── Targets.java                目标选择与包状态
-├── model/                      纯数据与纯规则（45 个文件）
-├── rule/                       纯规则 probe（36 个文件）
-├── platform/                   唯一设备采集层（5 个文件）
-└── hook/                       Vector 模块（16 个文件）
+├── RootShell.java / ShizukuShell.java   root / Shizuku 统一命令通道
+├── SystemBuild.java             构建属性与运营商属性脚本
+├── model/                       纯数据与纯规则（62 个文件，零 android.*）
+├── rule/                        纯规则 probe（36 个文件）
+├── platform/                    唯一设备采集层（5 个文件）
+└── hook/                        Vector 模块与原生隐匿桥接（21 个文件）
+app/jni/
+└── cwpersona.c                  ARM64 16KB BTI/PAC 原生隐匿库（libcwpersona.so）
+tools/target_watch/              构建与自测依赖的基线与覆盖率注册表（3 个 JSON）
+docs/index.html                  GitHub Pages 交互式在线 UX 体验官网
 ```
 
 `model/` 下最重要的是：
@@ -494,10 +504,11 @@ revert:
 cd app
 export CW_WORKSPACE=/path/to/android/toolchain   # aapt2 / d8 / apksigner
 export CW_JBR=/path/to/jdk-21
+export CW_OUT_DIR=/path/to/out                   # 可选，默认 app/out
 python build.py
 ```
 
-产物：`app/out/build-<timestamp>-<hash>/ClaudeWilson.apk`。
+产物：`${CW_OUT_DIR:-app/out}/build-<timestamp>-<hash>/ClaudeWilson.apk`。
 
 自测：
 
@@ -506,7 +517,7 @@ cd app
 python test.py
 ```
 
-测试覆盖 model / rule / 状态机 / shell 命令构造，不依赖设备。当前 402 项断言（数字随版本变化）。
+测试覆盖 model / rule / 状态机 / 现代代理规则 / 诊断解析 / shell 命令构造，不依赖设备。当前 837 项断言（数字随版本变化）。
 
 安装：
 
@@ -535,7 +546,7 @@ adb install -r app/out/build-*/ClaudeWilson.apk
 
 - Play Integrity verdict、hCaptcha、Codex 设备密钥、账号图谱、服务端风控：**服务端量**，本地改不了。
 - TEE / StrongBox / 硬件 attestation：只能观测，不能伪造。
-- raw native syscall、`dl_iterate_phdr`、native `posix_spawn`：用户态 hook 覆盖不到。
+- 直接内联汇编 `svc #0` raw syscall 与 native `posix_spawn`：用户态 PLT/GOT hook 覆盖不到（常规 libc `open`/`openat`/`fopen`/`getifaddrs`/`dl_iterate_phdr`/`__system_property_*` 已由 `libcwpersona.so` 覆盖）。
 - `/system/bin/su` 仍在磁盘：KernelSU direct-su 架构；目标进程内隐藏不等于磁盘不存在。
 - 关闭地区恢复的是**第一次 apply 的 baseline**，不是“上一个地区”，也不是出厂设置。
 - 换地区会丢弃当前空间的手动 SIM 覆盖；apply 失败时这些覆盖不会自动恢复。
@@ -554,4 +565,4 @@ Required Notice: Copyright (c) 2026 ClaudeWilson contributors
 
 ---
 
-<p align="center"><sub>ClaudeWilson · 环境观测与可逆对齐 · Android 15+</sub></p>
+<p align="center"><sub>ClaudeWilson · 环境观测与可逆对齐 · Android 13–17</sub></p>

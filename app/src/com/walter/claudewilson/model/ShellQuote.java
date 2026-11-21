@@ -51,7 +51,50 @@ public final class ShellQuote {
             return true;
         }
         int rc = suRc(output);
-        return rc != Integer.MIN_VALUE && rc != 0;
+        if (rc != Integer.MIN_VALUE && rc != 0) {
+            return true;
+        }
+        int shRc = shellRc(output);
+        return shRc != Integer.MIN_VALUE && shRc != 0;
+    }
+
+    /**
+     * Line-anchored {@code rc=<n>} status emitted by the shell runners when no {@code SU_RC=}
+     * wrapper was used, or {@link Integer#MIN_VALUE} when absent. Anchored to the start of a line
+     * so mid-line {@code rc=0} log fields are never mistaken for the transport exit code.
+     */
+    public static int shellRc(String output) {
+        if (output == null || output.isEmpty()) {
+            return Integer.MIN_VALUE;
+        }
+        int at = -1;
+        if (output.startsWith("rc=")) {
+            at = 0;
+        }
+        int nl = output.lastIndexOf("\nrc=");
+        if (nl >= 0) {
+            at = nl + 1;
+        }
+        if (at < 0) {
+            return Integer.MIN_VALUE;
+        }
+        int start = at + "rc=".length();
+        int end = start;
+        if (end < output.length() && output.charAt(end) == '-') {
+            end++;
+        }
+        int digits = end;
+        while (end < output.length() && Character.isDigit(output.charAt(end))) {
+            end++;
+        }
+        if (end == digits) {
+            return Integer.MIN_VALUE;
+        }
+        try {
+            return Integer.parseInt(output.substring(start, end));
+        } catch (NumberFormatException e) {
+            return Integer.MIN_VALUE;
+        }
     }
 
     /**

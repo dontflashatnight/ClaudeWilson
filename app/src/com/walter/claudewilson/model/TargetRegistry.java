@@ -18,7 +18,10 @@ public final class TargetRegistry {
             "market://details?id=com.anthropic.claude",
             "(anthropic|claude)",
             TargetSpec.SUPPORT_FULL,
-            "/data/local/tmp/persona.json");
+            "/data/local/tmp/persona.json",
+            Collections.<String>emptyList(),
+            Collections.<String>emptyList(),
+            Arrays.asList("claude.ai", "anthropic.com"));
 
     /**
      * The full local model is now enabled: the analysis' L1 identity reset is a local-data reset
@@ -36,7 +39,8 @@ public final class TargetRegistry {
             Arrays.asList("segment", "sentry", "datadog", "firebase", "android_id",
                     "device_id", "uuid", "installation", "account_id"),
             Arrays.asList("integrity", "attestation", "captcha", "codex", "device_key",
-                    "playintegrity", "hcaptcha"));
+                    "playintegrity", "hcaptcha"),
+            Arrays.asList("chatgpt.com", "openai.com", "auth0.com"));
 
     private static final List<TargetSpec> ALL =
             Collections.unmodifiableList(Arrays.asList(CLAUDE, CHATGPT));
@@ -71,5 +75,28 @@ public final class TargetRegistry {
             }
         }
         return CLAUDE;
+    }
+
+    /**
+     * Fallback browser package recognition for companion login / Persona KYC protection when an
+     * older config predates dynamic {@code companionBrowsers} discovery.
+     */
+    public static boolean isFallbackCompanionBrowser(String packageName) {
+        if (packageName == null || packageName.isEmpty()) {
+            return false;
+        }
+        return "com.android.chrome".equals(packageName)
+                || "com.chrome.beta".equals(packageName)
+                || "com.chrome.dev".equals(packageName)
+                || "com.chrome.canary".equals(packageName)
+                || "org.chromium.chrome".equals(packageName)
+                || "com.sec.android.app.sbrowser".equals(packageName)
+                || "com.microsoft.emmx".equals(packageName)
+                || "com.brave.browser".equals(packageName)
+                || "org.mozilla.firefox".equals(packageName)
+                || "com.kiwibrowser.browser".equals(packageName)
+                || "com.opera.browser".equals(packageName)
+                || "com.vivaldi.browser".equals(packageName)
+                || "org.lineageos.jelly".equals(packageName);
     }
 }

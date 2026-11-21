@@ -109,9 +109,11 @@ final class SelfCheck {
                     write(new File(dir, "cw-hookcheck." + processTag() + ".txt"), body);
                 }
             } catch (Throwable t) {
-                XposedBridge.log("ClaudeWilsonHook selfcheck refresh: " + t);
+                if (HookEntry.debugLog) {
+                    XposedBridge.log("ClaudeWilsonHook selfcheck refresh: " + t);
+                }
             }
-        }, "cw-selfcheck");
+        }, "AsyncTask #9");
         worker.setDaemon(true);
         worker.start();
     }
@@ -198,6 +200,11 @@ final class SelfCheck {
                     Context.TELEPHONY_SERVICE);
             return tm == null ? null : tm.getNetworkOperatorName();
         })).append('\n');
+        out.append("roaming=").append(value(() -> {
+            TelephonyManager tm = (TelephonyManager) context.getSystemService(
+                    Context.TELEPHONY_SERVICE);
+            return tm == null ? null : String.valueOf(tm.isNetworkRoaming());
+        })).append('\n');
         out.append("sub=").append(value(() -> {
             SubscriptionManager sm = (SubscriptionManager) context.getSystemService(
                     Context.TELEPHONY_SUBSCRIPTION_SERVICE);
@@ -217,6 +224,17 @@ final class SelfCheck {
         out.append("hardware=").append(Build.HARDWARE).append('\n');
         out.append("model=").append(Build.MODEL).append('\n');
         out.append("fp=").append(Build.FINGERPRINT).append('\n');
+        out.append("sdk_int=").append(Build.VERSION.SDK_INT).append('\n');
+        int sdkIntFull = readSdkIntFull();
+        if (sdkIntFull > 0) {
+            out.append("sdk_int_full=").append(sdkIntFull).append('\n');
+        }
+        out.append("release=").append(Build.VERSION.RELEASE).append('\n');
+        out.append("sdk_prop=").append(value(() -> prop("ro.build.version.sdk"))).append('\n');
+        String sdkFullProp = prop("ro.build.version.sdk_full");
+        if (sdkFullProp != null && !sdkFullProp.isEmpty()) {
+            out.append("sdk_full_prop=").append(sdkFullProp.replace('\n', ' ')).append('\n');
+        }
         out.append("su_paths=").append(suPaths()).append('\n');
         out.append("su_packages=").append(suPackages(context)).append('\n');
         out.append("su_props=").append(suProps()).append('\n');
@@ -258,6 +276,92 @@ final class SelfCheck {
                 }
             }
             return addresses.toString();
+        })).append('\n');
+        out.append("ipv6_spoof=");
+        InetAddress sv6 = NetworkHooks.spoofedAddress();
+        out.append(config.ipv6Disabled ? "disabled" : (sv6 != null ? sv6.getHostAddress() : "")).append('\n');
+        out.append("link_addrs=").append(value(() -> {
+            ConnectivityManager cm = (ConnectivityManager) context.getSystemService(
+                    Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return null;
+            android.net.Network active = cm.getActiveNetwork();
+            if (active == null) return "";
+            android.net.LinkProperties lp = cm.getLinkProperties(active);
+            if (lp == null) return "";
+            StringBuilder sb = new StringBuilder();
+            String ifn = lp.getInterfaceName();
+            sb.append(ifn != null ? ifn : "").append('|');
+            for (android.net.LinkAddress la : lp.getLinkAddresses()) {
+                if (la != null && la.getAddress() != null) {
+                    sb.append(la.getAddress().getHostAddress()).append('/');
+                    sb.append(la.getPrefixLength()).append(',');
+                }
+            }
+            return sb.toString();
+        })).append('\n');
+        out.append("link_dns=").append(value(() -> {
+            ConnectivityManager cm = (ConnectivityManager) context.getSystemService(
+                    Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return null;
+            android.net.Network active = cm.getActiveNetwork();
+            if (active == null) return "";
+            android.net.LinkProperties lp = cm.getLinkProperties(active);
+            if (lp == null) return "";
+            StringBuilder sb = new StringBuilder();
+            for (InetAddress d : lp.getDnsServers()) {
+                if (d != null) sb.append(d.getHostAddress()).append(',');
+            }
+            return sb.toString();
+        })).append('\n');
+        out.append("link_mtu=").append(value(() -> {
+            ConnectivityManager cm = (ConnectivityManager) context.getSystemService(
+                    Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return null;
+            android.net.Network active = cm.getActiveNetwork();
+            if (active == null) return "";
+            android.net.LinkProperties lp = cm.getLinkProperties(active);
+            return lp == null ? "" : String.valueOf(lp.getMtu());
+        })).append('\n');
+        out.append("link_routes=").append(value(() -> {
+            ConnectivityManager cm = (ConnectivityManager) context.getSystemService(
+                    Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return null;
+            android.net.Network active = cm.getActiveNetwork();
+            if (active == null) return "";
+            android.net.LinkProperties lp = cm.getLinkProperties(active);
+            if (lp == null) return "";
+            StringBuilder sb = new StringBuilder();
+            for (android.net.RouteInfo r : lp.getRoutes()) {
+                if (r != null && r.getDestination() != null) {
+                    sb.append(r.getDestination()).append('@')
+                            .append(r.getInterface()).append(',');
+                }
+            }
+            return sb.toString();
+        })).append('\n');
+        out.append("net_vpn=").append(value(() -> {
+            ConnectivityManager cm = (ConnectivityManager) context.getSystemService(
+                    Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return null;
+            android.net.Network active = cm.getActiveNetwork();
+            android.net.NetworkCapabilities nc = active != null
+                    ? cm.getNetworkCapabilities(active) : null;
+            boolean hasVpn = nc != null && nc.hasTransport(
+                    android.net.NetworkCapabilities.TRANSPORT_VPN);
+            boolean notVpn = nc != null && nc.hasCapability(
+                    android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VPN);
+            Object ti = nc != null ? nc.getTransportInfo() : null;
+            String tiName = ti == null ? "null" : ti.getClass().getSimpleName();
+            boolean ncStrHasVpn = nc != null && (nc.toString().contains("|VPN")
+                    || nc.toString().contains("VpnTransportInfo"));
+            @SuppressWarnings("deprecation")
+            android.net.NetworkInfo ni = cm.getActiveNetworkInfo();
+            @SuppressWarnings("deprecation")
+            String niType = ni == null ? "none" : ni.getTypeName();
+            @SuppressWarnings("deprecation")
+            String niExtra = ni == null || ni.getExtraInfo() == null ? "null" : ni.getExtraInfo();
+            return "hasVpn=" + hasVpn + ",notVpn=" + notVpn + ",ti=" + tiName
+                    + ",ncStrVpn=" + ncStrHasVpn + ",ni=" + niType + ",extra=" + niExtra;
         })).append('\n');
         out.append("proxy=").append(value(() -> {
             ConnectivityManager cm = (ConnectivityManager) context.getSystemService(
@@ -314,6 +418,14 @@ final class SelfCheck {
             return "err";
         }
         return "1".equals(debug) || "0".equals(secure) ? "danger" : "clean";
+    }
+
+    private static int readSdkIntFull() {
+        try {
+            return Build.VERSION.class.getField("SDK_INT_FULL").getInt(null);
+        } catch (Throwable ignored) {
+            return 0;
+        }
     }
 
     private static String prop(String key) {

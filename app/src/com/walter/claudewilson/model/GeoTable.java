@@ -87,7 +87,9 @@ public final class GeoTable {
                     table.centers.put(iso, point);
                 }
             } else {
-                table.zones.put(zone, point);
+                if (!table.zones.containsKey(zone)) {
+                    table.zones.put(zone, point);
+                }
             }
         }
         return table;
@@ -105,6 +107,21 @@ public final class GeoTable {
     /** Every parsed row, country centres and zone cities. */
     public List<Point> all() {
         return Collections.unmodifiableList(points);
+    }
+
+    /** Curated city points belonging to {@code iso}, in catalog order. */
+    public List<Point> citiesForIso(String iso) {
+        List<Point> out = new ArrayList<>();
+        if (iso == null || iso.isEmpty()) {
+            return out;
+        }
+        String want = iso.trim().toLowerCase(Locale.ROOT);
+        for (Point point : points) {
+            if (want.equals(point.iso) && !point.city.isEmpty()) {
+                out.add(point);
+            }
+        }
+        return out;
     }
 
     public int centers() {

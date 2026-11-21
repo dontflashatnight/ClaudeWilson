@@ -31,13 +31,66 @@ final class TargetPermissionCollector {
     private static final String MICROPHONE = "android.permission.RECORD_AUDIO";
     private static final String SCREEN_CAPTURE = "android.permission.DETECT_SCREEN_CAPTURE";
     private static final String NEARBY_WIFI = "android.permission.NEARBY_WIFI_DEVICES";
+    private static final String LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK";
     private static final String BT_SCAN = "android.permission.BLUETOOTH_SCAN";
     private static final String BT_CONNECT = "android.permission.BLUETOOTH_CONNECT";
     private static final String ACTIVITY = "android.permission.ACTIVITY_RECOGNITION";
     private static final String BODY_SENSORS = "android.permission.BODY_SENSORS";
     private static final Pattern OP = Pattern.compile("([A-Z_]+_LOCATION):\\s*(\\w+)");
+    private static final long FAST_CACHE_MS = 60000L;
+    private static final java.util.concurrent.ConcurrentHashMap<String, CachedFacts> CACHE =
+            new java.util.concurrent.ConcurrentHashMap<String, CachedFacts>();
+
+    static final class CachedFacts {
+        final PermissionFacts permissions;
+        final LocationFacts location;
+        final long capturedAt;
+
+        CachedFacts(PermissionFacts permissions, LocationFacts location, long capturedAt) {
+            this.permissions = permissions;
+            this.location = location;
+            this.capturedAt = capturedAt;
+        }
+    }
+
+    /** Batched collector: 1 single shell call on full scan, 0ms cached hit on fast reconcile. */
+    CachedFacts collect(Context context, TargetSpec target, boolean fast) {
+        String key = target == null ? "" : target.id();
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (fast && !key.isEmpty()) {
+            CachedFacts hit = CACHE.get(key);
+            if (hit != null && (now - hit.capturedAt) < FAST_CACHE_MS) {
+                return hit;
+            }
+        }
+        String appOpsDump = "";
+        if (target != null && RootShell.shellReady()
+                && com.walter.claudewilson.model.ShellQuote.packageName(target.packageName())) {
+            String pkg = target.packageName();
+            appOpsDump = RootShell.run(
+                    "cmd appops get " + pkg + " FINE_LOCATION 2>/dev/null; "
+                    + "cmd appops get " + pkg + " COARSE_LOCATION 2>/dev/null; "
+                    + "cmd appops get " + pkg + " MOCK_LOCATION 2>/dev/null", 4096);
+            if (appOpsDump == null || appOpsDump.startsWith("exc:")
+                    || appOpsDump.startsWith("timeout:")) {
+                appOpsDump = "";
+            }
+        }
+        CachedFacts fresh = new CachedFacts(
+                permissionsWithDump(context, target, appOpsDump),
+                locationWithDump(context, target, appOpsDump),
+                now);
+        if (!key.isEmpty()) {
+            CACHE.put(key, fresh);
+        }
+        return fresh;
+    }
 
     PermissionFacts permissions(Context context, TargetSpec target) {
+        return collect(context, target, false).permissions;
+    }
+
+    private PermissionFacts permissionsWithDump(Context context, TargetSpec target, String appOpsDump) {
         PermissionFacts.Builder builder = new PermissionFacts.Builder();
         if (context == null || target == null) {
             return builder.readable(false).build();
@@ -77,6 +130,10 @@ final class TargetPermissionCollector {
                     Boolean.TRUE.equals(granted.get(SCREEN_CAPTURE)));
             builder.put("wifi", declared.containsKey(NEARBY_WIFI),
                     Boolean.TRUE.equals(granted.get(NEARBY_WIFI)));
+            if (android.os.Build.VERSION.SDK_INT >= 37) {
+                builder.put("local_network", declared.containsKey(LOCAL_NETWORK),
+                        Boolean.TRUE.equals(granted.get(LOCAL_NETWORK)));
+            }
             builder.put("bluetooth_scan", declared.containsKey(BT_SCAN),
                     Boolean.TRUE.equals(granted.get(BT_SCAN)));
             builder.put("bluetooth_connect", declared.containsKey(BT_CONNECT),
@@ -94,19 +151,15 @@ final class TargetPermissionCollector {
                 }
             }
             builder.put("health", healthDeclared, healthGranted);
-            if (target != null && RootShell.shellReady()) {
-                for (String op : new String[]{"FINE_LOCATION", "COARSE_LOCATION"}) {
-                    String dump = RootShell.run("cmd appops get " + target.packageName()
-                            + " " + op + " 2>/dev/null", 2048);
-                    if (dump == null || dump.startsWith("exc:")
-                            || dump.startsWith("timeout:")) {
-                        continue;
-                    }
-                    Matcher matcher = OP.matcher(dump);
-                    while (matcher.find()) {
-                        String key = matcher.group(1).startsWith("FINE")
-                                ? "location.fine" : "location.coarse";
-                        builder.appOp(key, matcher.group(2));
+            if (appOpsDump != null && !appOpsDump.isEmpty()) {
+                Matcher matcher = OP.matcher(appOpsDump);
+                while (matcher.find()) {
+                    String opName = matcher.group(1);
+                    if ("FINE_LOCATION".equals(opName)) {
+                        builder.appOp("location.fine", matcher.group(2));
+                        builder.source("package-manager+appops");
+                    } else if ("COARSE_LOCATION".equals(opName)) {
+                        builder.appOp("location.coarse", matcher.group(2));
                         builder.source("package-manager+appops");
                     }
                 }
@@ -118,6 +171,10 @@ final class TargetPermissionCollector {
     }
 
     LocationFacts location(Context context, TargetSpec target) {
+        return collect(context, target, false).location;
+    }
+
+    private LocationFacts locationWithDump(Context context, TargetSpec target, String appOpsDump) {
         LocationFacts.Builder builder = new LocationFacts.Builder();
         if (context == null) {
             return builder.readable(false).build();
@@ -147,16 +204,12 @@ final class TargetPermissionCollector {
         } catch (Throwable ignored) {
         }
 
-        if (target != null && RootShell.shellReady()) {
-            String dump = RootShell.run("cmd appops get " + target.packageName()
-                    + " MOCK_LOCATION 2>/dev/null", 2048);
-            if (dump != null && !dump.startsWith("exc:") && !dump.startsWith("timeout:")) {
-                Matcher mock = Pattern.compile("MOCK_LOCATION:\\s*(\\w+)").matcher(dump);
-                if (mock.find()) {
-                    builder.mock(!"ignore".equals(mock.group(1)));
-                    readable = true;
-                    builder.source("settings+appops");
-                }
+        if (appOpsDump != null && !appOpsDump.isEmpty()) {
+            Matcher mock = Pattern.compile("MOCK_LOCATION:\\s*(\\w+)").matcher(appOpsDump);
+            if (mock.find()) {
+                builder.mock(!"ignore".equals(mock.group(1)));
+                readable = true;
+                builder.source("settings+appops");
             }
         }
         return builder.readable(readable).build();

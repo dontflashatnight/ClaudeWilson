@@ -59,13 +59,18 @@ public final class BleProfile {
         Random random = new Random(seed ^ 0x424C45L);
         List<Template> pool = templates == null || templates.isEmpty() ? fallback() : templates;
         int total = Math.max(2, Math.min(6, count + random.nextInt(4) - 1));
-        Set<String> used = new HashSet<>();
+        Set<String> usedAddr = new HashSet<>();
+        Set<String> usedNames = new HashSet<>();
         for (int i = 0; i < total; i++) {
             Template template = pick(pool, random);
+            int nRetry = 0;
+            while (!usedNames.add(template.name) && nRetry++ < 10) {
+                template = pick(pool, random);
+            }
             int rssi = -46 - random.nextInt(38);
             String address = address(template.name, random, oui);
             int retry = 0;
-            while (!used.add(address) && retry++ < 8) {
+            while (!usedAddr.add(address) && retry++ < 8) {
                 address = address(template.name, random, oui);
             }
             out.add(new Device(template.name, address, rssi, template.txPower, i == 0));
@@ -74,6 +79,9 @@ public final class BleProfile {
     }
 
     public static String json(List<Device> devices) {
+        if (devices == null || devices.isEmpty()) {
+            return "[]";
+        }
         StringBuilder out = new StringBuilder("[");
         for (int i = 0; i < devices.size(); i++) {
             Device device = devices.get(i);
@@ -88,6 +96,28 @@ public final class BleProfile {
                     .append('}');
         }
         return out.append(']').toString();
+    }
+
+    /** Applies optional primary bonded device rename or clean empty-BLE mode. */
+    public static List<Device> applyOverrides(List<Device> base, String customBondedName,
+                                              boolean emptyMode) {
+        if (emptyMode || base == null || base.isEmpty()) {
+            return new ArrayList<Device>();
+        }
+        String nameOverride = customBondedName == null ? "" : customBondedName.trim();
+        if (nameOverride.isEmpty()) {
+            return base;
+        }
+        List<Device> out = new ArrayList<Device>(base.size());
+        for (int i = 0; i < base.size(); i++) {
+            Device d = base.get(i);
+            if (i == 0 || d.bonded) {
+                out.add(new Device(nameOverride, d.address, d.rssi, d.txPower, true));
+            } else {
+                out.add(d);
+            }
+        }
+        return out;
     }
 
     private static List<Template> fallback() {
@@ -141,12 +171,22 @@ public final class BleProfile {
 
     private static String vendor(String name) {
         String value = name == null ? "" : name.toLowerCase(Locale.ROOT);
-        if (value.contains("airpods")) return "APPLE";
-        if (value.contains("galaxy")) return "SAMSUNG";
-        if (value.contains("mi band")) return "XIAOMI";
+        if (value.contains("airpods") || value.contains("apple")
+                || value.contains("beats")) return "APPLE";
+        if (value.contains("galaxy") || value.contains("samsung")) return "SAMSUNG";
+        if (value.contains("pixel") || value.contains("google")) return "GOOGLE";
         if (value.contains("sony")) return "SONY";
+        if (value.contains("bose")) return "BOSE";
         if (value.contains("jbl")) return "JBL";
-        if (value.contains("tile")) return "GENERIC";
+        if (value.contains("sennheiser")) return "SENNHEISER";
+        if (value.contains("garmin")) return "GARMIN";
+        if (value.contains("fitbit")) return "FITBIT";
+        if (value.contains("anker") || value.contains("soundcore")) return "ANKER";
+        if (value.contains("nintendo")) return "NINTENDO";
+        if (value.contains("mi band") || value.contains("xiaomi")) return "XIAOMI";
+        if (value.contains("oneplus")) return "ONEPLUS";
+        if (value.contains("tile") || value.contains("nothing")
+                || value.contains("boat")) return "GENERIC";
         return null;
     }
 

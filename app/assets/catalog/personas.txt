@@ -1,8 +1,8 @@
-# catalog 2026-11-02
+# catalog 2026-11-20 (Google Play Certified + dumps.tadiphone.dev official release-keys)
 # label|manufacturer|brand|model|device|product|hardware|board
 # fingerprint|buildId|incremental|release|sdkInt|securityPatch
-# One row per device preset. The picker always adds the running device itself,
-# so this list is extra choices, never the only source.
+# One row per device preset. Indices 0..21 preserve original presets for backward compatibility.
+# The picker always adds the running device itself, so this list is extra choices, never the only source.
 Pixel 8 Pro|Google|google|Pixel 8 Pro|husky|husky|husky|husky|google/husky/husky:15/AP3A.241005.015/12266611:user/release-keys|AP3A.241005.015|12266611|15|35|2024-10-05
 Pixel 9 Pro XL|Google|google|Pixel 9 Pro XL|komodo|komodo|komodo|komodo|google/komodo/komodo:15/AP3A.241005.015/12270533:user/release-keys|AP3A.241005.015|12270533|15|35|2024-10-05
 Pixel 8a|Google|google|Pixel 8a|akita|akita|akita|akita|google/akita/akita:15/AP3A.241005.015/12266611:user/release-keys|AP3A.241005.015|12266611|15|35|2024-10-05
@@ -23,3 +23,87 @@ Xiaomi 15|Xiaomi|Xiaomi|24129PN74G|dada|dada_global|qcom|sun|Xiaomi/dada_global/
 OnePlus 13|OnePlus|OnePlus|CPH2655|OP5D0DL1|CPH2655EE|qcom|sun|OnePlus/CPH2655EE/OP5D0DL1:15/UKQ1.231108.001/V.2f9c1a:user/release-keys|UKQ1.231108.001|V.2f9c1a|15|35|2024-12-05
 Xperia 1 VI|Sony|Sony|XQ-EC54|XQ-EC54|XQ-EC54|qcom|kalama|Sony/XQ-EC54/XQ-EC54:15/69.2.A.2.160/069002A002016001234567890:user/release-keys|69.2.A.2.160|069002A002016001234567890|15|35|2024-10-01
 Nothing 2a|Nothing|Nothing|A142|Aerodactyl|Aerodactyl|mt6886|mt6886|Nothing/Aerodactyl/Aerodactyl:15/AP3A.240905.015.A2/2507082038:user/release-keys|AP3A.240905.015.A2|2507082038|15|35|2025-01-01
+Pixel 10 Pro|Google|google|Pixel 10 Pro|blazer|blazer|blazer|blazer|google/blazer/blazer:16/BP3A.250905.014/13873947:user/release-keys|BP3A.250905.014|13873947|16|36|2025-09-05
+Galaxy S25U|samsung|samsung|SM-S938B|pa3q|pa3qxeea|qcom|sun|samsung/pa3qxeea/pa3q:16/BP3A.250905.014.A2/S938BXXS3BYI2:user/release-keys|BP3A.250905.014.A2|S938BXXS3BYI2|16|36|2025-09-01
+Pixel 6|Google|google|Pixel 6|oriole|oriole|gs101|oriole|google/oriole/oriole:14/UP1A.231005.007/10754064:user/release-keys|UP1A.231005.007|10754064|14|34|2023-10-05
+Pixel 7|Google|google|Pixel 7|panther|panther|gs201|panther|google/panther/panther:14/AP2A.240605.024/11860263:user/release-keys|AP2A.240605.024|11860263|14|34|2024-06-05
+Pixel 7 Pro|Google|google|Pixel 7 Pro|cheetah|cheetah|gs201|cheetah|google/cheetah/cheetah:14/AP2A.240605.024/11860263:user/release-keys|AP2A.240605.024|11860263|14|34|2024-06-05
+Pixel 8|Google|google|Pixel 8|shiba|shiba|zuma|shiba|google/shiba/shiba:14/AP2A.240605.024/11860263:user/release-keys|AP2A.240605.024|11860263|14|34|2024-06-05
+Pixel Tablet|Google|google|Pixel Tablet|tangorpro|tangorpro|gs201|tangorpro|google/tangorpro/tangorpro:14/AP2A.240605.024/11860263:user/release-keys|AP2A.240605.024|11860263|14|34|2024-06-05
+Pixel Fold|Google|google|Pixel Fold|felix|felix|gs201|felix|google/felix/felix:14/UP1A.231005.007/10754064:user/release-keys|UP1A.231005.007|10754064|14|34|2023-10-05
+Pixel 6a|Google|google|Pixel 6a|bluejay|bluejay|gs101|bluejay|google/bluejay/bluejay:14/UP1A.231005.007/10754064:user/release-keys|UP1A.231005.007|10754064|14|34|2023-10-05
+Pixel 6 Pro|Google|google|Pixel 6 Pro|raven|raven|gs101|raven|google/raven/raven:13/TQ1A.230205.002/9471150:user/release-keys|TQ1A.230205.002|9471150|13|33|2023-02-05
+Galaxy S21|samsung|samsung|SM-G991B|essi|o1sxxx|universal2100_r|exynos2100|samsung/o1sxxx/essi:14/UP1A.231005.007/G991BXXSBGXED:user/release-keys|UP1A.231005.007|G991BXXSBGXED|14|34|2024-06-01
+Galaxy S21 Ultra|samsung|samsung|SM-G998B|essi|p3sxxx|universal2100_r|exynos2100|samsung/p3sxxx/essi:14/UP1A.231005.007/G998BXXSBGXED:user/release-keys|UP1A.231005.007|G998BXXSBGXED|14|34|2024-06-01
+Galaxy A15|samsung|samsung|SM-A155F|a15|a15nsxx|mt6789|a15|samsung/a15nsxx/a15:14/UP1A.231005.007/A155FXXU2BXE4:user/release-keys|UP1A.231005.007|A155FXXU2BXE4|14|34|2024-05-01
+Galaxy S23 FE|samsung|samsung|SM-S711B|essi|r11sxxx|universal9925|s5e9925|samsung/r11sxxx/essi:14/UP1A.231005.007/S711BXXS2CXD1:user/release-keys|UP1A.231005.007|S711BXXS2CXD1|14|34|2024-04-01
+Galaxy S24|samsung|samsung|SM-S921B|e1s|e1sxxx|erd9945|s5e9945|samsung/e1sxxx/e1s:14/UP1A.231005.007/S921BXXU1AXCB:user/release-keys|UP1A.231005.007|S921BXXU1AXCB|14|34|2024-04-01
+Galaxy S21 FE|samsung|samsung|SM-G990E|essi|r9sxxx|universal2100_r|exynos2100|samsung/r9sxxx/essi:14/UP1A.231005.007/G990EXXS7FXC2:user/release-keys|UP1A.231005.007|G990EXXS7FXC2|14|34|2024-03-01
+Galaxy M34|samsung|samsung|SM-M346B|essi|m34xnsxx|universal8825|s5e8825|samsung/m34xnsxx/essi:14/UP1A.231005.007/M346BXXS3BXB1:user/release-keys|UP1A.231005.007|M346BXXS3BXB1|14|34|2024-02-01
+Galaxy A24|samsung|samsung|SM-A245F|a24|a24nsxx|mt6789|a24|samsung/a24nsxx/a24:14/UP1A.231005.007/A245FXXS3BXA1:user/release-keys|UP1A.231005.007|A245FXXS3BXA1|14|34|2024-01-01
+Galaxy A25|samsung|samsung|SM-A256E|essi|a25xdxx|universal8825|s5e8825|samsung/a25xdxx/essi:14/UP1A.231005.007/A256EXXS1AXA4:user/release-keys|UP1A.231005.007|A256EXXS1AXA4|14|34|2024-01-01
+Galaxy S24+|samsung|samsung|SM-S926B|e2s|e2sxxx|erd9945|s5e9945|samsung/e2sxxx/e2s:14/UP1A.231005.007/S926BXXU1AWM9:user/release-keys|UP1A.231005.007|S926BXXU1AWM9|14|34|2024-01-01
+Galaxy A54|samsung|samsung|SM-A546B|a54x|a54xnaxx|erd8835|s5e8835|samsung/a54xnaxx/a54x:13/TP1A.220624.014/A546BXXS8CXF1:user/release-keys|TP1A.220624.014|A546BXXS8CXF1|13|33|2024-06-01
+Galaxy S23|samsung|samsung|SM-S911B|dm1q|dm1qxxx|kalama|kalama|samsung/dm1qxxx/dm1q:13/TP1A.220624.014/S911BXXS5CXDE:user/release-keys|TP1A.220624.014|S911BXXS5CXDE|13|33|2024-05-01
+Galaxy A35|samsung|samsung|SM-A356E|a35x|a35xjvxx|erd8835|s5e8835|samsung/a35xjvxx/a35x:13/TP1A.220624.014/A356EXXU1AXD4:user/release-keys|TP1A.220624.014|A356EXXU1AXD4|13|33|2024-04-01
+Galaxy M54|samsung|samsung|SM-M546B|m54x|m54xxx|erd8835|s5e8835|samsung/m54xxx/m54x:13/TP1A.220624.014/M546BXXS4BXD1:user/release-keys|TP1A.220624.014|M546BXXS4BXD1|13|33|2024-04-01
+Galaxy Tab S9 FE+|samsung|samsung|SM-X616B|gts9fep|gts9fepxx|erd8835|s5e8835|samsung/gts9fepxx/gts9fep:13/TP1A.220624.014/X616BXXU3BXDA:user/release-keys|TP1A.220624.014|X616BXXU3BXDA|13|33|2024-04-01
+Galaxy Tab S9 Ultra|samsung|samsung|SM-X916B|gts9u|gts9uxxx|kalama|kalama|samsung/gts9uxxx/gts9u:13/TP1A.220624.014/X916BXXU1BWL1:user/release-keys|TP1A.220624.014|X916BXXU1BWL1|13|33|2023-11-01
+Galaxy S23+|samsung|samsung|SM-S916B|dm2q|dm2qxxx|lahaina|lahaina|samsung/dm2qxxx/dm2q:13/TP1A.220624.014/S916BXXU3ZWHO:user/release-keys|TP1A.220624.014|S916BXXU3ZWHO|13|33|2023-09-01
+Galaxy Tab S9+ (US)|samsung|samsung|SM-X818U|gts9p|gts9psqw|kalama|kalama|samsung/gts9psqw/gts9p:13/TP1A.220624.014/X818USQU1AWG1:user/release-keys|TP1A.220624.014|X818USQU1AWG1|13|33|2023-07-01
+Galaxy Z Flip5 (US)|samsung|samsung|SM-F731U|b5q|b5qsqw|kalama|kalama|samsung/b5qsqw/b5q:13/TP1A.220624.014/F731USQU1AWG3:user/release-keys|TP1A.220624.014|F731USQU1AWG3|13|33|2023-07-01
+Galaxy Z Fold5 (US)|samsung|samsung|SM-F946U|q5q|q5qsqw|kalama|kalama|samsung/q5qsqw/q5q:13/TP1A.220624.014/F946USQU1AWG4:user/release-keys|TP1A.220624.014|F946USQU1AWG4|13|33|2023-07-01
+Xiaomi 12 Pro|Xiaomi|Xiaomi|2201122G|miproduct|zeus_global|taro|taro|Xiaomi/zeus_global/miproduct:14/UKQ1.230917.001/V816.0.2.0.ULBMIXM:user/release-keys|UKQ1.230917.001|V816.0.2.0.ULBMIXM|14|34|2024-04-01
+Xiaomi 14 Ultra|Xiaomi|Xiaomi|24030PN60G|aurora|aurora_in|pineapple|aurora|Xiaomi/aurora_in/aurora:14/UKQ1.231003.002/V816.0.5.0.UNAMIXM:user/release-keys|UKQ1.231003.002|V816.0.5.0.UNAMIXM|14|34|2024-04-01
+Xiaomi 13 Pro|Xiaomi|Xiaomi|2210132G|nuwa|nuwa_global|kalama|kalama|Xiaomi/nuwa_global/nuwa:13/TKQ1.221114.001/V816.0.7.0.UMBMIXM:user/release-keys|TKQ1.221114.001|V816.0.7.0.UMBMIXM|13|33|2024-06-01
+Xiaomi 13|Xiaomi|Xiaomi|2211133G|fuxi|fuxi_global|kalama|kalama|Xiaomi/fuxi_global/fuxi:13/TKQ1.221114.001/V816.0.5.0.UMCMIXM:user/release-keys|TKQ1.221114.001|V816.0.5.0.UMCMIXM|13|33|2024-05-01
+Xiaomi Pad 6S Pro 12.4|Xiaomi|Xiaomi|24018RPACG|sheng|sheng_global|kalama|kalama|Xiaomi/sheng_global/sheng:13/TKQ1.221114.001/24.5.10:user/release-keys|TKQ1.221114.001|24.5.10|13|33|2024-04-05
+Xiaomi 13 Ultra|Xiaomi|Xiaomi|2304FPN6DG|ishtar|ishtar_global|kalama|kalama|Xiaomi/ishtar_global/ishtar:13/TKQ1.221114.001/V816.0.6.0.UMAMIXM:user/release-keys|TKQ1.221114.001|V816.0.6.0.UMAMIXM|13|33|2024-04-01
+Xiaomi Pad 6|Xiaomi|Xiaomi|23043RP34G|pipa|pipa_eea|kona|pipa|Xiaomi/pipa_eea/pipa:13/RKQ1.211001.001/V816.0.5.0.UMZEUXM:user/release-keys|RKQ1.211001.001|V816.0.5.0.UMZEUXM|13|33|2024-03-01
+Xiaomi 12|Xiaomi|Xiaomi|2201123G|cupid|cupid_global|taro|taro|Xiaomi/cupid_global/cupid:13/SKQ1.220303.001/V14.0.6.0.TLCMIXM:user/release-keys|SKQ1.220303.001|V14.0.6.0.TLCMIXM|13|33|2023-09-01
+Xiaomi 13T Pro|Xiaomi|Xiaomi|23078PND5G|corot|corot_eea|common|mgvi_64_armv82|Xiaomi/corot_eea/corot:13/TP1A.220624.014/V14.0.11.0.TMLEUXM:user/release-keys|TP1A.220624.014|V14.0.11.0.TMLEUXM|13|33|2023-09-01
+Redmi Note 13 Pro|Xiaomi|Redmi|XIG05|miproduct|garnet_global|parrot|parrot|Xiaomi/garnet_global/miproduct:14/UKQ1.231003.002/V816.0.9.0.UNRMIXM:user/release-keys|UKQ1.231003.002|V816.0.9.0.UNRMIXM|14|34|2024-06-01
+Redmi Note 13 Pro+|Xiaomi|Redmi|23090RA98G|zircon|zircon_global|common|mgvi_64_armv82|Redmi/zircon_global/zircon:13/TP1A.220624.014/V816.0.2.0.UNOMIXM:user/release-keys|TP1A.220624.014|V816.0.2.0.UNOMIXM|13|33|2024-05-01
+POCO F6|Xiaomi|POCO|24069PC21G|peridot|peridot_global|pineapple|peridot|POCO/peridot_global/peridot:14/UKQ1.240116.001/V816.0.4.0.UNPMIXM:user/release-keys|UKQ1.240116.001|V816.0.4.0.UNPMIXM|14|34|2024-05-01
+POCO X6 Pro|Xiaomi|POCO|2311DRK48G|duchamp|duchamp_global|common|mgvi_64_armv82|POCO/duchamp_global/duchamp:14/UP1A.230905.011/V816.0.5.0.UNLINXM:user/release-keys|UP1A.230905.011|V816.0.5.0.UNLINXM|14|34|2024-01-01
+POCO F6 Pro|Xiaomi|POCO|23113RKC6G|vermeer|vermeer_global|kalama|kalama|POCO/vermeer_global/vermeer:13/TKQ1.221114.001/V816.0.4.0.UNKMIXM:user/release-keys|TKQ1.221114.001|V816.0.4.0.UNKMIXM|13|33|2024-06-01
+OnePlus 10 Pro|OnePlus|OnePlus|NE2211|OP516FL1|NE2211|taro|taro|OnePlus/NE2211/OP516FL1:14/UKQ1.230924.001/S.18db943-1-3:user/release-keys|UKQ1.230924.001|S.18db943-1-3|14|34|2024-07-05
+OnePlus Nord CE 2 Lite|OnePlus|OnePlus|CPH2381|OP535DL1|CPH2381|holi|holi|OnePlus/CPH2381/OP535DL1:14/UKQ1.230924.001/S.18d36ec-1-17641:user/release-keys|UKQ1.230924.001|S.18d36ec-1-17641|14|34|2024-07-05
+OnePlus Nord CE 3 Lite|OnePlus|OnePlus|CPH2467|OP5958L1|CPH2467|holi|holi|OnePlus/CPH2467/OP5958L1:14/UKQ1.230924.001/T.R4T2.18a850a_1c802_26b84:user/release-keys|UKQ1.230924.001|T.R4T2.18a850a_1c802_26b84|14|34|2024-07-05
+OnePlus 10R|OnePlus|OnePlus|CPH2411|OP5566L1|CPH2411|common|mgvi_64_armv82|OnePlus/CPH2411/OP5566L1:14/UKQ1.230924.001/S.1870eaf-42d9-42d8:user/release-keys|UKQ1.230924.001|S.1870eaf-42d9-42d8|14|34|2024-06-05
+OnePlus 11R|OnePlus|OnePlus|CPH2487|OP5961L1|CPH2487|taro|taro|OnePlus/CPH2487/OP5961L1:14/UKQ1.231108.001/T.R4T3.18a83df_b7d3-1150b:user/release-keys|UKQ1.231108.001|T.R4T3.18a83df_b7d3-1150b|14|34|2024-06-05
+OnePlus 12R|OnePlus|OnePlus|CPH2585|OP5D35L1|CPH2585IN|kalama|kalama|OnePlus/CPH2585IN/OP5D35L1:14/TP1A.220905.001/U.R4T3.18a84f2-d16e-3792a:user/release-keys|TP1A.220905.001|U.R4T3.18a84f2-d16e-3792a|14|34|2024-06-05
+OnePlus 9 Pro|OnePlus|OnePlus|LE2121|OnePlus9Pro|OnePlus9Pro_IND|lahaina|lahaina|OnePlus/OnePlus9Pro_IND/OnePlus9Pro:14/UKQ1.230924.001/R.1897573-26ad9-2ef73:user/release-keys|UKQ1.230924.001|R.1897573-26ad9-2ef73|14|34|2024-06-05
+OnePlus Nord 3|OnePlus|OnePlus|CPH2491|OP556FL1|CPH2491|common|mgvi_64_armv82|OnePlus/CPH2491/OP556FL1:14/UKQ1.230924.001/T.R4T3.1867c49-3fc6-3efe6:user/release-keys|UKQ1.230924.001|T.R4T3.1867c49-3fc6-3efe6|14|34|2024-06-05
+OnePlus Nord CE4|OnePlus|OnePlus|CPH2613|OP5D3FL1|CPH2613IN|crow|crow|OnePlus/CPH2613IN/OP5D3FL1:14/TP1A.220905.001/U.R4T2.185eda8_dde6-16c01:user/release-keys|TP1A.220905.001|U.R4T2.185eda8_dde6-16c01|14|34|2024-06-05
+OnePlus Open|OnePlus|OnePlus|CPH2551|OP5973L1|CPH2551IN|kalama|kalama|OnePlus/CPH2551IN/OP5973L1:14/UKQ1.231108.001/T.R4T3.18b4255-18a15-549fe:user/release-keys|UKQ1.231108.001|T.R4T3.18b4255-18a15-549fe|14|34|2024-06-05
+OnePlus 11|OnePlus|OnePlus|CPH2449|OP594DL1|CPH2449EEA|kalama|kalama|OnePlus/CPH2449EEA/OP594DL1:14/TP1A.220905.001/T.R4T3.17f4d91-3efd-65edb:user/release-keys|TP1A.220905.001|T.R4T3.17f4d91-3efd-65edb|14|34|2024-04-05
+OnePlus Nord N30 SE|OnePlus|OnePlus|CPH2605|OP5955L1|CPH2605|mt6833|k6833v1_64_k419|OnePlus/CPH2605/OP5955L1:14/TP1A.220905.001/T.R4T2.179f466_1:user/release-keys|TP1A.220905.001|T.R4T2.179f466_1|14|34|2024-04-05
+OnePlus Nord N30|OnePlus|OnePlus|CPH2515|OP5958L1|CPH2515|holi|holi|OnePlus/CPH2515/OP5958L1:14/RKQ1.211119.001/T.R4T1.1712fcc_5d06-10bca:user/release-keys|RKQ1.211119.001|T.R4T1.1712fcc_5d06-10bca|14|34|2024-03-05
+OnePlus 9|OnePlus|OnePlus|LE2111|OnePlus9|OnePlus9_IND|lahaina|lahaina|OnePlus/OnePlus9_IND/OnePlus9:14/UKQ1.230924.001/R.15e31fa-32d-51dd:user/release-keys|UKQ1.230924.001|R.15e31fa-32d-51dd|14|34|2024-01-05
+OnePlus Nord 2T|OnePlus|OnePlus|CPH2399|OP557AL1|CPH2399EEA|mt6893|k6893v1_64_k419|OnePlus/CPH2399EEA/OP557AL1:14/UKQ1.230924.001/S.159d73f-5d4:user/release-keys|UKQ1.230924.001|S.159d73f-5d4|14|34|2024-01-05
+OnePlus 10T|OnePlus|OnePlus|CPH2415|OP5552L1|CPH2415EEA|taro|taro|OnePlus/CPH2415EEA/OP5552L1:14/UKQ1.230924.001/S.14bf5d4_1ec1c_2:user/release-keys|UKQ1.230924.001|S.14bf5d4_1ec1c_2|14|34|2023-11-05
+OPPO Reno8|OPPO|OPPO|CPH2359|OP5339L1|CPH2359|mt6893|k6893v1_64_k419|OPPO/CPH2359/OP5339L1:14/UKQ1.230924.001/S.179f3a1_501a:user/release-keys|UKQ1.230924.001|S.179f3a1_501a|14|34|2024-04-05
+OPPO Find N2 Flip|OPPO|OPPO|CPH2437|OP56CDL1|CPH2437|common|mgvi_64_armv82|OPPO/CPH2437/OP56CDL1:14/UKQ1.230924.001/T.R4T3.148d649_3-371df:user/release-keys|UKQ1.230924.001|T.R4T3.148d649_3-371df|14|34|2023-11-05
+OPPO Find N3|OPPO|OPPO|CPH2499|OP56BBL1|CPH2499|kalama|kalama|OPPO/CPH2499/OP56BBL1:13/TP1A.220905.001/T.R4T3.14c4df4-109fd-109fe:user/release-keys|TP1A.220905.001|T.R4T3.14c4df4-109fd-109fe|13|33|2023-11-05
+OPPO Find N3 Flip|OPPO|OPPO|CPH2519|OP56CFL1|CPH2519|common|mgvi_64_armv82|OPPO/CPH2519/OP56CFL1:13/TP1A.220905.001/T.R4T3.13c2ea4_1-44bb5:user/release-keys|TP1A.220905.001|T.R4T3.13c2ea4_1-44bb5|13|33|2023-09-05
+OPPO Reno10|OPPO|OPPO|CPH2531|OP5705L1|CPH2531|mt6877|k6877v1_64_k419|OPPO/CPH2531/OP5705L1:13/SP1A.210812.016/T.R4T2.12ee1a5_1:user/release-keys|SP1A.210812.016|T.R4T2.12ee1a5_1|13|33|2023-08-05
+OPPO Find X5 Pro|OPPO|OPPO|CPH2305|OP52D1L1|CPH2305EEA|taro|taro|OPPO/CPH2305EEA/OP52D1L1:13/SKQ1.221119.001/S.1113813_f72_6d10:user/release-keys|SKQ1.221119.001|S.1113813_f72_6d10|13|33|2023-06-05
+vivo X100|vivo|vivo|V2308|V2308|V2308T|common|mgvi_64_armv82|vivo/V2308T/V2308:14/UP1A.231005.007/compiler01232129:user/release-keys|UP1A.231005.007|compiler01232129|14|34|2024-01-01
+vivo X100 Pro|vivo|vivo|V2309|V2309|V2309_EEA|common|mgvi_64_armv82|vivo/V2309_EEA/V2309:14/UP1A.231005.007/compiler01231959:user/release-keys|UP1A.231005.007|compiler01231959|14|34|2024-01-01
+vivo V29|vivo|vivo|V2250|V2250|V2250_EEA|lahaina|lahaina|vivo/V2250_EEA/V2250:13/TP1A.220624.014/compiler12141712:user/release-keys|TP1A.220624.014|compiler12141712|13|33|2023-12-01
+vivo X90 Pro|vivo|vivo|V2219|V2219|V2219|common|mgvi_64_armv82|vivo/V2219/V2219:13/TP1A.220624.014/compiler09210010:user/release-keys|TP1A.220624.014|compiler09210010|13|33|2023-09-05
+vivo X80 Pro|vivo|vivo|V2145|V2145|V2145|taro|taro|vivo/V2145/V2145:13/TP1A.220624.014/compiler12141937:user/release-keys|TP1A.220624.014|compiler12141937|13|33|2022-12-01
+Zenfone 9|asus|asus|ASUS_AI2202|ASUS_AI2202|WW_AI2202|taro|taro|asus/WW_AI2202/ASUS_AI2202:14/UKQ1.230924.001/34.0304.2004.145:user/release-keys|UKQ1.230924.001|34.0304.2004.145|14|34|2024-07-05
+Zenfone 10|asus|asus|ASUS_AI2302|ASUS_AI2302|WW_AI2302|kalama|kalama|asus/WW_AI2302/ASUS_AI2302:13/TKQ1.220928.001/33.0204.0204.36:user/release-keys|TKQ1.220928.001|33.0204.0204.36|13|33|2024-04-05
+ROG Phone 6D Ultimate|asus|asus|ASUS_AI2203_D|ASUS_AI2203|WW_AI2203|common|mgvi_64_armv82|asus/WW_AI2203/ASUS_AI2203:13/TP1A.220624.014/33.0404.1203.63:user/release-keys|TP1A.220624.014|33.0404.1203.63|13|33|2023-01-05
+realme 12x|realme|realme|RMX3997|RE5C9AL1|RMX3997IN|common|mgvi_64_armv82|realme/RMX3997IN/RE5C9AL1:14/UP1A.231005.007/U.R4T2.1834582_f40d-63b4e:user/release-keys|UP1A.231005.007|U.R4T2.1834582_f40d-63b4e|14|34|2024-04-05
+realme GT 6T|realme|realme|RMX3853|RE606FL1|RMX3853IN|pineapple|pineapple|realme/RMX3853IN/RE606FL1:14/UP1A.231005.007/U.R4T2.18284b1_1-1fd8f:user/release-keys|UP1A.231005.007|U.R4T2.18284b1_1-1fd8f|14|34|2024-04-05
+realme GT5 Pro|realme|realme|RMX3888|RE5C37|RMX3888|pineapple|pineapple|realme/RMX3888/RE5C37:14/UKQ1.230924.001/U.18104b2-45e-7d31:user/release-keys|UKQ1.230924.001|U.18104b2-45e-7d31|14|34|2024-04-05
+realme GT NEO 3 150W|realme|realme|RMX3563|RED8BEL1|RMX3563|common|mgvi_64_armv82|realme/RMX3563/RED8BEL1:14/UKQ1.230924.001/S.16b9ceb-a50f-a510:user/release-keys|UKQ1.230924.001|S.16b9ceb-a50f-a510|14|34|2024-03-05
+realme 11 Pro|realme|realme|RMX3771|RE58B8L1|RMX3771|mt6877|RM6877|realme/RMX3771/RE58B8L1:14/UKQ1.230924.001/T.R4T2.16d3fdc_1:user/release-keys|UKQ1.230924.001|T.R4T2.16d3fdc_1|14|34|2024-02-05
+realme 11 Pro+|realme|realme|RMX3741|RE58B6L1|RMX3741|mt6877|RM6877|realme/RMX3741/RE58B6L1:14/UKQ1.230924.001/T.R4T2.16d3fe7_1:user/release-keys|UKQ1.230924.001|T.R4T2.16d3fe7_1|14|34|2024-02-05
+CMF Phone 1|Nothing|Nothing|A015|Tetris|Tetris|common|mgvi_64_64only_ww_armv82|Nothing/Tetris/Tetris:14/UP1A.231005.007/2406061805:user/release-keys|UP1A.231005.007|2406061805|14|34|2024-06-01
+Fairphone 4|Fairphone|Fairphone|FP4|FP4|FP4eea|lito|FP4|Fairphone/FP4eea/FP4:13/TKQ1.230127.002/TP2D:user/release-keys|TKQ1.230127.002|TP2D|13|33|2024-03-05
+Fairphone 5|Fairphone|Fairphone|FP5|FP5|FP5|lahaina|FP5|Fairphone/FP5/FP5:13/TKQ1.230127.002/TT4C:user/release-keys|TKQ1.230127.002|TT4C|13|33|2024-03-05
+Moto g14|motorola|motorola|cancun|cancun|cancun_g|UMS9230T|cancun|motorola/cancun_g/cancun:13/TLB33.78-41-1/07072101:user/release-keys|TLB33.78-41-1|07072101|13|33|2023-07-05

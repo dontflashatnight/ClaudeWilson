@@ -16,19 +16,37 @@ final class NativeHooks {
         attempted = true;
         try {
             System.loadLibrary("cwpersona");
-            String[] keys = new String[config.props.size()];
+            Map<String, String> resolved = SystemPropertiesHooks.resolvedMap(config);
+            String[] keys = new String[resolved.size()];
             String[] values = new String[keys.length];
             int i = 0;
-            for (Map.Entry<String, String> entry : config.props.entrySet()) {
+            for (Map.Entry<String, String> entry : resolved.entrySet()) {
                 keys[i] = entry.getKey();
                 values[i] = entry.getValue();
                 i++;
             }
             configure(keys, values);
+            java.net.InetAddress v6 = NetworkHooks.spoofForDefaultInterface();
+            if (v6 instanceof java.net.Inet6Address) {
+                configureIpv6(v6.getAddress());
+            } else {
+                configureIpv6(null);
+            }
+            if (config != null && config.hiddenIfaces != null && !config.hiddenIfaces.isEmpty()) {
+                try {
+                    configureHiddenIfaces(config.hiddenIfaces.toArray(new String[0]));
+                } catch (UnsatisfiedLinkError ignored) {
+                    // Compatible with prebuilt libcwpersona.so before native rebuild.
+                }
+            }
             ready = ready();
-            XposedBridge.log("ClaudeWilsonHook native=" + ready);
+            if (HookEntry.debugLog) {
+                XposedBridge.log("ClaudeWilsonHook native=" + ready);
+            }
         } catch (Throwable t) {
-            XposedBridge.log("ClaudeWilsonHook native load: " + t);
+            if (HookEntry.debugLog) {
+                XposedBridge.log("ClaudeWilsonHook native load: " + t);
+            }
         }
     }
 
@@ -37,6 +55,10 @@ final class NativeHooks {
     }
 
     private static native void configure(String[] keys, String[] values);
+
+    private static native void configureIpv6(byte[] addr16);
+
+    private static native void configureHiddenIfaces(String[] ifaces);
 
     private static native boolean ready();
 }

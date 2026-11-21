@@ -33,6 +33,7 @@ import java.io.BufferedReader;
 import java.io.Closeable;
 import java.io.File;
 import java.io.FileReader;
+import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.util.ArrayList;
@@ -81,6 +82,11 @@ public final class AndroidSnapshotCollector {
             "ro.build.type",
             "ro.build.id",
             "ro.build.version.incremental",
+            "ro.build.version.release",
+            "ro.build.version.release_or_codename",
+            "ro.build.version.codename",
+            "ro.build.version.sdk",
+            "ro.build.version.sdk_full",
             "ro.build.display.id",
             "ro.product.first_api_level",
             "ro.system.build.fingerprint",
@@ -223,13 +229,19 @@ public final class AndroidSnapshotCollector {
         return values;
     }
 
-    /** selinuxfs first, then the binary; either source answering is enough. */
+    private static volatile Text cachedSelinux;
+
+    /** selinuxfs first, then the binary; cached per process to avoid repeated EACCES/fork stalls. */
     private static Text selinuxEnforce() {
-        Text fromFile = readFirstLine("/sys/fs/selinux/enforce");
-        if (fromFile.isReadable() && !fromFile.isEmpty()) {
-            return fromFile;
+        Text cached = cachedSelinux;
+        if (cached != null) {
+            return cached;
         }
-        return Shell.firstLine("getenforce");
+        Text fromFile = readFirstLine("/sys/fs/selinux/enforce");
+        Text result = (fromFile.isReadable() && !fromFile.isEmpty())
+                ? fromFile : Shell.firstLine("getenforce");
+        cachedSelinux = result;
+        return result;
     }
 
     private static Text readFirstLine(String path) {
@@ -269,8 +281,19 @@ public final class AndroidSnapshotCollector {
                 .fingerprint(Build.FINGERPRINT)
                 .tags(Build.TAGS)
                 .firstApiLevel(props.get("ro.product.first_api_level").value())
+                .release(Build.VERSION.RELEASE)
+                .sdkInt(Build.VERSION.SDK_INT)
+                .sdkIntFull(readSdkIntFull())
                 .time(Build.TIME)
                 .build();
+    }
+
+    private static int readSdkIntFull() {
+        try {
+            return Build.VERSION.class.getField("SDK_INT_FULL").getInt(null);
+        } catch (Throwable ignored) {
+            return 0;
+        }
     }
 
     private static SimValues simValues(Context app) {
@@ -578,6 +601,22 @@ public final class AndroidSnapshotCollector {
                     names.add(name);
                     for (InetAddress address
                             : Collections.list(networkInterface.getInetAddresses())) {
+                        // Always drop real global-scope IPv6 addresses from the
+                        // control app's view.  The hook layer replaces these with
+                        // spoofed addresses inside the target process; showing the
+                        // real ones here would confuse users into thinking they leak.
+                        // ULA (fc/fd) and link-local (fe80) are kept.
+                        if (address instanceof Inet6Address
+                                && !address.isLinkLocalAddress()
+                                && !address.isLoopbackAddress()
+                                && !address.isSiteLocalAddress()) {
+                            String h = address.getHostAddress();
+                            if (h != null && h.length() > 4
+                                    && (h.charAt(0) == '2' || h.charAt(0) == '3')) {
+                                // 2000::/3 global unicast — hide it.
+                                continue;
+                            }
+                        }
                         String host = address.getHostAddress();
                         if (host != null && host.indexOf('%') > 0) {
                             host = host.substring(0, host.indexOf('%'));

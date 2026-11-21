@@ -66,6 +66,9 @@ final class SystemBuild {
             "ro.build.id",
             "ro.build.version.incremental",
             "ro.build.version.release",
+            "ro.build.version.release_or_codename",
+            "ro.build.version.release_or_preview_display",
+            "ro.build.version.sdk",
             "ro.build.tags",
             "ro.build.type",
             "ro.system.build.fingerprint",
@@ -82,6 +85,7 @@ final class SystemBuild {
             "gsm.operator.numeric",
             "gsm.operator.iso-country",
             "gsm.operator.alpha",
+            "gsm.operator.isroaming",
     };
 
     private SystemBuild() {
@@ -103,6 +107,10 @@ final class SystemBuild {
         out.put("ro.build.id", dv[9]);
         out.put("ro.build.version.incremental", dv[10]);
         out.put("ro.build.version.release", dv[11]);
+        out.put("ro.build.version.release_or_codename", dv[11]);
+        out.put("ro.build.version.release_or_preview_display", dv[11]);
+        // Never spoof ro.build.version.sdk across API levels: anchor it to the real host SDK.
+        out.put("ro.build.version.sdk", String.valueOf(android.os.Build.VERSION.SDK_INT));
         out.put("ro.build.tags", "release-keys");
         out.put("ro.build.type", "user");
         out.put("ro.system.build.fingerprint", fingerprint);
@@ -118,12 +126,13 @@ final class SystemBuild {
         return out;
     }
 
-    /** Visited-network trio, so the telemetry paths that read it stop seeing the real network. */
+    /** Visited-network trio plus roaming flag, so telemetry paths stop seeing real/roaming state. */
     static Map<String, String> operatorValues(String op, String iso, String carrier) {
         Map<String, String> out = new LinkedHashMap<String, String>();
         out.put("gsm.operator.numeric", op);
         out.put("gsm.operator.iso-country", iso);
         out.put("gsm.operator.alpha", carrier);
+        out.put("gsm.operator.isroaming", "false");
         return out;
     }
 
@@ -158,6 +167,9 @@ final class SystemBuild {
         values.putAll(simValues(op, iso, carrier));
         StringBuilder sh = new StringBuilder("set -e\n");
         sh.append(RP).append('\n');
+        // Capture pre-persona gsm.operator.* & ro.* baseline before the first write so
+        // restoreScript() can always bring visited-network props back to native state.
+        backup(sh);
         sh.append(fillFunction());
         for (Map.Entry<String, String> e : values.entrySet()) {
             sh.append("fill ").append(ShellQuote.quote(e.getKey()))
@@ -242,9 +254,7 @@ final class SystemBuild {
      */
     static String applyScript(String[] dv, String op, String iso, String carrier) {
         Map<String, String> values = new LinkedHashMap<String, String>(buildValues(dv));
-        if (op != null && op.matches("\\d{5,6}") && iso != null && !iso.isEmpty()) {
-            values.putAll(operatorValues(op, iso, carrier == null ? "" : carrier));
-        }
+        boolean hasOp = op != null && op.matches("\\d{5,6}") && iso != null && !iso.isEmpty();
         StringBuilder sh = new StringBuilder("set -e\n");
         sh.append(RP).append('\n');
         backup(sh);
@@ -259,7 +269,47 @@ final class SystemBuild {
         }
         sh.append("$RP -f $T || { rm -f $T; echo FAIL:write-props; exit 1; }\n");
         sh.append("rm -f $T\n");
+        if (hasOp) {
+            // Fill every SIM slot for visited-network props + gsm.operator.isroaming=false so
+            // dual-SIM devices never keep a stale roaming or real-MCC entry in slot 1.
+            sh.append(fillFunction());
+            for (Map.Entry<String, String> e : operatorValues(
+                    op, iso, carrier == null ? "" : carrier).entrySet()) {
+                sh.append("fill ").append(ShellQuote.quote(e.getKey()))
+                        .append(' ').append(ShellQuote.quote(oneLine(e.getValue()))).append('\n');
+            }
+        }
         sh.append("rm -f ").append(BOOT).append('\n');
+        return sh.toString();
+    }
+
+    /** Restores only visited-network (gsm.operator.*) keys from the snapshot, or from fallback SIM. */
+    static String restoreOperatorScript(String[] fallbackSim) {
+        StringBuilder sh = new StringBuilder();
+        sh.append(RP).append('\n');
+        sh.append("BAK=").append(BACKUP).append('\n');
+        sh.append("if [ -f $BAK ]; then ");
+        sh.append("while IFS= read -r line; do ");
+        sh.append("k=${line%%=*}; v=${line#*=}; ");
+        sh.append("case \"$k\" in gsm.operator.*) ");
+        sh.append("if [ -n \"$v\" ]; then $RP \"$k\" \"$v\"; else $RP --delete \"$k\"; fi;; esac; ");
+        sh.append("done < $BAK; ");
+        sh.append("else ");
+        if (fallbackSim != null && fallbackSim.length >= 3
+                && fallbackSim[0] != null && !fallbackSim[0].isEmpty()) {
+            sh.append("$RP gsm.operator.numeric ").append(ShellQuote.quote(fallbackSim[0])).append("; ");
+            if (fallbackSim[1] != null && !fallbackSim[1].isEmpty()) {
+                sh.append("$RP gsm.operator.iso-country ").append(ShellQuote.quote(fallbackSim[1])).append("; ");
+            }
+            if (fallbackSim[2] != null && !fallbackSim[2].isEmpty()) {
+                sh.append("$RP gsm.operator.alpha ").append(ShellQuote.quote(fallbackSim[2])).append("; ");
+            }
+        } else {
+            sh.append("$RP --delete gsm.operator.numeric; ");
+            sh.append("$RP --delete gsm.operator.iso-country; ");
+            sh.append("$RP --delete gsm.operator.alpha; ");
+        }
+        sh.append("fi\ntrue\n");
         return sh.toString();
     }
 
@@ -272,6 +322,10 @@ final class SystemBuild {
      * an empty value.
      */
     static String restoreScript() {
+        return restoreScript(null);
+    }
+
+    static String restoreScript(String[] fallbackSim) {
         StringBuilder sh = new StringBuilder();
         sh.append(RP).append('\n');
         sh.append("BAK=").append(BACKUP).append('\n');
@@ -285,7 +339,25 @@ final class SystemBuild {
                         + "else echo \"$k\" >> $D; fi; done < $BAK; "
                         + "[ -s $T ] && $RP -f $T; "
                         + "while IFS= read -r k; do $RP --delete \"$k\"; done < $D; "
-                        + "rm -f $T $D $BAK; fi\n");
+                        + "rm -f $T $D $BAK; ");
+        // Fallback when backup was absent (e.g. upgrading from a build that missed backup()):
+        // never leave gsm.operator.* stuck on a previously spoofed foreign network.
+        sh.append("else ");
+        if (fallbackSim != null && fallbackSim.length >= 3
+                && fallbackSim[0] != null && !fallbackSim[0].isEmpty()) {
+            sh.append("$RP gsm.operator.numeric ").append(ShellQuote.quote(fallbackSim[0])).append("; ");
+            if (fallbackSim[1] != null && !fallbackSim[1].isEmpty()) {
+                sh.append("$RP gsm.operator.iso-country ").append(ShellQuote.quote(fallbackSim[1])).append("; ");
+            }
+            if (fallbackSim[2] != null && !fallbackSim[2].isEmpty()) {
+                sh.append("$RP gsm.operator.alpha ").append(ShellQuote.quote(fallbackSim[2])).append("; ");
+            }
+        } else {
+            sh.append("$RP --delete gsm.operator.numeric; ");
+            sh.append("$RP --delete gsm.operator.iso-country; ");
+            sh.append("$RP --delete gsm.operator.alpha; ");
+        }
+        sh.append("fi\n");
         sh.append("rm -f ").append(BOOT).append('\n');
         sh.append("true\n");
         return sh.toString();

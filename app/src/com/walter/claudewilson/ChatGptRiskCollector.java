@@ -37,7 +37,23 @@ final class ChatGptRiskCollector {
             "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
     private static final Pattern HEX32 = Pattern.compile("[0-9a-fA-F]{32}");
 
+    private static final long FAST_RAW_TTL_MS = 45000L;
+    private static volatile String cachedRawKey = "";
+    private static volatile Map<String, String> cachedRaw;
+    private static volatile long cachedRawAt;
+
+    static void invalidateCache() {
+        cachedRaw = null;
+        cachedRawKey = "";
+        cachedRawAt = 0L;
+    }
+
     RiskModel collect(Context context, TargetSpec spec, Snapshot snapshot, String playCountry) {
+        return collect(context, spec, snapshot, playCountry, false);
+    }
+
+    RiskModel collect(Context context, TargetSpec spec, Snapshot snapshot,
+                      String playCountry, boolean fast) {
         if (spec == null || !"chatgpt".equals(spec.id())) {
             return RiskModel.EMPTY;
         }
@@ -45,43 +61,88 @@ final class ChatGptRiskCollector {
         Map<String, String> hook = new LinkedHashMap<String, String>();
         boolean root = RootShell.rootReady();
         boolean privileged = RootShell.shellReady();
+        String spaceUser = Dashboard.activeUserId();
+        if (!ShellQuote.numeric(spaceUser)) {
+            spaceUser = "0";
+        }
+        String userOpt = "0".equals(spaceUser) ? "" : " --user " + spaceUser;
         boolean running = false;
         boolean live = false;
+        String pidOut = "";
+        String freshPayload = null;
+        if (privileged && ShellQuote.packageName(spec.packageName())) {
+            String probe = RootShell.run(
+                    "echo \"LOC=$(cmd locale get-app-locales " + spec.packageName() + userOpt
+                    + " 2>/dev/null | tr '\\n' ' ')\"; echo \"PID=$(pidof "
+                    + spec.packageName() + " 2>/dev/null)\"; printf '@@PAYLOAD\\n'; "
+                    + "head -c 8192 /data/local/tmp/claudewilson/" + spec.id()
+                    + ".json 2>/dev/null", 8704);
+            String localeOut = "";
+            if (probe != null) {
+                int payloadMark = probe.indexOf("@@PAYLOAD\n");
+                String head = payloadMark >= 0 ? probe.substring(0, payloadMark) : probe;
+                if (payloadMark >= 0) {
+                    freshPayload = probe.substring(payloadMark + 10);
+                }
+                for (String ln : head.split("\\n")) {
+                    if (ln.startsWith("LOC=")) localeOut = ln.substring(4);
+                    else if (ln.startsWith("PID=")) pidOut = ln.substring(4).trim();
+                }
+            }
+            put(data, "app_locale", firstLocale(localeOut));
+            running = pidOut.matches("\\d+(\\s+\\d+)*");
+        }
         if (root && ShellQuote.packageName(spec.packageName())) {
-            String dump = RootShell.run(script(spec.packageName(), spec.id()), 65536, 25000L);
-            if (dump == null || dump.startsWith("exc:") || dump.startsWith("timeout:")
-                    || !dump.contains("@@device_uuid")) {
-                Diag.warn("risk", "target file read failed for " + spec.packageName(), null);
+            String key = spec.packageName() + ":" + spaceUser;
+            long nowMs = android.os.SystemClock.elapsedRealtime();
+            Map<String, String> raw = null;
+            if (fast && key.equals(cachedRawKey) && cachedRaw != null
+                    && (nowMs - cachedRawAt) < FAST_RAW_TTL_MS) {
+                raw = new LinkedHashMap<String, String>(cachedRaw);
+                if (freshPayload != null) {
+                    raw.put("payload", freshPayload);
+                }
             } else {
-                Map<String, String> raw = sections(dump);
+                String dump = RootShell.run(script(spec.packageName(), spec.id(), spaceUser),
+                        196608, 25000L);
+                if (dump == null || dump.startsWith("exc:") || dump.startsWith("timeout:")
+                        || !dump.contains("@@device_uuid")) {
+                    Diag.warn("risk", "target file read failed for " + spec.packageName(), null);
+                } else {
+                    raw = sections(dump);
+                    cachedRawKey = key;
+                    cachedRaw = raw;
+                    cachedRawAt = nowMs;
+                }
+            }
+            if (raw != null) {
                 parse(raw, data);
                 applyTelemetry(context, spec, raw, data);
+                if (!fast) {
+                    LedgerIngestor.ingestCollectorData(context, spec.id(), spaceUser, data);
+                    LedgerIngestor.ingestDiagnosticArchive(context, spec.id(), spaceUser, raw);
+                }
+                BodyguardExitReader.harvest(context, spec, spaceUser, !fast);
                 put(data, "sim_carrier_id", carrierId(context));
                 hook = parseHook(raw.get("hookcheck"));
+                TargetViewPanel.legacyResidueDetected = !hook.isEmpty();
             }
         }
         if (!root && privileged && ShellQuote.packageName(spec.packageName())) {
-            String payload = RootShell.run(
-                    "cat /data/local/tmp/claudewilson/" + spec.id() + ".json 2>/dev/null", 8192);
-            if (payload.contains("\"target\"")) {
-                Map<String, String> preview = new LinkedHashMap<String, String>();
-                preview.put("payload", payload);
-                parse(preview, data);
-            }
-            String external = RootShell.run("cat /storage/emulated/0/Android/data/"
+            String external = RootShell.run("cat /storage/emulated/" + spaceUser + "/Android/data/"
                     + spec.packageName() + "/files/cw-hookcheck.txt 2>/dev/null", 8192);
             if (external.contains("pid=")) {
                 hook = parseHook(external);
             }
+            if (!hook.isEmpty() && freshPayload != null && freshPayload.contains("\"target\"")) {
+                Map<String, String> preview = new LinkedHashMap<String, String>();
+                preview.put("payload", freshPayload);
+                parse(preview, data);
+            }
         }
-        if (privileged && ShellQuote.packageName(spec.packageName())) {
-            String localeOut = RootShell.run(
-                    "cmd locale get-app-locales " + spec.packageName(), 256);
-            put(data, "app_locale", firstLocale(localeOut));
-            String pidOut = RootShell.run("pidof " + spec.packageName(), 64).trim();
-            running = pidOut.matches("\\d+(\\s+\\d+)*");
-            String pid = running ? pidOut.split("\\s+")[0] : "";
-            live = running && pid.equals(hook.get("pid"));
+        if (running) {
+            String pid = pidOut.split("\\s+")[0];
+            live = pid.equals(hook.get("pid"));
         }
         data.put("target_state", !privileged ? "unknown" : running ? "running" : "stopped");
         put(data, "target_app", appVersion(context, spec.packageName()));
@@ -201,10 +262,16 @@ final class ChatGptRiskCollector {
         }
     }
 
-    private static String script(String pkg, String id) {
+    private static String script(String pkg, String id, String user) {
         StringBuilder s = new StringBuilder();
-        s.append("P=/proc/1/root/data/data/").append(pkg)
-                .append("; [ -d \"$P\" ] || P=/data/data/").append(pkg).append(";\n");
+        if ("0".equals(user)) {
+            s.append("P=/proc/1/root/data/data/").append(pkg)
+                    .append("; [ -d \"$P\" ] || P=/data/data/").append(pkg).append(";\n");
+        } else {
+            s.append("P=/proc/1/root/data/user/").append(user).append("/").append(pkg)
+                    .append("; [ -d \"$P\" ] || P=/data/user/").append(user).append("/")
+                    .append(pkg).append(";\n");
+        }
         section(s, "device_uuid",
                 "head -c 1024 \"$P/files/datastore/global_device_uuid.json\" 2>/dev/null");
         section(s, "app_settings",
@@ -257,6 +324,24 @@ final class ChatGptRiskCollector {
                 "find \"$P/cache/sentry\" -maxdepth 3 -name tags.json "
                         + "-exec grep -a -o -E '(\"deviceId\"|\"planType\"|\"workspaceId\""
                         + "|\"apiEnvironment\"):\"[^\"]*\"' {} \\; 2>/dev/null | head -20");
+        section(s, "sentry_breadcrumbs",
+                "F=$(ls \"$P\"/cache/sentry/*/.scope-cache/breadcrumbs.json 2>/dev/null | head -1); "
+                        + "[ -f \"$F\" ] && tr '\\000' ' ' < \"$F\" | head -c 32768");
+        section(s, "sentry_tags_full",
+                "F=$(ls \"$P\"/cache/sentry/*/.scope-cache/tags.json 2>/dev/null | head -1); "
+                        + "[ -f \"$F\" ] && head -c 6144 \"$F\"");
+        section(s, "sentry_envelopes",
+                "find \"$P/cache/sentry\" -maxdepth 3 -name '*.envelope' 2>/dev/null | wc -l");
+        section(s, "datadog_view",
+                "F=$(ls \"$P\"/cache/datadog-*/last_view_event 2>/dev/null | head -1); "
+                        + "[ -f \"$F\" ] && tr '\\000' ' ' < \"$F\" | head -c 4096");
+        section(s, "chatgpt_resp_cache",
+                "M=$(find \"$P/files/sessions\" -maxdepth 5 -name '*_models_response.json' 2>/dev/null | head -1); "
+                        + "[ -f \"$M\" ] && grep -a -o '\"slug\":\"[^\"]*\"' \"$M\" | head -40; "
+                        + "A=$(find \"$P/files/sessions\" -maxdepth 4 -name '*_accountstatus.json' 2>/dev/null | head -1); "
+                        + "[ -f \"$A\" ] && grep -a -o -E '\"(plan_type|country)\":\"[^\"]*\"' \"$A\" | head -10; "
+                        + "S=$(ls -l \"$P\"/files/datastore/com.statsig.androidsdk.prefs/ondiskvaluecache_user_*_unc 2>/dev/null | tail -1 | awk '{print $5}'); "
+                        + "[ -n \"$S\" ] && echo \"{\\\"statsig_cache_bytes\\\":$S}\"");
         section(s, "sentry_user",
                 "find \"$P/cache/sentry\" -maxdepth 3 -name user.json "
                         + "-exec head -c 512 {} \\; 2>/dev/null | head -1");

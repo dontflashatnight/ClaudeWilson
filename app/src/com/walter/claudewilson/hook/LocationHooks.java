@@ -6,7 +6,6 @@ import android.content.Intent;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -58,6 +57,9 @@ final class LocationHooks {
     private static volatile LocationPlan coarsePlan;
     private static volatile ClassLoader classLoader;
     private static volatile boolean fusedHooked;
+    private static volatile boolean locationServicesHooked;
+    private static final java.util.Set<Class<?>> HOOKED_FUSED_CLASSES =
+            Collections.newSetFromMap(new IdentityHashMap<Class<?>, Boolean>());
     private static final java.util.concurrent.atomic.AtomicInteger served =
             new java.util.concurrent.atomic.AtomicInteger();
     private static volatile long lastServedMillis;
@@ -100,8 +102,9 @@ final class LocationHooks {
             return;
         }
         classLoader = loader;
+        boolean forceCoarse = "coarse".equalsIgnoreCase(config.locationAccuracyMode);
         finePlan = new LocationPlan(config.latitude, config.longitude,
-                config.locationSeed, false);
+                config.locationSeed, forceCoarse);
         coarsePlan = new LocationPlan(config.latitude, config.longitude,
                 config.locationSeed, true);
         StringBuilder trace = new StringBuilder();
@@ -112,44 +115,56 @@ final class LocationHooks {
             hookUpdates(manager, trace);
             hookRemove(manager, trace);
             hookProviders(manager, trace);
+            hookGnss(manager, trace);
         } catch (Throwable t) {
             trace.append("lm:").append(t).append(';');
         }
         try {
             Class<?> location = XposedHelpers.findClass("android.location.Location", loader);
-            XposedBridge.hookAllMethods(location, "isFromMockProvider",
-                    new XC_MethodHook(XC_MethodHook.PRIORITY_HIGHEST) {
-                        @Override protected void afterHookedMethod(MethodHookParam param) {
-                            param.setResult(false);
-                        }
-                    });
+            XC_MethodHook notMock = new XC_MethodHook(XC_MethodHook.PRIORITY_HIGHEST) {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    param.setResult(false);
+                }
+            };
+            XposedBridge.hookAllMethods(location, "isFromMockProvider", notMock);
+            if (HookContext.HOST_SDK_INT >= 31) {
+                XposedBridge.hookAllMethods(location, "isMock", notMock);
+            }
         } catch (Throwable t) {
             trace.append("mock:").append(t).append(';');
         }
         try {
             Class<?> secure = XposedHelpers.findClass("android.provider.Settings$Secure", loader);
-            XposedBridge.hookAllMethods(secure, "getInt", new XC_MethodHook() {
+            XC_MethodHook secureInt = new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
-                    if (param.args.length >= 2 && "location_mode".equals(param.args[1])) {
+                    if (param.args.length < 2 || param.args[1] == null) {
+                        return;
+                    }
+                    String key = String.valueOf(param.args[1]);
+                    if ("location_mode".equals(key)) {
                         param.setResult(3);
+                    } else if ("mock_location".equals(key)) {
+                        param.setResult(0);
                     }
                 }
-            });
-            XposedBridge.hookAllMethods(secure, "getIntForUser", new XC_MethodHook() {
+            };
+            XposedBridge.hookAllMethods(secure, "getInt", secureInt);
+            XposedBridge.hookAllMethods(secure, "getIntForUser", secureInt);
+            XC_MethodHook secureString = new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
-                    if (param.args.length >= 2 && "location_mode".equals(param.args[1])) {
-                        param.setResult(3);
+                    if (param.args.length < 2 || param.args[1] == null) {
+                        return;
                     }
-                }
-            });
-            XposedBridge.hookAllMethods(secure, "getString", new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam param) {
-                    if (param.args.length >= 2
-                            && "location_providers_allowed".equals(param.args[1])) {
+                    String key = String.valueOf(param.args[1]);
+                    if ("location_providers_allowed".equals(key)) {
                         param.setResult("gps,network");
+                    } else if ("mock_location".equals(key)) {
+                        param.setResult("0");
                     }
                 }
-            });
+            };
+            XposedBridge.hookAllMethods(secure, "getString", secureString);
+            XposedBridge.hookAllMethods(secure, "getStringForUser", secureString);
         } catch (Throwable t) {
             trace.append("settings:").append(t).append(';');
         }
@@ -161,7 +176,9 @@ final class LocationHooks {
         int mode = permissionMode();
         status = (mode == 0 ? "pending" : mode == 2 ? "fine" : "coarse")
                 + (trace.length() == 0 ? "" : " " + trace);
-        XposedBridge.log("ClaudeWilsonHook location status=" + status);
+        if (HookEntry.debugLog) {
+            XposedBridge.log("ClaudeWilsonHook location status=" + status);
+        }
     }
 
     private static void hookLastKnown(Class<?> manager, StringBuilder trace) {
@@ -190,7 +207,9 @@ final class LocationHooks {
                     if (mode == 0) {
                         return;
                     }
-                    Consumer consumer = (Consumer) find(param.args, Consumer.class);
+                    @SuppressWarnings("unchecked")
+                    Consumer<Location> consumer =
+                            (Consumer<Location>) find(param.args, Consumer.class);
                     if (consumer == null) {
                         return;
                     }
@@ -355,54 +374,136 @@ final class LocationHooks {
         }
     }
 
-    /** Play Services fused client: the path Claude and ChatGPT actually use when GMS is present. */
+    /** Blocks direct GNSS satellite/NMEA/measurement subscriptions from bypassing upper hooks. */
+    private static void hookGnss(Class<?> manager, StringBuilder trace) {
+        XC_MethodHook block = new XC_MethodHook() {
+            @Override protected void beforeHookedMethod(MethodHookParam param) {
+                if (permissionMode() == 0) {
+                    return;
+                }
+                Class<?> ret = param.method instanceof Method
+                        ? ((Method) param.method).getReturnType() : void.class;
+                if (ret == boolean.class || ret == Boolean.class) {
+                    param.setResult(true);
+                } else {
+                    param.setResult(null);
+                }
+            }
+        };
+        String[] methods = {
+                "registerGnssStatusCallback",
+                "addNmeaListener",
+                "registerGnssMeasurementsCallback",
+                "registerGnssNavigationMessageCallback",
+                "registerAntennaInfoListener",
+        };
+        for (String name : methods) {
+            try {
+                XposedBridge.hookAllMethods(manager, name, block);
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /** Play Services fused client: hooks both concrete classes and interface implementations (GMS 21+). */
     private static void hookFused(ClassLoader loader, StringBuilder trace) {
+        installLocationServicesFactoryHook(loader);
         Class<?> fused = XposedHelpers.findClassIfExists(
                 "com.google.android.gms.location.FusedLocationProviderClient", loader);
-        if (fused == null) {
-            trace.append("fused:lazy;");
-            // GMS may not have been loaded yet. Install when its class reaches the target loader;
-            // the alternative is a hook that silently misses every fused request.
-            XposedBridge.hookAllMethods(ClassLoader.class, "loadClass", new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam param) {
-                    if (fusedHooked || param.args.length == 0
-                            || !(param.args[0] instanceof String)
-                            || !"com.google.android.gms.location.FusedLocationProviderClient"
-                                    .equals(param.args[0])) {
-                        return;
-                    }
-                    Object result = param.getResult();
-                    if (result instanceof Class) {
-                        installFused((Class<?>) result);
-                    }
-                }
-            });
-            return;
+        if (fused != null && !fused.isInterface()) {
+            installFused(fused);
         }
-        installFused(fused);
+        if (!locationServicesHooked) {
+            trace.append("fused:lazy;");
+            // Never hook ClassLoader.loadClass globally (causes JNI monitor-table overflow in
+            // Chromium/libchrome.so under Vector/LSPosed). Retry once Application.onCreate runs
+            // with the app's initialized classloader instead.
+            try {
+                XposedBridge.hookAllMethods(android.app.Application.class, "onCreate",
+                        new XC_MethodHook() {
+                            @Override protected void afterHookedMethod(MethodHookParam param) {
+                                if (locationServicesHooked) {
+                                    return;
+                                }
+                                Object app = param.thisObject;
+                                ClassLoader appLoader = app != null
+                                        ? app.getClass().getClassLoader() : classLoader;
+                                if (appLoader != null) {
+                                    installLocationServicesFactoryHook(appLoader);
+                                    if (!fusedHooked) {
+                                        Class<?> f = XposedHelpers.findClassIfExists(
+                                                "com.google.android.gms.location.FusedLocationProviderClient",
+                                                appLoader);
+                                        if (f != null && !f.isInterface()) {
+                                            installFused(f);
+                                        }
+                                    }
+                                }
+                            }
+                        });
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private static void installLocationServicesFactoryHook(ClassLoader loader) {
+        Class<?> services = XposedHelpers.findClassIfExists(
+                "com.google.android.gms.location.LocationServices", loader);
+        if (services != null) {
+            installLocationServicesFactoryHook(services);
+        }
+    }
+
+    private static void installLocationServicesFactoryHook(Class<?> services) {
+        synchronized (LocationHooks.class) {
+            if (locationServicesHooked) {
+                return;
+            }
+            locationServicesHooked = true;
+        }
+        try {
+            XposedBridge.hookAllMethods(services, "getFusedLocationProviderClient",
+                    new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam param) {
+                            Object client = param.getResult();
+                            if (client != null) {
+                                installFused(client.getClass());
+                            }
+                        }
+                    });
+        } catch (Throwable ignored) {
+        }
     }
 
     private static void ensureFused() {
-        if (fusedHooked || classLoader == null) {
+        if (classLoader == null) {
             return;
         }
-        Class<?> fused = XposedHelpers.findClassIfExists(
-                "com.google.android.gms.location.FusedLocationProviderClient", classLoader);
-        if (fused != null) {
-            installFused(fused);
+        if (!locationServicesHooked) {
+            installLocationServicesFactoryHook(classLoader);
+        }
+        if (!fusedHooked) {
+            Class<?> fused = XposedHelpers.findClassIfExists(
+                    "com.google.android.gms.location.FusedLocationProviderClient", classLoader);
+            if (fused != null && !fused.isInterface()) {
+                installFused(fused);
+            }
         }
     }
 
     private static void installFused(Class<?> fused) {
-        synchronized (LocationHooks.class) {
-            if (fusedHooked) {
+        if (fused == null || fused.isInterface()) {
+            return;
+        }
+        synchronized (HOOKED_FUSED_CLASSES) {
+            if (!HOOKED_FUSED_CLASSES.add(fused)) {
                 return;
             }
             fusedHooked = true;
         }
         try {
             XposedBridge.hookAllMethods(fused, "getLastLocation", new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam param) {
+                @Override protected void beforeHookedMethod(MethodHookParam param) {
                     int mode = permissionMode();
                     if (mode == 0) {
                         return;
@@ -414,7 +515,7 @@ final class LocationHooks {
                 }
             });
             XposedBridge.hookAllMethods(fused, "getCurrentLocation", new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam param) {
+                @Override protected void beforeHookedMethod(MethodHookParam param) {
                     int mode = permissionMode();
                     if (mode == 0) {
                         return;
@@ -466,7 +567,9 @@ final class LocationHooks {
                     }
                 }
             });
-            XposedBridge.log("ClaudeWilsonHook location fused hooks installed");
+            if (HookEntry.debugLog) {
+                XposedBridge.log("ClaudeWilsonHook location fused hooks installed");
+            }
         } catch (Throwable t) {
             XposedBridge.log("ClaudeWilsonHook location fused: " + t);
         }
@@ -492,7 +595,7 @@ final class LocationHooks {
         }
     }
 
-    private static void dispatch(Consumer consumer, Location value, Executor executor,
+    private static void dispatch(Consumer<Location> consumer, Location value, Executor executor,
             Looper looper) {
         Runnable task = () -> {
             try {
@@ -532,20 +635,20 @@ final class LocationHooks {
         } else {
             location.removeBearing();
         }
-        if (Build.VERSION.SDK_INT >= 26) {
+        if (HookContext.HOST_SDK_INT >= 26) {
             if (fix.hasAltitude) {
                 location.setVerticalAccuracyMeters(fix.verticalAccuracyMeters);
-            } else if (Build.VERSION.SDK_INT >= 33) {
+            } else if (HookContext.HOST_SDK_INT >= 33) {
                 location.removeVerticalAccuracy();
             }
             if (fix.hasSpeed) {
                 location.setSpeedAccuracyMetersPerSecond(fix.speedAccuracyMetersPerSecond);
-            } else if (Build.VERSION.SDK_INT >= 33) {
+            } else if (HookContext.HOST_SDK_INT >= 33) {
                 location.removeSpeedAccuracy();
             }
             if (fix.hasBearing) {
                 location.setBearingAccuracyDegrees(fix.bearingAccuracyDegrees);
-            } else if (Build.VERSION.SDK_INT >= 33) {
+            } else if (HookContext.HOST_SDK_INT >= 33) {
                 location.removeBearingAccuracy();
             }
         }
@@ -593,7 +696,7 @@ final class LocationHooks {
     }
 
     private static int opValue(Context context, String op) {
-        if (Build.VERSION.SDK_INT < 29) {
+        if (HookContext.HOST_SDK_INT < 29) {
             return -1;
         }
         try {
@@ -607,7 +710,7 @@ final class LocationHooks {
             // A foreground app can still read "ignore" from the public wrapper on some OEM
             // builds even though the raw op is allow; the raw value is the same grant without
             // the foreground projection.
-            if (value == 1 && Build.VERSION.SDK_INT >= 31) {
+            if (value == 1 && HookContext.HOST_SDK_INT >= 31) {
                 try {
                     int raw = manager.unsafeCheckOpRawNoThrow(op, Process.myUid(),
                             context.getPackageName());

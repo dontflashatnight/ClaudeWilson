@@ -10,11 +10,18 @@ ClaudeWilson is a reversible environment observer and aligner. It puts the regio
 
 <p align="center">
   <a href="README.md">简体中文</a> ·
-  <a href="README.en.md"><b>English</b></a>
+  <a href="README.en.md"><b>English</b></a> ·
+  <a href="https://dontflashatnight.github.io/ClaudeWilson/"><b>Live Interactive UX Website</b></a>
 </p>
 
 <p align="center">
-  <img src="docs/App_Preview/preview.png" width="820" alt="ClaudeWilson app overview">
+  <img src="docs/App_Preview/preview.png" width="920" alt="ClaudeWilson 5-screen feature overview">
+</p>
+
+<p align="center">
+  <a href="https://x.com/i/chat/group_join/g2118665695424864750/bFuy8UtwS7">
+    <img src="docs/App_Preview/x-group-en.svg" width="580" alt="Join ClaudeWilson X Community Chat">
+  </a>
 </p>
 
 ---
@@ -84,11 +91,11 @@ It never launches the target, and it never uploads the result.
 
 | Item | Requirement |
 |---|---|
-| OS | Android 15 (API 35) or newer |
+| OS | Android 13–17 (API 33–37) |
 | Target | Claude or ChatGPT installed |
-| Privileged channel | root (KernelSU / Magisk) **or** Shizuku |
-| Hooks | root + Zygisk + Vector 2.x (Xposed module manager) |
-| This app | `com.walter.claudewilson`; no `INTERNET` permission |
+| Privileged channel | root (KernelSU / Magisk / APatch) **or** Shizuku |
+| Hooks | root + Zygisk + Vector 2.x (LSPosed / Xposed module manager) |
+| This app | `com.walter.claudewilson`; no `INTERNET` permission, zero target-dir residue |
 
 ### The two channels
 
@@ -160,15 +167,16 @@ If you only need diagnostics, timezone or per-app locale, use Shizuku instead of
 
 The order is fixed:
 
-1. **Target**: Claude / ChatGPT. Switching only changes what is inspected; it never launches an app.
-2. **Persona space**: field, expected, actual. `✓` matches, `✗` differs, `○` boundary, `—` not compared or not possible on this channel. The **location** row shows the city the target should see; tap it to switch simulation on/off and read the coordinates.
-3. **Region switch**: pick a region; `✕` closes and restores.
-4. **Network**: VPN, IP exit, line, DNS, IPv6, UDP, node.
-5. **Data cleanup**: clear the target's local data.
-6. **Check items**: the target's own observations, grouped by identity / account / integrity / transport / target / system / permissions / location.
-7. **Account layer**: account boundaries and local account records.
+1. **Target & Preflight Gate**: switch between **Claude** and **ChatGPT** (diagnostic scope only, never launches a target); the preflight bar reports `Ready`, `Running Safely`, or `Blocked · N blockers` when restricted/drifted/leaking.
+2. **Persona Space (6-Tile Workbench)**: 100+ regions with one-tap apply and `✕` rebootless revert across **SIM & Carrier**, **Locale & Timezone**, **GPS Map**, **Wi-Fi / BLE / Sensor spoofing**, **Device & IPv6 Policy** (persistent default-OFF with zero-polling `ip -6 monitor` kernel watchdog), and **Store & Account boundaries**. Tap any tile to open its bottom-sheet editor.
+3. **Network & Modern Proxy-Core Stealth**: shell-side probe for VPN, egress region/ASN, residential vs datacenter, DNS (Fake-IP / TProxy / Private DNS bypass), IPv6 leak, UDP/QUIC parity, and target UID routing. In-process hooks dynamically discover TUN interfaces (`tun_flags` + `POINTOPOINT`) and generically sanitize `LinkProperties` IPv4/DNS/MTU/Routes, `VpnTransportInfo`, `NET_CAPABILITY_NOT_VPN`, and `NetworkInfo` across `sing-box (SFA)`, `mihomo / FlClash`, `v2rayNG / Xray`, `NekoBox`, `Surfboard`, `WireGuard / AmneziaWG`, `Tailscale`, `WARP`, and `NetProxy`.
+4. **App Visibility (HMA Presets) & Staged Data Clean**: hide sensitive package groups (Root managers / Modern proxy clients / Detector apps / Custom ROMs) while preserving OAuth and Play Billing; clean caches lightly or perform multi-user deep resets.
+5. **Target View (Guard / Ledger / 6D Diagnostics)**:
+   - **Bodyguard (`Guard`)**: three modes — `OFF`, `OBSERVE` (record anomalies without interrupting), and fail-closed `BLOCK_KILL` (immediately kills and locks the target process if launched without an aligned persona or if an app update queries an unaudited signal outside the baseline). Includes a searchable Audited Baseline inspector (167 Claude / 154 ChatGPT signals), reversible user whitelist, 6-Gate inspector, and incident feed.
+   - **Ledger (`Ledger`)**: read-only extraction of target staging caches (Sentry breadcrumbs/tags/envelopes, Datadog `last_view_event`, Bootstrap / Model / Statsig caches) and bodyguard HTTP response events persisted to local SQLite `ledger.db` with historical upload drift detection, collapsible cards, and one-tap Markdown export (zero target-dir residue).
+   - **Diagnostics (`6D`)**: 2×3 health matrix across Stealth, Integrity, Network/Location, Identity Chain, Account/Session, and Permissions/Sensors.
 
-The eye at the right of the title masks sensitive values (AID, SIM, model, fingerprint, account ids). It only changes what is drawn; writes and verdicts are unaffected.
+The eye at the right of the title masks sensitive values (AID, SIM, model, fingerprint, IP, account ids). It only changes what is drawn; writes and verdicts are unaffected.
 
 ### Permission and location observations
 
@@ -347,26 +355,28 @@ Target package ids, market URIs and domain rules live only in `model/TargetRegis
 
 ```
 app/src/com/walter/claudewilson/
-├── MainActivity.java            lifecycle, permissions, broadcasts
+├── MainActivity.java            lifecycle, permissions, network callbacks & receivers
 ├── Dashboard.java               page composition, apply/revert, scan scheduling
-├── PersonaPanel.java            persona table, region writes, model/CSC/timezone editors
-├── NetworkPanel.java            network card and scan/fix
-├── RiskModelPanel.java          target check-item renderer
-├── AccountLayerPanel.java       account layer
+├── PreflightBar.java            preflight gate bar (ready / running / blocked)
+├── PersonaPanel.java            6-tile persona workbench, region writes, IPv6 policy sync
+├── PersonaEditSheets.java       device / SIM / GPS map / IPv6 bottom sheets
+├── NetworkPanel.java            network card and one-tap probe/fix
+├── DataCleanPanel.java          staged data clean UI (paired with DataClean.java)
+├── AppVisibilitySheet.java      HMA-preset app visibility groups
+├── TargetViewPanel.java         target view, HTTP ledger & 5-dim staging diagnostics
+├── LedgerDb.java / LedgerIngestor.java  SQLite v2 diagnostic & upload ledger
 ├── RegionActions.java           baseline snapshot, subscription, restore
 ├── EnvSession.java              region transaction state (phase/token/baseline)
-├── RootShell.java               unified root / Shizuku command channel
-├── ShizukuShell.java            Shizuku process channel
+├── RootShell.java / ShizukuShell.java   unified root / Shizuku command channel
 ├── SystemBuild.java             build and operator property scripts
-├── DataClean.java               per-user target data cleanup
-├── TargetIdentityReset.java     local identity reset
-├── TargetDataEdit.java          reversible single-field ChatGPT DataStore edit
-├── Geo.java                     region coordinate asset loader
-├── Targets.java                 target selection and package state
-├── model/                       pure data and rules (45 files)
+├── model/                       pure data and rules (62 files, zero android.*)
 ├── rule/                        pure probe rules (36 files)
 ├── platform/                    the only device collection layer (5 files)
-└── hook/                        Vector module (16 files)
+└── hook/                        Vector module & native cloak bridge (21 files)
+app/jni/
+└── cwpersona.c                  ARM64 16KB BTI/PAC native cloak (libcwpersona.so)
+tools/target_watch/              build & selftest baselines + hook coverage registry (3 JSON)
+docs/index.html                  GitHub Pages interactive UX preview website
 ```
 
 The important `model/` types:
@@ -497,10 +507,11 @@ There is no Gradle. `app/build.py` drives `javac + d8 + aapt2 + apksigner`.
 cd app
 export CW_WORKSPACE=/path/to/android/toolchain   # aapt2 / d8 / apksigner
 export CW_JBR=/path/to/jdk-21
+export CW_OUT_DIR=/path/to/out                   # optional, defaults to app/out
 python build.py
 ```
 
-Output: `app/out/build-<timestamp>-<hash>/ClaudeWilson.apk`.
+Output: `${CW_OUT_DIR:-app/out}/build-<timestamp>-<hash>/ClaudeWilson.apk`.
 
 Tests:
 
@@ -509,7 +520,7 @@ cd app
 python test.py
 ```
 
-They cover model / rule / state machine / shell-command construction and need no device. Current count: 402 assertions (moves with releases).
+They cover model / rule / state machine / modern proxy rules / diagnostic parsers / shell-command construction and need no device. Current count: 837 assertions (moves with releases).
 
 Install:
 
@@ -538,7 +549,7 @@ Support levels:
 
 - Play Integrity verdict, hCaptcha, Codex device keys, account graph and server-side risk control are **server-side values**; local hooks cannot change them.
 - TEE / StrongBox / hardware attestation can be observed, not forged.
-- Raw native syscalls, `dl_iterate_phdr` and native `posix_spawn` are outside user-mode hooks.
+- Direct inline `svc #0` raw syscalls and native `posix_spawn` are outside user-mode PLT/GOT hooks (standard libc `open`/`openat`/`fopen`/`getifaddrs`/`dl_iterate_phdr`/`__system_property_*` are covered by `libcwpersona.so`).
 - `/system/bin/su` remains on disk: KernelSU's direct-su architecture. Hiding it inside the target is not the same as removing the file.
 - Closing the region restores the **baseline of the first apply**, not "the previous region" and not factory settings.
 - A region change discards the current space's manual SIM overrides; they are not restored if the apply fails.
@@ -557,4 +568,4 @@ This is not an OSI-approved open-source license; it is source-available / noncom
 
 ---
 
-<p align="center"><sub>ClaudeWilson · environment observation and reversible alignment · Android 15+</sub></p>
+<p align="center"><sub>ClaudeWilson · environment observation and reversible alignment · Android 13–17</sub></p>

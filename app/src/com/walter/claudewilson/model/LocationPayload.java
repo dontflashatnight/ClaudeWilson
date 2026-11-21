@@ -14,11 +14,25 @@ public final class LocationPayload {
 
     public static String json(boolean enabled, double latitude, double longitude, long seed,
             String city) {
-        return "{\"enabled\":" + enabled
-                + ",\"latitude\":" + latitude
-                + ",\"longitude\":" + longitude
-                + ",\"seed\":" + seed
-                + ",\"city\":\"" + escape(city) + "\"}";
+        return json(enabled, latitude, longitude, seed, city, "fine", Double.NaN);
+    }
+
+    public static String json(boolean enabled, double latitude, double longitude, long seed,
+            String city, String accuracyMode, double altitude) {
+        String mode = accuracyMode == null || accuracyMode.isEmpty() ? "fine" : accuracyMode;
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"enabled\":").append(enabled)
+                .append(",\"latitude\":").append(latitude)
+                .append(",\"longitude\":").append(longitude)
+                .append(",\"seed\":").append(seed)
+                .append(",\"city\":\"").append(escape(city)).append('"');
+        if (!"fine".equals(mode)) {
+            sb.append(",\"accuracyMode\":\"").append(escape(mode)).append('"');
+        }
+        if (!Double.isNaN(altitude) && !Double.isInfinite(altitude)) {
+            sb.append(",\"altitude\":").append(altitude);
+        }
+        return sb.append('}').toString();
     }
 
     private static String escape(String value) {

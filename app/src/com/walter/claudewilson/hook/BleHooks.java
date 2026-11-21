@@ -7,7 +7,6 @@ import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.Context;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -48,11 +47,12 @@ final class BleHooks {
     }
 
     static void install(ClassLoader loader, HookConfig config) {
-        if (config.ble.isEmpty()) {
+        classLoader = loader;
+        installLocalNameCloak(loader, config);
+        if (config.ble.isEmpty() && !config.bleEmpty) {
             status = "off";
             return;
         }
-        classLoader = loader;
         for (BleProfile.Device device : config.ble) {
             NAMES.put(device.address, device.name);
         }
@@ -75,6 +75,32 @@ final class BleHooks {
                     bondedServed.incrementAndGet();
                 }
             });
+            Class<?> btManager = XposedHelpers.findClassIfExists(
+                    "android.bluetooth.BluetoothManager", loader);
+            if (btManager != null) {
+                XC_MethodHook connectedHook = new XC_MethodHook() {
+                    @Override protected void afterHookedMethod(MethodHookParam param) {
+                        if (!active()) return;
+                        List<BluetoothDevice> out = new ArrayList<BluetoothDevice>();
+                        if (!config.bleEmpty && !config.ble.isEmpty()) {
+                            BluetoothAdapter bt = BluetoothAdapter.getDefaultAdapter();
+                            if (bt != null) {
+                                for (BleProfile.Device d : config.ble) {
+                                    if (!d.bonded) continue;
+                                    try {
+                                        out.add(bt.getRemoteDevice(d.address));
+                                    } catch (Throwable ignored) {
+                                    }
+                                }
+                            }
+                        }
+                        param.setResult(out);
+                    }
+                };
+                XposedBridge.hookAllMethods(btManager, "getConnectedDevices", connectedHook);
+                XposedBridge.hookAllMethods(btManager, "getDevicesMatchingConnectionStates",
+                        connectedHook);
+            }
             Class<?> scanner = XposedHelpers.findClass(
                     "android.bluetooth.le.BluetoothLeScanner", loader);
             XposedBridge.hookAllMethods(scanner, "startScan", new XC_MethodHook() {
@@ -107,7 +133,7 @@ final class BleHooks {
                 }
             });
             Class<?> device = XposedHelpers.findClass("android.bluetooth.BluetoothDevice", loader);
-            XposedBridge.hookAllMethods(device, "getName", new XC_MethodHook() {
+            XC_MethodHook deviceNameHook = new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
                     if (!active() || !(param.thisObject instanceof BluetoothDevice)) {
                         return;
@@ -121,12 +147,72 @@ final class BleHooks {
                     } catch (Throwable ignored) {
                     }
                 }
-            });
+            };
+            XposedBridge.hookAllMethods(device, "getName", deviceNameHook);
+            XposedBridge.hookAllMethods(device, "getAlias", deviceNameHook);
             status = "ok";
-            XposedBridge.log("ClaudeWilsonHook ble status=ok devices=" + config.ble.size());
+            if (HookEntry.debugLog) {
+                XposedBridge.log("ClaudeWilsonHook ble status=ok devices=" + config.ble.size());
+            }
         } catch (Throwable t) {
             status = "error:" + t.getClass().getSimpleName();
             XposedBridge.log("ClaudeWilsonHook ble: " + t);
+        }
+    }
+
+    /** Masks local Bluetooth/device owner name with the active persona model name. */
+    private static void installLocalNameCloak(ClassLoader loader, HookConfig config) {
+        String model = config.build.get("MODEL");
+        if (model == null || model.trim().isEmpty()) {
+            return;
+        }
+        final String spoofName = model.trim();
+        try {
+            Class<?> adapter = XposedHelpers.findClassIfExists(
+                    "android.bluetooth.BluetoothAdapter", loader);
+            if (adapter != null) {
+                XposedBridge.hookAllMethods(adapter, "getName",
+                        new XC_MethodHook(XC_MethodHook.PRIORITY_HIGHEST) {
+                    @Override protected void afterHookedMethod(MethodHookParam param) {
+                        param.setResult(spoofName);
+                    }
+                });
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            Class<?> secure = XposedHelpers.findClassIfExists(
+                    "android.provider.Settings$Secure", loader);
+            if (secure != null) {
+                XC_MethodHook btNameHook = new XC_MethodHook() {
+                    @Override protected void afterHookedMethod(MethodHookParam param) {
+                        if (param.args != null && param.args.length >= 2
+                                && "bluetooth_name".equals(String.valueOf(param.args[1]))) {
+                            param.setResult(spoofName);
+                        }
+                    }
+                };
+                XposedBridge.hookAllMethods(secure, "getString", btNameHook);
+                XposedBridge.hookAllMethods(secure, "getStringForUser", btNameHook);
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            Class<?> global = XposedHelpers.findClassIfExists(
+                    "android.provider.Settings$Global", loader);
+            if (global != null) {
+                XC_MethodHook devNameHook = new XC_MethodHook() {
+                    @Override protected void afterHookedMethod(MethodHookParam param) {
+                        if (param.args != null && param.args.length >= 2
+                                && "device_name".equals(String.valueOf(param.args[1]))) {
+                            param.setResult(spoofName);
+                        }
+                    }
+                };
+                XposedBridge.hookAllMethods(global, "getString", devNameHook);
+                XposedBridge.hookAllMethods(global, "getStringForUser", devNameHook);
+            }
+        } catch (Throwable ignored) {
         }
     }
 
@@ -136,7 +222,7 @@ final class BleHooks {
     }
 
     private static boolean permitted(Context context) {
-        if (Build.VERSION.SDK_INT >= 31) {
+        if (HookContext.HOST_SDK_INT >= 31) {
             return context.checkSelfPermission("android.permission.BLUETOOTH_SCAN") == 0
                     || context.checkSelfPermission("android.permission.BLUETOOTH_CONNECT") == 0;
         }

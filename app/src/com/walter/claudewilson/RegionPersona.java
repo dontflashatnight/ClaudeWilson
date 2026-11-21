@@ -2,13 +2,13 @@ package com.walter.claudewilson;
 
 import android.content.Context;
 
+import com.walter.claudewilson.model.AtomicTextFile;
 import com.walter.claudewilson.model.GeoTable;
+import com.walter.claudewilson.model.PersonaSalt;
 
 import org.json.JSONObject;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -31,6 +31,22 @@ final class RegionPersona {
     private static final String FILE = "region-personas.json";
     private static final Object LOCK = new Object();
     private static Map<String, Snapshot> cache;
+    private static final java.util.concurrent.ExecutorService IO =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "region-persona-io");
+                t.setDaemon(true);
+                return t;
+            });
+
+    static final class CarrierEntry {
+        final String op;
+        final String name;
+
+        CarrierEntry(String op, String name) {
+            this.op = op;
+            this.name = name;
+        }
+    }
 
     static final class Snapshot {
         final String zone;
@@ -94,41 +110,61 @@ final class RegionPersona {
             if (saved != null) {
                 return saved;
             }
-            Snapshot created = create(context, region);
+            Snapshot created = create(context, user, region);
             all.put(key, created);
             write(context, all);
             return created;
         }
     }
 
-    private static Snapshot create(Context context, Regions.R region) {
-        // Random only on the first selection of this region. Every later read is the snapshot.
-        String[] pick = Regions.pick(region);
+    private static Snapshot create(Context context, String user, Regions.R region) {
+        // Seeded from this space's persistent SecureRandom salt on first selection of this region.
+        String space = user == null || user.trim().isEmpty() ? "0" : user.trim();
+        long spaceSeed = new PersonaState(context).spaceSeed(space);
+        java.util.Random rng = new java.util.Random(
+                PersonaSalt.regionPickSeed(spaceSeed, region.iso));
+        String[] pick = Regions.pick(region, rng);
         String[] net = PersonaPanel.netFor(region.iso);
         java.util.List<Carrier> pool = pool(context, region);
-        Carrier sim = pick(pool);
-        Carrier visited = pick(pool);
-        if (pool.size() > 1 && sim != null && visited != null && sim.op.equals(visited.op)) {
-            for (Carrier candidate : pool) {
-                if (!candidate.op.equals(sim.op)) {
-                    visited = candidate;
-                    break;
-                }
-            }
-        }
+        Carrier sim = pick(pool, rng);
         String op = sim != null ? sim.op : net != null ? net[1] : region.mcc.split("/")[0] + "01";
         String carrier = sim != null ? pretty(region, sim.name)
                 : net != null ? net[2]
                 : region.carriers == null || region.carriers.isEmpty()
                         ? "" : region.carriers.split("/")[0];
-        String netOp = visited != null ? visited.op : op;
-        String netName = visited != null ? pretty(region, visited.name) : carrier;
         GeoTable.Point point = Geo.point(context, region.iso, pick[0]);
         double lat = point == null ? 0d : point.latitude;
         double lng = point == null ? 0d : point.longitude;
         String city = point == null ? "" : point.city;
-        return new Snapshot(pick[0], pick[1], op, carrier, netOp, region.iso, netName,
+        return new Snapshot(pick[0], pick[1], op, carrier, op, region.iso, carrier,
                 lat, lng, city, Regions.cscFor(region.iso));
+    }
+
+    /** Merged, deduplicated carrier presets for {@code region} from catalog/carriers.txt + curated NET. */
+    static java.util.List<CarrierEntry> carriersFor(Context context, Regions.R region) {
+        java.util.List<CarrierEntry> out = new java.util.ArrayList<CarrierEntry>();
+        if (context == null || region == null) {
+            return out;
+        }
+        java.util.Set<String> seenOps = new java.util.LinkedHashSet<String>();
+        String[] net = PersonaPanel.netFor(region.iso);
+        if (net != null && net.length >= 3 && !net[1].isEmpty()) {
+            out.add(new CarrierEntry(net[1], net[2]));
+            seenOps.add(net[1]);
+        }
+        for (Carrier c : pool(context, region)) {
+            if (!seenOps.contains(c.op)) {
+                out.add(new CarrierEntry(c.op, pretty(region, c.name)));
+                seenOps.add(c.op);
+            }
+        }
+        if (out.isEmpty()) {
+            String fbOp = region.mcc.split("/")[0] + "01";
+            String fbName = region.carriers != null && !region.carriers.isEmpty()
+                    ? region.carriers.split("/")[0] : region.iso.toUpperCase(java.util.Locale.ROOT);
+            out.add(new CarrierEntry(fbOp, fbName));
+        }
+        return out;
     }
 
     private static final class Carrier {
@@ -201,8 +237,8 @@ final class RegionPersona {
         return out;
     }
 
-    private static Carrier pick(java.util.List<Carrier> pool) {
-        return pool.isEmpty() ? null : pool.get(RNG.nextInt(pool.size()));
+    private static Carrier pick(java.util.List<Carrier> pool, java.util.Random rng) {
+        return pool.isEmpty() ? null : pool.get((rng == null ? RNG : rng).nextInt(pool.size()));
     }
 
     private static String pretty(Regions.R region, String candidate) {
@@ -251,7 +287,7 @@ final class RegionPersona {
             String key = key(user, region.iso);
             Snapshot s = all.get(key);
             if (s == null) {
-                s = create(context, region);
+                s = create(context, user, region);
             }
             GeoTable.Point point = Geo.point(context, region.iso, zone);
             all.put(key, s.with("zone", zone).withLocation(
@@ -272,9 +308,63 @@ final class RegionPersona {
             String key = key(user, region.iso);
             Snapshot s = all.get(key);
             if (s == null) {
-                s = create(context, region);
+                s = create(context, user, region);
             }
             all.put(key, s.withLocation(latitude, longitude, city));
+            write(context, all);
+        }
+    }
+
+    /** Atomically persists a coherent (MCC/MNC, carrier) pair and aligns visited-network fields. */
+    static void putCarrierTuple(Context context, String user, Regions.R region,
+                                String op, String carrier) {
+        if (context == null || region == null || op == null || op.isEmpty()
+                || carrier == null || carrier.isEmpty()) {
+            return;
+        }
+        synchronized (LOCK) {
+            Map<String, Snapshot> all = read(context);
+            String key = key(user, region.iso);
+            Snapshot s = all.get(key);
+            if (s == null) {
+                s = create(context, user, region);
+            }
+            all.put(key, new Snapshot(
+                    s.zone, s.locale, op, carrier, op, region.iso, carrier,
+                    s.latitude, s.longitude, s.city, s.csc));
+            write(context, all);
+        }
+    }
+
+    /** Atomically persists locale and timezone, optionally aligning city/GPS to the new zone. */
+    static void putLocaleAndZone(Context context, String user, Regions.R region,
+                                 String locale, String zone, boolean syncLocation) {
+        if (context == null || region == null) {
+            return;
+        }
+        synchronized (LOCK) {
+            Map<String, Snapshot> all = read(context);
+            String key = key(user, region.iso);
+            Snapshot s = all.get(key);
+            if (s == null) {
+                s = create(context, user, region);
+            }
+            String nextLocale = (locale != null && !locale.isEmpty()) ? locale : s.locale;
+            String nextZone = (zone != null && !zone.isEmpty()) ? zone : s.zone;
+            double lat = s.latitude;
+            double lng = s.longitude;
+            String city = s.city;
+            if (syncLocation && zone != null && !zone.isEmpty()) {
+                GeoTable.Point point = Geo.point(context, region.iso, zone);
+                if (point != null) {
+                    lat = point.latitude;
+                    lng = point.longitude;
+                    city = point.city;
+                }
+            }
+            all.put(key, new Snapshot(
+                    nextZone, nextLocale, s.op, s.carrier, s.op, region.iso, s.carrier,
+                    lat, lng, city, s.csc));
             write(context, all);
         }
     }
@@ -293,7 +383,7 @@ final class RegionPersona {
             String key = key(user, region.iso);
             Snapshot s = all.get(key);
             if (s == null) {
-                s = create(context, region);
+                s = create(context, user, region);
             }
             all.put(key, s.with(field, value));
             write(context, all);
@@ -310,11 +400,10 @@ final class RegionPersona {
             cache = all;
             return all;
         }
-        try (FileInputStream in = new FileInputStream(file)) {
-            byte[] data = new byte[(int) Math.max(0, file.length())];
-            int n = in.read(data);
-            if (n > 0) {
-                JSONObject root = new JSONObject(new String(data, 0, n, StandardCharsets.UTF_8));
+        try {
+            String text = AtomicTextFile.readUtf8(file);
+            if (text != null && !text.isEmpty()) {
+                JSONObject root = new JSONObject(text);
                 Iterator<String> keys = root.keys();
                 while (keys.hasNext()) {
                     String key = keys.next();
@@ -343,7 +432,16 @@ final class RegionPersona {
         return all;
     }
 
+    /** Blocks briefly until queued async disk writes finish (called before zygote soft reboot). */
+    static void flushPending() {
+        try {
+            IO.submit(() -> { }).get(1500L, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (Throwable ignored) {
+        }
+    }
+
     private static void write(Context context, Map<String, Snapshot> all) {
+        final byte[] bytes;
         try {
             JSONObject root = new JSONObject();
             for (Map.Entry<String, Snapshot> e : all.entrySet()) {
@@ -362,13 +460,18 @@ final class RegionPersona {
                 o.put("csc", s.csc);
                 root.put(e.getKey(), o);
             }
-            try (FileOutputStream out = new FileOutputStream(file(context))) {
-                out.write(root.toString().getBytes(StandardCharsets.UTF_8));
-                out.getFD().sync();
-            }
+            bytes = root.toString().getBytes(StandardCharsets.UTF_8);
         } catch (Throwable ignored) {
-            // Keep the in-memory snapshot; the next update retries the file.
+            return;
         }
+        final File target = file(context);
+        IO.execute(() -> {
+            try {
+                AtomicTextFile.writeUtf8(target, bytes);
+            } catch (Throwable ignored) {
+                // Keep the in-memory snapshot; the next update retries the file.
+            }
+        });
     }
 
     private static File file(Context context) {

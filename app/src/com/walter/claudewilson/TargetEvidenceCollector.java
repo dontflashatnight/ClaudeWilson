@@ -32,14 +32,15 @@ final class TargetEvidenceCollector {
             return TargetEvidence.EMPTY;
         }
         TargetEvidence.Builder out = TargetEvidence.builder().collected(true);
+        boolean shell = root || RootShell.shellReady();
         boolean packageRead = fromPackageManager(context, spec, out);
         if (!packageRead) {
-            if (root) {
+            if (shell) {
                 fromRootPackage(spec, out);
             } else {
                 out.note("package not visible").installed(false);
             }
-        } else if (root) {
+        } else if (shell) {
             // PackageInfo.splitNames is not populated by a documented public flag on this
             // platform level; pm path is the stable source and works for a PM-hidden package too.
             addSplits(spec, out);

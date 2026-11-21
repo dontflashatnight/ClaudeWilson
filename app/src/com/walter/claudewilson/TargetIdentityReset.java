@@ -20,14 +20,14 @@ final class TargetIdentityReset {
         if (!ShellQuote.packageName(target.packageName())) {
             return "failed: invalid package";
         }
-        if (!RootShell.rootReady()) {
-            return "failed: root not ready";
+        if (!RootShell.shellReady()) {
+            return "failed: root or Shizuku not ready";
         }
         if (new RootActions(context).targetRunning(target)) {
             return "failed: target is running; stop it first";
         }
         String pkg = target.packageName();
-        String out = RootShell.run(DataClean.command(pkg, null), 32768, 120000L);
+        String out = RootShell.run("exec 2>&1; " + DataClean.command(pkg, null), 32768, 120000L);
         if (!DataClean.ok(out)) {
             return "failed: clear incomplete";
         }

@@ -17,8 +17,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          APK=$(ls dist/ClaudeWilson-*.apk | head -n 1)
+          SHA_FILE="${APK}.sha256"
+          SHA=$(awk '{print $1}' "${SHA_FILE}")
           gh release create "${GITHUB_REF_NAME}" \
-            dist/ClaudeWilson-1.0.21.apk \
-            dist/ClaudeWilson-1.0.21.apk.sha256 \
+            "${APK}" \
+            "${SHA_FILE}" \
             --title "ClaudeWilson ${GITHUB_REF_NAME}" \
-            --notes "versionCode 49 / SHA-256 2CABA112198DFA8D9E35379BE2BB4AFBA1BB27435CA620CD4B35F4040E4DFA87"
+            --notes "SHA-256: ${SHA}"
