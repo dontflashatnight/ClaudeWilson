@@ -1,33 +1,33 @@
 {
   "schema_version": 1,
   "target_id": "claude",
-  "captured_at": "2026-11-19T15:23:24+11:00",
+  "captured_at": "2026-11-22T13:09:44+11:00",
   "meta": {
     "package": "com.anthropic.claude",
-    "version_code": 26111719,
-    "version_name": "1.261117.19",
+    "version_code": 26112019,
+    "version_name": "1.261120.19",
     "min_sdk": 32,
     "target_sdk": 37,
     "compile_sdk": 37,
     "apk_hashes": {
-      "base.apk": "904672be7a7769b2d483f67f5bab176400670da76d03aca99c288b033eb09086",
-      "split_config.arm64_v8a.apk": "7574de0f2b277d99a9513f09e4c7840af9a4f077e310ea932dcd21f7ff9fd1bf",
-      "split_config.es.apk": "45b48235dcd1a94c02c3d0610f36dda065fbc6b42a6e175a9fc826bfd1dec1ff",
-      "split_config.fil.apk": "3599499c2a127bc6e553187ac37e93227c83ac2cf7735ec4def97a982c1ec609",
-      "split_config.fr.apk": "cb8810449c7652813a7f38618efe67cf5cc251bbf9298956a5248b1452c4b4d6",
-      "split_config.hi.apk": "3a7f7287468f9e55824c88f0f70182a49436f4a895194c90a10e60dc2261f926",
-      "split_config.in.apk": "620dd4f6045a3a8387d85d902af935b0a3723b47cf130cfa86be37819feae426",
-      "split_config.ja.apk": "492c0f51cb5efc36e24d8417465b7505c9cecf263e6573f86961c6caac43d203",
-      "split_config.ko.apk": "4da00bb677191aeb0a4797f9f10f83f9c36b019e35b0a90edadaa74f09f13ca8",
-      "split_config.nl.apk": "01cbdf0ba8978cd6757a18363b7af16bfdbf63836b0a76de2edd804d2e36de26",
-      "split_config.pt.apk": "934b2943e0273774ac1b602de919cdaca672ebb031f5be9280b0f2f287eb474e",
-      "split_config.th.apk": "4e355b9dd69819bd4649dfa4eaec0158af5fb394cc161f67a842167a164e8a63",
-      "split_config.tl.apk": "e208fe64046bdeb30eb8772e3169260121fb3ebce1175fdda947a2006f695894",
-      "split_config.vi.apk": "da9775d8734d8dc64be9330b1ed880f3481336e5964df8c8a89e8571cf82cbcd",
-      "split_config.xxhdpi.apk": "fb75536860da0e6640164a9f6cfd62cc52aaf6765dafe669b7e1b0941bd85299",
-      "split_config.zh.apk": "77a13391106f5700255aee66a47622ced08b7211319c14adb492c95f48c2b1d2"
+      "base.apk": "a969a66c8f3421437685bc7221e30a7eb1ed1ecc18e8e200491b22e290eb13f8",
+      "split_config.arm64_v8a.apk": "773dfffb7dc3f82889cfd48058b514913cc153cb1af9534acb2dba98eb39402e",
+      "split_config.es.apk": "928dc3943072e19c10f4a98f14658742e061a4a11c0ce879bddab4e740c0a68a",
+      "split_config.fil.apk": "1d5d33f09661e18a6a9858191681132c229f192fa5f68e3c4aedf3a51f993984",
+      "split_config.fr.apk": "2f480f131113892f3d1a3bc03b04b007b1a2835b6250270d8d2a59a262ee2c32",
+      "split_config.hi.apk": "bae41b2ea7940f0c3c12e44818a61bc1cd4dae5590bcaaf8d11aa35728e2fccc",
+      "split_config.in.apk": "bd22275e7b36e6388746273a7f2dc3e53a5114ad612a5174c386280c4b38507c",
+      "split_config.ja.apk": "10846eb7801e9338c51f771a1542b2532a7931b0c74af33b90099d6ddee9b724",
+      "split_config.ko.apk": "85db9eb699f781c593712b9a0e6a3b8f789ca8033ea1e9ff05677125f21ab9b2",
+      "split_config.nl.apk": "78b007b6a6750aa2a32e876c6326c3e9660a2eb1dbca0573efb375f748136a76",
+      "split_config.pt.apk": "577ea19e8278ff9993dcb2fd9ac5b90b283ed2a62c5fe45ed16af81f233ab33b",
+      "split_config.th.apk": "8969a6682d3d5d51ff14a124fac44b5fc1d62e3acd21e2905947253038710583",
+      "split_config.tl.apk": "0b842c76f4a2f48a3880ebaf7324ad98415b3b935d3d9da3ee11ff476bff2f7e",
+      "split_config.vi.apk": "0827e2ffdd863b2e44bb62859f07cd6449a5cbe9fe6d3a02114155c4cfd2434c",
+      "split_config.xxhdpi.apk": "28c6fd4d569eeb81c7e1628fe662fe551470d500633782110dd992d031c2ba95",
+      "split_config.zh.apk": "560acfc3d110e89e806e95e39d9187f44b17ac1af5af52daa8fcd57e3aee9424"
     },
-    "apk_set_sha256": "d54bbe721bbf297f408b2328c07faf9ec7fcc07893273025b9501db3eb29ada6"
+    "apk_set_sha256": "a1adedb483952957134cf44498ceee440c9a3bb66322c27b0d848bcd50779542"
   },
   "manifest": {
     "permissions": [
@@ -117,7 +117,7 @@
       "com.google.android.tethering",
       "com.onepassword.android"
     ],
-    "component_count": 87
+    "component_count": 86
   },
   "dex": {
     "dex_count": 6,
@@ -235,6 +235,7 @@
       "device_id_prefs",
       "shared_prefs/app_prefs.xml",
       "shared_prefs/device_id_prefs.xml",
+      "shared_prefs/webview_profiles.xml",
       "sift_queue",
       "trusted_device_",
       "user_cookies_"
@@ -358,7 +359,7 @@
         "paths": []
       },
       "libvoiceclient.so": {
-        "size": 2161288,
+        "size": 2190936,
         "imports": [
           "__system_property_get",
           "dl_iterate_phdr",
@@ -619,6 +620,7 @@
     "store:device_id_prefs",
     "store:shared_prefs/app_prefs.xml",
     "store:shared_prefs/device_id_prefs.xml",
+    "store:shared_prefs/webview_profiles.xml",
     "store:sift_queue",
     "store:trusted_device_",
     "store:user_cookies_"

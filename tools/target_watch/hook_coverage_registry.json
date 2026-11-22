@@ -1859,6 +1859,14 @@
         "app/src/com/walter/claudewilson/hook/SystemLocationHooks.java"
       ],
       "notes": "Blocked in both target process and system_server when location persona is active"
+    },
+    "store:shared_prefs/webview_profiles.xml": {
+      "status": "DIAGNOSTIC_ONLY",
+      "category": "local_store",
+      "files": [
+        "DataClean.java"
+      ],
+      "notes": "Claude v1.261120.19 IsolatedWebViewProfile per-account WebView profile mapping; wiped cleanly by pm clear."
     }
   }
 }

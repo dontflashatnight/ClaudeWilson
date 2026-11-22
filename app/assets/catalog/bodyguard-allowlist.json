@@ -4,7 +4,7 @@
     "chatgpt": {
       "version_code": 2630015,
       "version_name": "1.2026.300",
-      "signal_count": 218,
+      "signal_count": 235,
       "signals": [
         [
           "meta:country",
@@ -1313,13 +1313,115 @@
           "EGRESS_HOST",
           "EXEMPT",
           "Datadog Intake"
+        ],
+        [
+          "host:oaistatic.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "First-party CDN"
+        ],
+        [
+          "host:auth0.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "OpenAI Auth / OAuth"
+        ],
+        [
+          "host:chatgpt.site",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "First-party API"
+        ],
+        [
+          "host:pool.ntp.org",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Datadog Kronos NTP"
+        ],
+        [
+          "host:plaid.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Plaid SDK"
+        ],
+        [
+          "host:payfone.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Plaid / Prove Verification"
+        ],
+        [
+          "host:mapbox.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Search Map Embed"
+        ],
+        [
+          "host:4sqi.net",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Foursquare Places CDN"
+        ],
+        [
+          "host:fonts.bunny.net",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "WebView Fonts CDN"
+        ],
+        [
+          "host:g.co",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Google Shortlink / Auth"
+        ],
+        [
+          "host:goo.gle",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Google Shortlink / Auth"
+        ],
+        [
+          "host:1password.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "1Password Passkey"
+        ],
+        [
+          "host:findahelpline.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Safety Helpline"
+        ],
+        [
+          "host:verygood.systems",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "VGS Payment Vault"
+        ],
+        [
+          "host:afterpay.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Afterpay Billing"
+        ],
+        [
+          "host:experiancs.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Experian Verification"
+        ],
+        [
+          "host:box.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Box Connector"
         ]
       ]
     },
     "claude": {
-      "version_code": 26111719,
-      "version_name": "1.261117.19",
-      "signal_count": 181,
+      "version_code": 26112019,
+      "version_name": "1.261120.19",
+      "signal_count": 195,
       "signals": [
         [
           "meta:country",
@@ -2406,6 +2508,90 @@
           "EGRESS_HOST",
           "EXEMPT",
           "Datadog Intake"
+        ],
+        [
+          "host:plaid.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Plaid SDK"
+        ],
+        [
+          "host:payfone.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Plaid / Prove Verification"
+        ],
+        [
+          "host:pool.ntp.org",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Datadog Kronos NTP"
+        ],
+        [
+          "host:github.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "GitHub Connector / OAuth"
+        ],
+        [
+          "host:appassets.androidplatform.net",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "AndroidX WebView AssetLoader"
+        ],
+        [
+          "host:cdn.sheetjs.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Artifacts CDN"
+        ],
+        [
+          "host:cdn.tailwindcss.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Artifacts CDN"
+        ],
+        [
+          "host:code.jquery.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Artifacts CDN"
+        ],
+        [
+          "host:tile.openstreetmap.org",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Artifacts Map Tiles"
+        ],
+        [
+          "host:claude.fedstart.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Anthropic FedStart"
+        ],
+        [
+          "host:g.co",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Google Shortlink / Auth"
+        ],
+        [
+          "host:goo.gle",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Google Shortlink / Auth"
+        ],
+        [
+          "host:1password.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "1Password Passkey"
+        ],
+        [
+          "host:findahelpline.com",
+          "EGRESS_HOST",
+          "EXEMPT",
+          "Safety Helpline"
         ]
       ]
     }
