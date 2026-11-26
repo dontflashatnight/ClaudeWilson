@@ -737,14 +737,13 @@ final class Dashboard extends UiSection {
                 BodyguardStore.ipGuardConfig(activity, uid());
         final TargetSpec activeTarget = Targets.current();
         final String activeUser = uid();
-        final String activeIso = regionApplied ? currentActiveRegionIso() : "";
+        final boolean activeRegion = regionApplied;
+        final String activeIso = activeRegion ? currentActiveRegionIso() : "";
         final boolean ipv6Spoof = isIpv6SpoofEnabled();
         new Thread(() -> {
             RootActions ra = new RootActions(activity);
             ra.syncBodyguardGuardMode(activeBgMode);
-            if (!ipv6Spoof) {
-                ra.syncIpv6Enforcement(false);
-            }
+            ra.syncIpv6Enforcement(!activeRegion || ipv6Spoof);
             boolean reconciled = reconcileStaleBodyguardLock(activeTarget, activeUser, activeIso);
             if (RootShell.rootReady()) {
                 ra.syncIpGuardDaemon(activeTarget, activeBgMode, activeIpCfg, activeIso,
@@ -2209,21 +2208,27 @@ final class Dashboard extends UiSection {
 
     private static volatile long lastIpv6SyncMs;
 
+    boolean isRegionApplied() {
+        return regionApplied;
+    }
+
     boolean isIpv6SpoofEnabled() {
         return new PersonaState(activity).ipv6SpoofEnabled();
     }
 
     /**
-     * Toggles persistent device-wide IPv6 mode ({@code false} = kernel IPv6 disabled across all
-     * interfaces + watchdog + drop-only hooks; {@code true} = kernel IPv6 restored + regional
-     * spoofed IPv6 prefix). Syncs kernel, re-publishes persona payload, and repaints UI.
+     * Toggles persistent IPv6 mode ({@code false} = when region is active, disable public/VPN
+     * kernel IPv6 with IMS/VoWiFi exemption + watchdog + drop-only hooks; {@code true} = kernel
+     * IPv6 restored + regional spoofed IPv6 prefix). When region is OFF, preference is saved and
+     * kernel IPv6 stays untouched/restored.
      */
     void setIpv6SpoofEnabled(final boolean enabled) {
         new PersonaState(activity).putIpv6SpoofEnabled(enabled);
         lastIpv6SyncMs = android.os.SystemClock.elapsedRealtime();
-        new Thread(() -> new RootActions(activity).syncIpv6Enforcement(enabled),
+        final boolean effectiveRestore = !regionApplied || enabled;
+        new Thread(() -> new RootActions(activity).syncIpv6Enforcement(effectiveRestore),
                 "ipv6-policy-sync").start();
-        if (personaPanel != null && regionIdx >= 0 && Targets.current().hooksEnabled()) {
+        if (personaPanel != null && regionApplied && regionIdx >= 0 && Targets.current().hooksEnabled()) {
             if (enabled) {
                 personaPanel.publishRotated();
             } else {
@@ -2235,7 +2240,7 @@ final class Dashboard extends UiSection {
 
     /** Re-enforces kernel IPv6 suppression after radio, airplane-mode, or network changes. */
     void ensureIpv6OffEnforced(boolean force) {
-        if (!RootShell.rootReady() || isIpv6SpoofEnabled()) {
+        if (!RootShell.rootReady() || !regionApplied || isIpv6SpoofEnabled()) {
             return;
         }
         long now = android.os.SystemClock.elapsedRealtime();
@@ -2392,6 +2397,10 @@ final class Dashboard extends UiSection {
                 reconcileStaleBodyguardLock(curTarget, user, appliedIsoUp);
                 if (RootShell.rootReady()) {
                     RootActions ra = new RootActions(Dashboard.this);
+                    if (!BodyguardStore.isLocked(Dashboard.this, curTarget.id())) {
+                        ra.syncBodyguardLock(curTarget, false);
+                    }
+                    ra.syncIpv6Enforcement(isIpv6SpoofEnabled());
                     RootShell.run("rm -f " + com.walter.claudewilson.model.IpGuardPolicy
                             .lastTargetIpPath(curTarget.id()) + " 2>/dev/null || true", 32);
                     ra.syncIpGuardDaemon(
@@ -2535,6 +2544,7 @@ final class Dashboard extends UiSection {
             }
             if (RootShell.rootReady()) {
                 RootActions ra = new RootActions(this);
+                ra.syncIpv6Enforcement(true);
                 ra.syncBodyguardLock(revTarget, BodyguardStore.isLocked(this, revTarget.id()));
                 RootShell.run("rm -f " + com.walter.claudewilson.model.IpGuardPolicy
                         .lastTargetIpPath(revTarget.id()) + " 2>/dev/null || true", 32);

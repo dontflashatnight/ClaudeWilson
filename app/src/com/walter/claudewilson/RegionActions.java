@@ -155,11 +155,21 @@ final class RegionActions {
             } catch (Throwable ignored) {
                 // Hidden API: the display name is still usable, the source falls back to user.
             }
+            // If displayName was previously overwritten with a simulated carrier via USER_INPUT
+            // (e.g. "docomo" on a "中国联通" SIM), fall back to the SIM's true carrierName so
+            // revert restores the real carrier instead of preserving a stale persona label.
+            String cleanLabel = label.trim();
+            String cleanShown = shown.trim();
+            if (source == CarrierCommands.nameSourceUserInput()
+                    && !cleanLabel.isEmpty() && !cleanShown.equals(cleanLabel)) {
+                cleanShown = cleanLabel;
+                source = 0;
+            }
             return new String[]{
                     mcc == null || mnc == null ? "" : mcc + mnc,
                     iso == null ? "" : iso,
-                    label.trim(),
-                    shown.trim(),
+                    cleanLabel,
+                    cleanShown,
                     String.valueOf(source)};
         } catch (Throwable t) {
             return null;

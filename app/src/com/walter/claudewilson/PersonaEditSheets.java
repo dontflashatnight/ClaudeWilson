@@ -1715,15 +1715,15 @@ final class PersonaEditSheets {
         llp.topMargin = dp(ctx, 12);
         list.setLayoutParams(llp);
 
-        // Option 1: IPv6 Off (default, kernel-level disable across all interfaces + watchdog)
+        // Option 1: Public IPv6 Off (default when region active; exempts IMS/VoWiFi)
         LinearLayout offRow = optionRow(ctx, !currentSpoofEnabled);
         LinearLayout offMid = new LinearLayout(ctx);
         offMid.setOrientation(LinearLayout.VERTICAL);
         offMid.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
-        offMid.addView(txt(ctx, Lang.t("IPv6 已关闭", "IPv6 Off", "IPv6 無効"), 12.5f, FG, true));
-        offMid.addView(mono(ctx, Lang.t("全网卡禁用 · 切网/飞行模式自动保持",
-                "All ifaces off · persists across net/airplane",
-                "全IF無効 · 切替/機内モード維持"), 9.5f, DIM));
+        offMid.addView(txt(ctx, Lang.t("禁用公网 IPv6", "Disable Public IPv6", "公網 IPv6 無効"), 12.5f, FG, true));
+        offMid.addView(mono(ctx, Lang.t("IMS / VoWiFi 豁免 · 地区关闭自动恢复",
+                "IMS/VoWiFi exempt · restores when region off",
+                "IMS/VoWiFi 除外 · 地域オフで復元"), 9.5f, DIM));
         offRow.addView(offMid);
         offRow.addView(tag(ctx, !currentSpoofEnabled ? "✓" : Lang.t("默认", "Default", "既定"),
                 !currentSpoofEnabled ? GREEN : DIM,

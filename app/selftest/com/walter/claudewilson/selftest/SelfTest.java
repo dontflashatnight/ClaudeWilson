@@ -3326,22 +3326,63 @@ public final class SelfTest {
                         && Ipv6Policy.MODE_SPOOF.equals(Ipv6Policy.parseMode("ON"))
                         && !Ipv6Policy.isDisabled("spoof"));
         String offCmd = Ipv6Policy.shellSyncCommand(false);
-        check("Ipv6Policy disable command writes off mode, disables all/default/per-iface IPv6, preserves lo, and starts monitor watchdog",
+        check("Ipv6Policy disable command exempts IMS/lo/all/default while disabling internet IPv6 and starting watchdog",
                 offCmd.contains(Ipv6Policy.MODE_PATH)
                         && offCmd.contains("mv -f ")
-                        && offCmd.contains("conf/default/disable_ipv6")
-                        && offCmd.contains("conf/all/disable_ipv6")
+                        && offCmd.contains("echo 0 > /proc/sys/net/ipv6/conf/default/disable_ipv6")
+                        && offCmd.contains("echo 0 > /proc/sys/net/ipv6/conf/all/disable_ipv6")
+                        && !offCmd.contains("echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6")
+                        && !offCmd.contains("echo 1 > /proc/sys/net/ipv6/conf/default/disable_ipv6")
+                        && offCmd.contains("extra: ims")
+                        && offCmd.contains("rmnet_ipa*")
+                        && offCmd.contains("epdg*")
+                        && offCmd.contains("r_rmnet_data*")
+                        && offCmd.contains("ipsec*")
+                        && offCmd.contains("xfrm*")
                         && offCmd.contains("conf/lo/disable_ipv6")
                         && offCmd.contains("ip -6 monitor address link")
                         && offCmd.contains("ip -6 addr flush dev")
-                        && offCmd.contains(Ipv6Policy.GUARD_PID_PATH));
+                        && offCmd.contains("cmp -s ")
+                        && offCmd.contains("SCRIPT_CHANGED")
+                        && !offCmd.contains("\\bINTERNET\\b")
+                        && !offCmd.contains("\\b(IMS|EIMS)\\b")
+                        && offCmd.contains("[:& ]INTERNET([]& ]|$)")
+                        && offCmd.contains("[:& ](IMS|EIMS)([]& ]|$)")
+                        && offCmd.contains(Ipv6Policy.GUARD_PID_PATH)
+                        && offCmd.contains(Ipv6Policy.LEGACY_PID_PATH)
+                        && offCmd.contains("/proc/$P/cmdline")
+                        && offCmd.contains("99-disable-ipv6\\.sh"));
         String onCmd = Ipv6Policy.shellSyncCommand(true);
-        check("Ipv6Policy restore command stops all watchdogs and restores disable_ipv6=0",
+        check("Ipv6Policy restore command stops all watchdogs including legacy 99-disable-ipv6 and restores disable_ipv6=0",
                 onCmd.contains(Ipv6Policy.MODE_SPOOF)
                         && onCmd.contains(Ipv6Policy.GUARD_PID_PATH)
+                        && onCmd.contains(Ipv6Policy.LEGACY_PID_PATH)
+                        && onCmd.contains("/proc/$P/cmdline")
+                        && onCmd.contains("99-disable-ipv6\\.sh")
                         && onCmd.contains("ipv6-guard\\.sh")
                         && onCmd.contains("echo 0 > /proc/sys/net/ipv6/conf/default/disable_ipv6")
                         && onCmd.contains("echo 0 > /proc/sys/net/ipv6/conf/all/disable_ipv6"));
+        check("BodyguardPolicy blocks background process spawns only and never short-circuits activity spawns",
+                BodyguardPolicy.shouldBlockProcessStart("service")
+                        && BodyguardPolicy.shouldBlockProcessStart("broadcast")
+                        && BodyguardPolicy.shouldBlockProcessStart("content provider")
+                        && BodyguardPolicy.shouldBlockProcessStart("job")
+                        && !BodyguardPolicy.shouldBlockProcessStart("activity")
+                        && !BodyguardPolicy.shouldBlockProcessStart("top-activity")
+                        && !BodyguardPolicy.shouldBlockProcessStart("next-top-activity")
+                        && !BodyguardPolicy.shouldBlockProcessStart("")
+                        && !BodyguardPolicy.shouldBlockProcessStart(null));
+        String uninstallCmd = IpGuardPolicy.shellUninstallCleanupCommand(
+                java.util.Arrays.asList("claude", "chatgpt"));
+        check("IpGuardPolicy uninstall cleanup unblocks iptables, unlocks SystemBodyguardHooks, disarms guard.mode, and restores IPv6",
+                uninstallCmd.contains(IpGuardPolicy.IPTABLES_CHAIN)
+                        && uninstallCmd.contains("claude.unlock")
+                        && uninstallCmd.contains("chatgpt.unlock")
+                        && uninstallCmd.contains("claude.lock")
+                        && uninstallCmd.contains("chatgpt.lock")
+                        && uninstallCmd.contains("guard.mode")
+                        && uninstallCmd.contains(BodyguardPolicy.MODE_OFF)
+                        && uninstallCmd.contains(Ipv6Policy.MODE_SPOOF));
     }
 
     private static void diagnosticArchiveParserSplitsStagingCachesCleanly() {

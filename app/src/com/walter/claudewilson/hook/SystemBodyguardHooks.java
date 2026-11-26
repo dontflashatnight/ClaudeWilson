@@ -1,6 +1,8 @@
 package com.walter.claudewilson.hook;
 
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.os.Binder;
@@ -23,20 +25,27 @@ import de.robv.android.xposed.XposedHelpers;
  * System-framework ({@code system_server}) anti-restart lock for Bodyguard {@code BLOCK_KILL}.
  *
  * <p>Scoped strictly to registered {@link TargetRegistry} packages — every other application on
- * the device passes through untouched in O(1). Works in two halves:
+ * the device passes through untouched in O(1). Works in three halves:
  * <ol>
  *   <li><b>Zero-window auto-lock</b>: hooks {@code ActivityManagerService.setProcessStateSummary}
  *       and immediately arms an in-memory lock the microsecond a registered target emits a
  *       {@code CWBG1|KILLED|} summary, closing the race window before {@code killProcess} finishes
  *       so FCM / WorkManager cannot silently respawn the target.</li>
- *   <li><b>Process-spawn gate</b>: hooks {@code ProcessList.startProcessLocked} and returns
- *       {@code null}/{@code false} while the target is locked (in-memory or via persisted
- *       {@code /data/local/tmp/claudewilson/lock/<target>.lock}), until superseded by a newer
- *       {@code <target>.unlock} written when the user taps Unlock in ClaudeWilson.</li>
+ *   <li><b>Pre-window activity gate</b>: hooks {@code ActivityTaskManagerService.startActivity*}
+ *       and returns {@code ActivityManager.START_ABORTED (102)} BEFORE any {@code Task},
+ *       {@code ActivityRecord}, {@code Splash Screen}, or {@code ShellTransition} is created.</li>
+ *   <li><b>Background process-spawn gate</b>: hooks {@code ProcessList.startProcessLocked} and
+ *       returns {@code null}/{@code false} ONLY for non-activity background spawns (service,
+ *       broadcast, content provider, job). Foreground activity launches are never short-circuited
+ *       here, preventing Android 15+ orphaned Splash Screen freezes ({@code mCurrentFocus=null});
+ *       if an activity bypasses the pre-window gate (e.g. Recents or implicit intent), the
+ *       in-process {@code BodyguardHooks} boot lock kills it cleanly in {@code Application.attach}
+ *       so {@code handleAppDiedLocked} tears down the starting window normally.</li>
  * </ol>
  */
 final class SystemBodyguardHooks {
     private static final String LOCK_DIR = "/data/local/tmp/claudewilson/lock";
+    private static final int START_ABORTED = 102;
     private static final byte[] KILLED_PREFIX =
             "CWBG1|KILLED|".getBytes(StandardCharsets.US_ASCII);
     private static final long CACHE_TTL_MS = 400L;
@@ -45,6 +54,8 @@ final class SystemBodyguardHooks {
             new ConcurrentHashMap<String, Long>();
     private static final ConcurrentHashMap<String, CachedLock> CACHE =
             new ConcurrentHashMap<String, CachedLock>();
+    private static final ConcurrentHashMap<Class<?>, Method> HOSTING_TYPE_METHODS =
+            new ConcurrentHashMap<Class<?>, Method>();
 
     private static volatile boolean installed;
 
@@ -66,8 +77,63 @@ final class SystemBodyguardHooks {
             return;
         }
         installed = true;
+        // Pre-warm helper classes at system_server boot so an in-place APK upgrade cannot break
+        // lazy class resolution before the user reboots.
+        BodyguardPolicy.isLockEffective(0L, 0L, 0L);
+        BodyguardPolicy.shouldBlockProcessStart("service");
+        TargetRegistry.all();
         hookStateSummaryAutoLock(loader);
+        hookActivityStartGate(loader);
         hookProcessStartGate(loader);
+    }
+
+    private static void hookActivityStartGate(ClassLoader loader) {
+        try {
+            Class<?> atms = XposedHelpers.findClassIfExists(
+                    "com.android.server.wm.ActivityTaskManagerService", loader);
+            if (atms == null) {
+                return;
+            }
+            XC_MethodHook gate = new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        if (!(param.method instanceof Method)
+                                || ((Method) param.method).getReturnType() != int.class) {
+                            return;
+                        }
+                        Intent intent = findIntent(param.args);
+                        if (intent == null) {
+                            return;
+                        }
+                        String pkg = extractIntentPackage(intent);
+                        if (pkg == null) {
+                            return;
+                        }
+                        TargetSpec spec = TargetRegistry.byPackage(pkg);
+                        if (spec == null || !spec.hooksEnabled()) {
+                            return;
+                        }
+                        if (!isTargetLocked(spec.id())) {
+                            return;
+                        }
+                        param.setResult(Integer.valueOf(START_ABORTED));
+                    } catch (Throwable ignored) {
+                    }
+                }
+            };
+            String[] methods = {
+                    "startActivity",
+                    "startActivityAsUser",
+                    "startActivityWithFeature",
+            };
+            for (String name : methods) {
+                try {
+                    XposedBridge.hookAllMethods(atms, name, gate);
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     private static void hookStateSummaryAutoLock(ClassLoader loader) {
@@ -123,6 +189,14 @@ final class SystemBodyguardHooks {
                             return;
                         }
                         if (!isTargetLocked(spec.id())) {
+                            return;
+                        }
+                        // Never short-circuit foreground activity launches here: Android 15+
+                        // WindowManager has already created the ActivityRecord & fullscreen
+                        // Splash Screen before calling startProcessLocked. Returning null/false
+                        // strands the Splash Screen with mCurrentFocus=null and freezes UI.
+                        String hostingType = findHostingType(param.args);
+                        if (!BodyguardPolicy.shouldBlockProcessStart(hostingType)) {
                             return;
                         }
                         if (param.method instanceof Method) {
@@ -218,6 +292,62 @@ final class SystemBodyguardHooks {
         for (Object arg : args) {
             if (arg instanceof ApplicationInfo) {
                 return (ApplicationInfo) arg;
+            }
+        }
+        return null;
+    }
+
+    private static Intent findIntent(Object[] args) {
+        if (args == null) {
+            return null;
+        }
+        for (Object arg : args) {
+            if (arg instanceof Intent) {
+                return (Intent) arg;
+            }
+        }
+        return null;
+    }
+
+    private static String extractIntentPackage(Intent intent) {
+        if (intent == null) {
+            return null;
+        }
+        ComponentName cmp = intent.getComponent();
+        if (cmp != null) {
+            String pkg = cmp.getPackageName();
+            if (pkg != null && !pkg.isEmpty()) {
+                return pkg;
+            }
+        }
+        String pkg = intent.getPackage();
+        return (pkg != null && !pkg.isEmpty()) ? pkg : null;
+    }
+
+    private static String findHostingType(Object[] args) {
+        if (args == null) {
+            return null;
+        }
+        for (Object arg : args) {
+            if (arg == null) {
+                continue;
+            }
+            Class<?> cls = arg.getClass();
+            if ("HostingRecord".equals(cls.getSimpleName())) {
+                try {
+                    Method m = HOSTING_TYPE_METHODS.get(cls);
+                    if (m == null) {
+                        m = cls.getMethod("getType");
+                        m.setAccessible(true);
+                        HOSTING_TYPE_METHODS.put(cls, m);
+                    }
+                    Object res = m.invoke(arg);
+                    if (res instanceof String) {
+                        return (String) res;
+                    }
+                } catch (Throwable ignored) {
+                    return null;
+                }
             }
         }
         return null;

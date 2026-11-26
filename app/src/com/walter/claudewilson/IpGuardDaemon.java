@@ -2,7 +2,10 @@ package com.walter.claudewilson;
 
 import com.walter.claudewilson.model.BodyguardPolicy;
 import com.walter.claudewilson.model.IpGuardPolicy;
+import com.walter.claudewilson.model.Ipv6Policy;
 import com.walter.claudewilson.model.ShellQuote;
+import com.walter.claudewilson.model.TargetRegistry;
+import com.walter.claudewilson.model.TargetSpec;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -10,12 +13,19 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardWatchEventKinds;
+import java.nio.file.WatchKey;
+import java.nio.file.WatchService;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -42,7 +52,8 @@ final class IpGuardDaemon {
     private static final long ROUTE_LOSS_DEADLINE_MS = 4000L;
     private static final long PROBE_RETRY_WAIT_MS = 350L;
     private static final long POLL_INTERVAL_MS = 60_000L;
-    private static final long CONF_CHECK_INTERVAL_MS = 2_000L;
+    private static final long CONF_WATCH_FALLBACK_MS = 60_000L;
+    private static final long CONF_POLL_DEGRADED_MS = 15_000L;
 
     static final String ACTION_BODYGUARD_CHANGED =
             "com.walter.claudewilson.BODYGUARD_STATE_CHANGED";
@@ -91,6 +102,7 @@ final class IpGuardDaemon {
 
     private volatile Process netlinkProc;
     private volatile Process logcatProc;
+    private volatile WatchService configWatcher;
 
     // Pending coordinator job state (protected by coordLock)
     private long pendingGen = 0L;
@@ -153,12 +165,43 @@ final class IpGuardDaemon {
         pollThread.setDaemon(true);
         pollThread.start();
 
-        // Main thread watches config hot-reload / shutdown sentinel cleanly.
+        // Pre-warm cleanup classes before any in-place APK unlink can happen.
+        TargetRegistry.all();
+        Ipv6Policy.shellRestoreCommand();
+        // Main thread uses kernel inotify (WatchService) for sub-5ms config/APK change detection
+        // with a 60s safety poll (degrades to 15s sleep only if inotify registration fails).
+        final String launchedApkPath = resolveLaunchedApkPath();
+        final WatchService watcher = openConfigAndApkWatcher(launchedApkPath);
+        configWatcher = watcher;
         while (running.get()) {
-            try {
-                Thread.sleep(CONF_CHECK_INTERVAL_MS);
-            } catch (InterruptedException ignored) {
+            if (watcher != null) {
+                try {
+                    WatchKey key = watcher.poll(CONF_WATCH_FALLBACK_MS, TimeUnit.MILLISECONDS);
+                    if (key != null) {
+                        key.pollEvents();
+                        key.reset();
+                    }
+                } catch (InterruptedException ignored) {
+                    break;
+                } catch (Throwable ignored) {
+                    if (!running.get()) {
+                        break;
+                    }
+                    sleepQuiet(CONF_POLL_DEGRADED_MS);
+                }
+            } else {
+                try {
+                    Thread.sleep(CONF_POLL_DEGRADED_MS);
+                } catch (InterruptedException ignored) {
+                    break;
+                }
+            }
+            if (!running.get()) {
                 break;
+            }
+            if (!launchedApkPath.isEmpty() && !new File(launchedApkPath).isFile()) {
+                handoffOrCleanupOnApkRemoved(activeCfg, launchedApkPath);
+                return;
             }
             DaemonConfig cur = activeCfg;
             DaemonConfig next = loadConfig(cur == null ? 0L : cur.mtime);
@@ -172,6 +215,111 @@ final class IpGuardDaemon {
             }
         }
         cleanupAndExit();
+    }
+
+    private static WatchService openConfigAndApkWatcher(String launchedApkPath) {
+        try {
+            WatchService ws = FileSystems.getDefault().newWatchService();
+            boolean registered = false;
+            Path confDir = Paths.get(IpGuardPolicy.DIR);
+            if (confDir.toFile().isDirectory()) {
+                confDir.register(ws,
+                        StandardWatchEventKinds.ENTRY_CREATE,
+                        StandardWatchEventKinds.ENTRY_MODIFY,
+                        StandardWatchEventKinds.ENTRY_DELETE);
+                registered = true;
+            }
+            if (launchedApkPath != null && !launchedApkPath.isEmpty()) {
+                Path apkParent = Paths.get(launchedApkPath).getParent();
+                if (apkParent != null && apkParent.toFile().isDirectory()) {
+                    apkParent.register(ws, StandardWatchEventKinds.ENTRY_DELETE);
+                    registered = true;
+                    Path grandParent = apkParent.getParent();
+                    if (grandParent != null && grandParent.toFile().isDirectory()
+                            && grandParent.toString().startsWith("/data/app/")) {
+                        grandParent.register(ws,
+                                StandardWatchEventKinds.ENTRY_DELETE,
+                                StandardWatchEventKinds.ENTRY_CREATE);
+                    }
+                }
+            }
+            if (registered) {
+                return ws;
+            }
+            ws.close();
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static String resolveLaunchedApkPath() {
+        try {
+            String cp = System.getProperty("java.class.path", "");
+            if (cp == null || cp.isEmpty()) {
+                return "";
+            }
+            int sep = cp.indexOf(File.pathSeparatorChar);
+            String first = (sep > 0 ? cp.substring(0, sep) : cp).trim();
+            return first.endsWith(".apk") ? first : "";
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    /**
+     * Handles in-place APK upgrade or app uninstall while the daemon is running headless:
+     * <ul>
+     *   <li><b>Upgrade</b> (package still installed at a new APK path): preserves Bodyguard locks,
+     *       {@code guard.mode}, and IPv6 mode untouched; releases only transient route gates and
+     *       immediately hands off to a fresh {@code Bridge guard} process on the new APK.</li>
+     *   <li><b>Uninstall</b> (package no longer installed): clears all {@code cw_ipg_*} UID
+     *       iptables rules, writes fresh {@code .unlock} timestamps to release
+     *       {@code SystemBodyguardHooks} in {@code system_server}, disarms {@code guard.mode},
+     *       and restores kernel IPv6 so no target app is stranded.</li>
+     * </ul>
+     */
+    private void handoffOrCleanupOnApkRemoved(DaemonConfig cfg, String oldApkPath) {
+        cleanupAndExit();
+        String selfPkg = cfg == null ? "" : cfg.selfPkg;
+        if (!ShellQuote.packageName(selfPkg)) {
+            return;
+        }
+        try {
+            Process p = new ProcessBuilder("sh", "-c",
+                    "pm path " + selfPkg + " 2>/dev/null | cut -d: -f2 | head -1")
+                    .redirectErrorStream(true)
+                    .start();
+            String newApk = "";
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                String line = br.readLine();
+                if (line != null) {
+                    newApk = line.trim();
+                }
+            } finally {
+                destroyQuiet(p);
+            }
+            if (!newApk.isEmpty() && !newApk.equals(oldApkPath) && new File(newApk).isFile()) {
+                new ProcessBuilder("sh", "-c",
+                        "nohup app_process -Djava.class.path=" + ShellQuote.quote(newApk)
+                                + " /system/bin com.walter.claudewilson.Bridge guard"
+                                + " </dev/null >/dev/null 2>&1 &")
+                        .start();
+            } else if (newApk.isEmpty()) {
+                Set<String> targetIds = new LinkedHashSet<String>();
+                for (TargetSpec spec : TargetRegistry.all()) {
+                    targetIds.add(spec.id());
+                }
+                if (cfg != null && cfg.targetId != null && !cfg.targetId.isEmpty()) {
+                    targetIds.add(cfg.targetId);
+                }
+                new ProcessBuilder("sh", "-c",
+                        IpGuardPolicy.shellUninstallCleanupCommand(targetIds))
+                        .start()
+                        .waitFor();
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     // ---- Monitor 1: Netlink Route & Link Events (0% CPU blocking read) ------------------
@@ -975,10 +1123,22 @@ final class IpGuardDaemon {
             coordLock.notifyAll();
         }
         shutdownResources();
-        new File(IpGuardPolicy.PID_PATH).delete();
+        File pidFile = new File(IpGuardPolicy.PID_PATH);
+        String myPid = String.valueOf(android.os.Process.myPid());
+        if (myPid.equals(readSmallText(pidFile))) {
+            pidFile.delete();
+        }
     }
 
     private void shutdownResources() {
+        WatchService ws = configWatcher;
+        configWatcher = null;
+        if (ws != null) {
+            try {
+                ws.close();
+            } catch (Throwable ignored) {
+            }
+        }
         destroyQuiet(netlinkProc);
         destroyQuiet(logcatProc);
         releaseTempGateIfUnlocked(activeCfg);

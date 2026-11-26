@@ -297,7 +297,8 @@ class Build:
     def __init__(self):
         workspace = environment_path("CW_WORKSPACE")
         self.jbr = environment_path("CW_JBR")
-        sdk = workspace / "tools/android-sdk"
+        sdk_override = os.environ.get("CW_ANDROID_SDK", "").strip() or os.environ.get("ANDROID_HOME", "").strip()
+        sdk = Path(sdk_override).expanduser().resolve() if sdk_override else (workspace / "tools/android-sdk")
         self.platform = sdk / f"platforms/android-{COMPILE_SDK}/android.jar"
         self.api_versions = sdk / f"platforms/android-{COMPILE_SDK}/data/api-versions.xml"
         bt_root = sdk / "build-tools"

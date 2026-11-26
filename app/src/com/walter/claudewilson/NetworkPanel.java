@@ -219,20 +219,26 @@ final class NetworkPanel extends UiSection {
                 : r.dnsDetail;
 
         final boolean ipv6SpoofOn = new PersonaState(this).ipv6SpoofEnabled();
+        final boolean regionOn = (getBaseContext() instanceof Dashboard)
+                ? ((Dashboard) getBaseContext()).isRegionApplied()
+                : (expectedRegion != null && !expectedRegion.get().isEmpty());
         String v6Val;
         int v6Color;
         String v6Det;
-        if (!ipv6SpoofOn && (r == null || r.v6State == 1)) {
-            v6Val = Lang.t("已关闭", "Off", "無効");
+        if (regionOn && !ipv6SpoofOn && (r == null || r.v6State == 1)) {
+            v6Val = Lang.t("禁公网 v6", "Net v6 Off", "公網v6切");
             v6Color = GREEN;
-            v6Det = Lang.t("全网卡 IPv6 已关闭 · 切网/飞行模式自动保持",
-                    "All-iface IPv6 off · persists across net/airplane",
-                    "全IF IPv6 無効 · 切替/機内モード維持");
+            v6Det = Lang.t("公网 IPv6 已禁 · IMS/VoWiFi 豁免 · 切网保持",
+                    "Public IPv6 off · IMS/VoWiFi exempt · persists",
+                    "公網 IPv6 無効 · IMS/VoWiFi 除外 · 切替維持");
         } else {
             v6Val = r == null ? "—" : r.v6Label;
             v6Color = stateColor(r == null ? -1 : r.v6State, false);
             v6Det = r == null
-                    ? Lang.t("检测真实 IPv6 出口是否泄露本机地址", "Checks real IPv6 egress leak")
+                    ? (regionOn
+                            ? Lang.t("检测真实 IPv6 出口是否泄露本机地址", "Checks real IPv6 egress leak")
+                            : Lang.t("地区未开启 · 系统原机 IPv6", "Region off · native system IPv6",
+                                    "地域オフ · 端末標準 IPv6"))
                     : r.v6Detail;
         }
 
@@ -319,8 +325,11 @@ final class NetworkPanel extends UiSection {
                                 ((Dashboard) getBaseContext()).setIpv6SpoofEnabled(enable);
                             } else {
                                 new PersonaState(this).putIpv6SpoofEnabled(enable);
+                                boolean activeRegion = expectedRegion != null
+                                        && !expectedRegion.get().isEmpty();
+                                boolean restoreKernel = !activeRegion || enable;
                                 new Thread(() -> new RootActions(this)
-                                        .syncIpv6Enforcement(enable), "ipv6-net-toggle").start();
+                                        .syncIpv6Enforcement(restoreKernel), "ipv6-net-toggle").start();
                                 repaintCard();
                             }
                         }));

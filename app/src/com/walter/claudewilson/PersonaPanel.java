@@ -1262,13 +1262,18 @@ final class PersonaPanel extends UiSection {
                 cscExpected, hw[0], cscStatus, hasPersona, true, openDev);
 
         String isoUpper = iso.toUpperCase(java.util.Locale.ROOT);
-        String v6OffText = Lang.t("IPv6 已关闭", "IPv6 Off", "IPv6 無効");
-        String v6Expected = !ipv6SpoofOn ? v6OffText : (hasPersona ? v6PayloadPfx : dash);
-        String v6MobExpected = (hasPersona && ipv6SpoofOn) ? v6MobilePayloadPfx : "";
-        String v6Actual = !ipv6SpoofOn ? v6OffText : dash;
-        int v6Status = !ipv6SpoofOn ? 1 : -1;
+        boolean regionOn = hasPersona && (!(getBaseContext() instanceof Dashboard)
+                || ((Dashboard) getBaseContext()).isRegionApplied());
+        String v6OffText = Lang.t("禁公网 v6 · IMS 豁免", "Net v6 Off · IMS OK", "公網v6切 · IMS除外");
+        String v6NativeText = Lang.t("原机直通", "Native", "直通");
+        String v6Expected = !regionOn ? dash
+                : !ipv6SpoofOn ? v6OffText : v6PayloadPfx;
+        String v6MobExpected = (regionOn && ipv6SpoofOn) ? v6MobilePayloadPfx : "";
+        String v6Actual = !regionOn ? v6NativeText
+                : !ipv6SpoofOn ? v6OffText : dash;
+        int v6Status = !regionOn ? -1 : (!ipv6SpoofOn ? 1 : -1);
         com.walter.claudewilson.model.CheckItem netItem = modelItem("target.network_addresses");
-        if (ipv6SpoofOn && hasPersona && hookChannel && targetLive && netItem != null
+        if (regionOn && ipv6SpoofOn && hookChannel && targetLive && netItem != null
                 && netItem.isRead() && !netItem.isStale()) {
             String ips = netItem.value();
             v6Actual = extractGlobalV6(ips);
@@ -1280,13 +1285,14 @@ final class PersonaPanel extends UiSection {
                     v6Actual = v6Actual + " " + isoUpper;
                 }
             }
-        } else if (ipv6SpoofOn && hasPersona && hookChannel && !v6Expected.isEmpty()
+        } else if (regionOn && ipv6SpoofOn && hookChannel && !v6Expected.isEmpty()
                 && !v6Expected.equals(dash)) {
             v6Actual = v6Expected + " · " + Lang.t("下次启动", "next launch", "次回起動");
             v6Status = -3;
         }
         final String v6SheetIso = isoUpper;
         final String v6SheetPfx = v6PayloadPfx;
+        final boolean v6HasPersona = regionOn;
         Runnable openIpv6Toggle = () -> PersonaEditSheets.showIpv6ModeSheet(
                 this, ipv6SpoofOn, v6SheetIso, v6SheetPfx, on -> {
                     boolean enable = Boolean.TRUE.equals(on);
@@ -1294,15 +1300,20 @@ final class PersonaPanel extends UiSection {
                         ((Dashboard) getBaseContext()).setIpv6SpoofEnabled(enable);
                     } else {
                         persona.putIpv6SpoofEnabled(enable);
-                        new Thread(() -> rootActions.syncIpv6Enforcement(enable),
+                        boolean restoreKernel = !v6HasPersona || enable;
+                        new Thread(() -> rootActions.syncIpv6Enforcement(restoreKernel),
                                 "ipv6-toggle").start();
-                        if (enable) publishRotated();
-                        else publishCurrent();
+                        if (v6HasPersona) {
+                            if (enable) publishRotated();
+                            else publishCurrent();
+                        }
                     }
                 });
         addField(devFields, Lang.t("IPv6 伪装", "IPv6 spoof", "IPv6 偽装"),
-                !ipv6SpoofOn ? v6OffText : (v6Expected.isEmpty() || v6Expected.equals(dash)
-                        ? dash : v6Expected + " " + isoUpper),
+                !regionOn ? dash
+                        : !ipv6SpoofOn ? v6OffText
+                        : (v6Expected.isEmpty() || v6Expected.equals(dash)
+                                ? dash : v6Expected + " " + isoUpper),
                 v6Actual, v6Status, true, true, openIpv6Toggle);
 
         String aidShown = aidOverride != null ? aidOverride : liveAidText;
@@ -1641,18 +1652,19 @@ final class PersonaPanel extends UiSection {
             radioCol = (wifiOn || bleOn || sensorsOn) ? GREEN : DIM;
         }
 
-        String v6Badge = !ipv6SpoofOn
-                ? " · " + Lang.t("IPv6 关", "IPv6 Off", "IPv6 切")
-                : (!v6Expected.isEmpty() && !v6Expected.equals(dash) ? " · v6" : "");
+        String v6Badge = !regionOn ? ""
+                : !ipv6SpoofOn
+                        ? " · " + Lang.t("公网 v6 关", "Net v6 Off", "公網v6切")
+                        : (!v6Expected.isEmpty() && !v6Expected.equals(dash) ? " · v6" : "");
         String devVal;
         int devCol;
         if (busy) {
             devVal = hasPersona
                     ? ((devTarget ? dv[3] : liveModel) + v6Badge)
-                    : (liveModel + (!ipv6SpoofOn ? v6Badge : ""));
+                    : liveModel;
             devCol = DIM;
         } else if (!hasPersona) {
-            devVal = liveModel + (!ipv6SpoofOn ? v6Badge : "");
+            devVal = liveModel;
             devCol = FG;
         } else if (devDrift) {
             devVal = Lang.t("偏差 · ", "Drift · ") + (devTarget ? dv[3] : liveModel);
@@ -2163,13 +2175,16 @@ final class PersonaPanel extends UiSection {
             if (after != null) after.run();
             return;
         }
+        final boolean enforceIpv6Off = !ipv6SpoofOn
+                && (!(getBaseContext() instanceof Dashboard)
+                        || ((Dashboard) getBaseContext()).isRegionApplied());
         EDIT_TX.execute(() -> {
             try {
                 LedgerIngestor.recordPersonaFromPayload(getApplicationContext(),
                         target.id(), user, json, snapshotRegionIso, snapshotEgressIso);
                 String out;
                 synchronized (injectLock) {
-                    if (!ipv6SpoofOn) {
+                    if (enforceIpv6Off) {
                         rootActions.syncIpv6Enforcement(false);
                     }
                     out = rootActions.publish(target, json);

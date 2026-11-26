@@ -172,6 +172,24 @@ public final class BodyguardPolicy {
         return MODE_BLOCK_KILL.equals(parseGuardMode(guardMode));
     }
 
+    /**
+     * Pure process-start hosting classification shared with {@code SystemBodyguardHooks}.
+     *
+     * <p>Foreground activity launches must be aborted BEFORE task/starting-window creation (at
+     * {@code ActivityTaskManagerService}), never by returning {@code null}/{@code false} from
+     * {@code ProcessList.startProcessLocked}, which otherwise leaves an orphaned fullscreen
+     * Splash Screen with {@code mCurrentFocus=null} on Android 15+. Only explicitly identified
+     * non-activity background spawns (service, broadcast, content provider, job, etc.) may be
+     * short-circuited inside {@code ProcessList.startProcessLocked}.
+     */
+    public static boolean shouldBlockProcessStart(String hostingType) {
+        String norm = nn(hostingType).trim().toLowerCase(Locale.ROOT);
+        if (norm.isEmpty()) {
+            return false;
+        }
+        return !norm.contains("activity");
+    }
+
     private static String nn(String value) {
         return value == null ? "" : value;
     }

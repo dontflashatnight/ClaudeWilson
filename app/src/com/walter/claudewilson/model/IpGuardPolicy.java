@@ -583,6 +583,46 @@ public final class IpGuardPolicy {
     }
 
     /**
+     * Full fail-open cleanup executed only when ClaudeWilson itself is uninstalled while the
+     * headless daemon is running:
+     * <ul>
+     *   <li>Clears all {@code cw_ipg_*} UID iptables block rules.</li>
+     *   <li>Removes persisted {@code .lock}/{@code .lockreason} files and writes fresh
+     *       {@code .unlock} timestamps so {@code SystemBodyguardHooks} inside {@code system_server}
+     *       immediately releases both disk and in-memory locks without requiring a reboot.</li>
+     *   <li>Disarms standalone {@code guard.mode} to {@code OFF} and removes {@code ip-guard.conf}.</li>
+     *   <li>Stops IPv6 watchdogs and restores kernel IPv6 via {@link Ipv6Policy#shellRestoreCommand}.</li>
+     * </ul>
+     */
+    public static String shellUninstallCleanupCommand(Collection<String> targetIds) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(shellUnblockAllCommand()).append("; ");
+        sb.append("mkdir -p ").append(DIR).append(" ").append(LOCK_DIR).append("; ");
+        sb.append("NOW=$(date +%s 2>/dev/null); [ -n \"$NOW\" ] && NOW=\"${NOW}000\" || NOW=9999999999999; ");
+        if (targetIds != null) {
+            Set<String> seen = new LinkedHashSet<String>();
+            for (String raw : targetIds) {
+                if (raw == null || raw.trim().isEmpty()) {
+                    continue;
+                }
+                String tid = safeId(raw);
+                if (seen.add(tid)) {
+                    sb.append("rm -f ").append(LOCK_DIR).append('/').append(tid).append(".lock ")
+                            .append(LOCK_DIR).append('/').append(tid).append(".lockreason; ")
+                            .append("printf '%s' \"$NOW\" > ").append(LOCK_DIR).append('/')
+                            .append(tid).append(".unlock && chmod 644 ").append(LOCK_DIR)
+                            .append('/').append(tid).append(".unlock; ");
+                }
+            }
+        }
+        sb.append("printf '%s' '").append(BodyguardPolicy.MODE_OFF).append("' > ")
+                .append(DIR).append("/guard.mode && chmod 644 ").append(DIR).append("/guard.mode; ");
+        sb.append("rm -f ").append(CONF_PATH).append(' ').append(PID_PATH).append("; ");
+        sb.append(Ipv6Policy.shellRestoreCommand());
+        return sb.toString();
+    }
+
+    /**
      * Writes {@link #CONF_PATH} atomically and ensures the single-instance persistent root Java
      * daemon ({@code Bridge guard}) is running on the current APK. When already running on the
      * same APK, the daemon hot-reloads {@link #CONF_PATH} without restarting.
